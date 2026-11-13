@@ -16,6 +16,7 @@ import { More } from "./pages/More";
 import { ReportsHub } from "./pages/reports/ReportsHub";
 import { Advances, Attendance, Payroll, PeopleHub } from "./pages/people/People";
 import { VendorDetail, VendorList } from "./pages/vendors/Vendors";
+import { MonthClose } from "./pages/Month";
 const SalesReport = lazy(() => import("./pages/reports/SalesReport").then((m) => ({ default: m.SalesReport })));
 const ExpenseReport = lazy(() => import("./pages/reports/ExpenseReport").then((m) => ({ default: m.ExpenseReport })));
 const PaymentsReport = lazy(() => import("./pages/reports/PaymentsReport").then((m) => ({ default: m.PaymentsReport })));
@@ -58,6 +59,7 @@ export function App() {
               <Route path="reports/payments" element={<Suspense fallback={<Loading />}><PaymentsReport /></Suspense>} />
               <Route path="reports/reporting" element={<Suspense fallback={<Loading />}><ReportingReport /></Suspense>} />
               <Route path="people/pay" element={<Payroll />} />
+              <Route path="month" element={<MonthClose />} />
               <Route path="manage" element={<ManageHub />} />
               <Route path="manage/users" element={<Users />} />
               <Route path="manage/staff" element={<StaffPage />} />

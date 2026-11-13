@@ -366,3 +366,18 @@ details.table-view summary { cursor: pointer; color: var(--text-2); font-size: 0
 .pay-grid dd { margin: 0; text-align: right; }
 .pay-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .row.as-button { width: 100%; background: none; border: 0; border-top: 1px solid var(--border); text-align: left; font: inherit; color: inherit; cursor: pointer; }
+
+/* Tables, chips and print */
+.table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 0.95rem; }
+.table th, .table td { padding: 8px 6px; border-top: 1px solid var(--border); text-align: right; }
+.table th[scope="row"], .table thead th:first-child { text-align: left; font-weight: 500; color: var(--text-2); }
+.table thead th { border-top: 0; font-size: 0.8rem; color: var(--text-2); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+a.check { text-decoration: none; }
+@media print {
+  .sidebar, .tabbar, .banner, .no-print, .toast { display: none !important; }
+  .main { padding: 0 !important; margin: 0 !important; }
+  body { background: #fff; color: #000; }
+  .card { box-shadow: none; break-inside: avoid; }
+  .cols { display: block !important; }
+}
