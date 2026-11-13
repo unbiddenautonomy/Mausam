@@ -10,6 +10,7 @@ import { photos } from "./routes/photos";
 import { push } from "./routes/push";
 import { memo } from "./routes/memo";
 import { people } from "./routes/people";
+import { vendors } from "./routes/vendors";
 import { runChecks } from "./cron";
 
 const app = new Hono<AppEnv>().basePath("/api");
@@ -27,6 +28,7 @@ app.route("/photos", photos);
 app.route("/push", push);
 app.route("/memo", memo);
 app.route("/people", people);
+app.route("/vendors", vendors);
 app.route("/", entries);
 app.route("/", owner);
 

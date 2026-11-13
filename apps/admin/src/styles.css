@@ -365,3 +365,4 @@ details.table-view summary { cursor: pointer; color: var(--text-2); font-size: 0
 .pay-grid dt { color: var(--text-2); }
 .pay-grid dd { margin: 0; text-align: right; }
 .pay-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.row.as-button { width: 100%; background: none; border: 0; border-top: 1px solid var(--border); text-align: left; font: inherit; color: inherit; cursor: pointer; }

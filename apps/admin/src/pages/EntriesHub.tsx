@@ -15,6 +15,7 @@ export function EntriesHub() {
       <div className="grid-2">
         <NavCard to="/people/attendance" icon="checklist" title={t("people.attendance")} desc={t("people.attendance_desc")} />
         <NavCard to="/people/advances" icon="wallet" title={t("people.advances")} desc={t("people.advances_desc")} />
+        <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />
       </div>
     </div>
   );
