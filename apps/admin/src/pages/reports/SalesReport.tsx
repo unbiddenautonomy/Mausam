@@ -1,5 +1,5 @@
-import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dateRange, formatDay, formatINR, formatINRShort } from "@mausam/shared";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { dateRange, formatDay, formatINR, formatINRShort, type Lang } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
@@ -23,7 +23,12 @@ export function SalesReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.sales")} desc={t("reports.sales_desc")}>
-      {(days) => <SalesBody days={days} />}
+      {(days) => (
+        <>
+          <SalesBody days={days} />
+          <Weekdays days={days} />
+        </>
+      )}
     </ReportFrame>
   );
 }
@@ -88,3 +93,44 @@ function SalesBody({ days }: { days: Range }) {
   );
 }
 
+
+const LOCALE: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", kn: "kn-IN" };
+
+/** Average sales for each weekday, Monday first. */
+function Weekdays({ days }: { days: Range }) {
+  const { t, lang } = useSession();
+  const res = useApi<{ weekdays: { weekday: number; avg: number | null; n: number }[] }>(`/analytics/weekdays?days=${days === "7" ? "28" : days}`);
+  if (!res.data) return null;
+  const f = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short", timeZone: "UTC" });
+  const name = (d: number) => f.format(new Date(Date.UTC(2026, 10, 1 + d)));
+  const rows = [1, 2, 3, 4, 5, 6, 0].map((d) => ({ ...res.data!.weekdays[d], label: name(d) }));
+  if (rows.filter((r) => r.avg !== null).length < 3) return null;
+  const avgName = t("reports.daily_avg");
+  return (
+    <section className="form">
+      <h2>{t("reports.weekday")}</h2>
+      <div className="card chart-card">
+        <div className="chart" style={{ height: 220 }}>
+          <ResponsiveContainer>
+            <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="25%">
+              <CartesianGrid vertical={false} stroke="var(--series-grid)" />
+              <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={formatINRShort} tick={axisTick} axisLine={false} tickLine={false} width={56} />
+              <Tooltip content={<ChartTooltip labelFmt={(l) => l} />} cursor={{ fill: "var(--surface-2)" }} />
+              <Bar dataKey="avg" name={avgName} fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <details className="table-view">
+          <summary>Table</summary>
+          <table className="data">
+            <thead><tr><th></th><th className="r">{avgName}</th><th className="r">{t("reports.days_counted")}</th></tr></thead>
+            <tbody>
+              {rows.map((r) => <tr key={r.weekday}><td>{r.label}</td><td className="r">{formatINR(r.avg)}</td><td className="r">{r.n}</td></tr>)}
+            </tbody>
+          </table>
+        </details>
+      </div>
+    </section>
+  );
+}

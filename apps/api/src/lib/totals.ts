@@ -4,7 +4,7 @@
 // - bills: rent, electricity, water, licences
 // - deliveries: vendor goods received on credit (vendor payments aren't counted again)
 // - wages: month-end pay earned (advances are part of it, so advance expense lines aren't counted again)
-import { computePay, countDays, dateRange, monthDates, type AttendanceStatus, type PayType } from "@mausam/shared";
+import { businessDate, computePay, countDays, dateRange, monthDates, type AttendanceStatus, type PayType } from "@mausam/shared";
 
 export const BILL_KEYS = ["rent", "electricity", "water", "licences"];
 const NOT_DAY_TO_DAY = [...BILL_KEYS, "salaries", "staff_advance", "vendor_payment"];
@@ -66,6 +66,10 @@ export async function rangeTotals(db: D1Database, from: string, to: string, wage
  * (saved pay when it was marked paid). For other ranges, monthly pay is counted as 1/30 per day.
  */
 export async function wagesEarned(db: D1Database, from: string, to: string): Promise<number> {
+  // Only count days that have happened; future days aren't earned yet.
+  const today = businessDate();
+  if (from > today) return 0;
+  if (to > today) to = today;
   const month = from.slice(0, 7);
   const wholeMonth = from === `${month}-01` && to === monthDates(month).at(-1);
   const { results: staff } = await db
@@ -97,7 +101,7 @@ export async function wagesEarned(db: D1Database, from: string, to: string): Pro
       total += computePay({ pay_type: "monthly", rate: s.pay_rate, days: counts, days_not_employed: dates.length - employed.length, advances: 0 }).gross;
     } else if (s.pay_type === "monthly") {
       const paidDays = employed.length - (counts.absent + counts.leave + counts.half * 0.5);
-      total += Math.max(0, Math.round((s.pay_rate / 30) * paidDays));
+      total += Math.max(0, Math.round((s.pay_rate / 30) * paidDays / 100) * 100);
     } else {
       total += computePay({ pay_type: s.pay_type, rate: s.pay_rate, days: counts, advances: 0 }).gross;
     }

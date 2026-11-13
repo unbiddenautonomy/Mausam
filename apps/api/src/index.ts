@@ -13,6 +13,7 @@ import { people } from "./routes/people";
 import { vendors } from "./routes/vendors";
 import { month } from "./routes/month";
 import { pos } from "./routes/pos";
+import { analytics } from "./routes/analytics";
 import { runChecks } from "./cron";
 
 const app = new Hono<AppEnv>().basePath("/api");
@@ -33,6 +34,7 @@ app.route("/people", people);
 app.route("/vendors", vendors);
 app.route("/month", month);
 app.route("/pos", pos);
+app.route("/analytics", analytics);
 app.route("/", entries);
 app.route("/", owner);
 

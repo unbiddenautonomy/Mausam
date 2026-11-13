@@ -41,10 +41,11 @@ export function computePay(p: PayInput): PayResult {
   if (p.rate && p.pay_type) {
     if (p.pay_type === "monthly") {
       const missed = days_absent + (p.days_not_employed ?? 0);
-      gross = Math.max(0, Math.round(p.rate - (p.rate / 30) * missed));
+      gross = Math.max(0, p.rate - (p.rate / 30) * missed);
     } else {
-      gross = Math.round(p.rate * days_worked);
+      gross = p.rate * days_worked;
     }
+    gross = Math.round(gross / 100) * 100; // whole rupees
   }
   return { days_worked, days_absent, gross, net: gross - p.advances + (p.adjustment ?? 0) };
 }

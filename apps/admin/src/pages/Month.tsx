@@ -234,9 +234,9 @@ function Tally({ d, month, closed, onSaved }: { d: MonthData; month: string; clo
   const [error, setError] = useState<unknown>(null);
   const s = d.totals;
   const rows: [string, number | null, number][] = [
-    [t("month.tally_sales"), rupeesToPaise(f.sales), s.sales],
-    [t("month.tally_expenses"), rupeesToPaise(f.expenses), s.expenses + s.deliveries + s.bills],
-    [t("month.tally_wages"), rupeesToPaise(f.wages), s.wages],
+    [t("month.sales"), rupeesToPaise(f.sales), s.sales],
+    [t("month.all_expenses"), rupeesToPaise(f.expenses), s.expenses + s.deliveries + s.bills],
+    [t("month.wages"), rupeesToPaise(f.wages), s.wages],
   ];
   async function save() {
     setError(null);

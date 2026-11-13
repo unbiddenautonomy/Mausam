@@ -12,7 +12,7 @@ entries.use("*", requireRole("owner", "manager"));
 const EXPENSE_SELECT = `
   SELECT e.id, e.business_date, e.trip_id, e.category_id, c.key AS category_key, c.name_en AS category_name,
          c.name_hi AS category_name_hi, c.name_kn AS category_name_kn,
-         e.shop, e.amount, e.mode, e.has_receipt, e.photo_key, e.note, e.source, e.ref_id, e.created_by, u.name AS created_by_name, e.created_at
+         e.shop, e.amount, e.mode, e.has_receipt, e.photo_key, e.note, e.source, e.ref_id, e.item, e.qty, e.unit, e.created_by, u.name AS created_by_name, e.created_at
   FROM expenses e
   JOIN expense_categories c ON c.id = e.category_id
   JOIN users u ON u.id = e.created_by
@@ -121,9 +121,12 @@ entries.post("/expenses", async (c) => {
     if (existing) return c.json({ expense: mapExpense(existing), duplicate: true });
   }
   const photoKey = optionalText(b.photo_key, 200);
+  // Optional quantity bought, for price tracking.
+  const qty = b.qty === undefined || b.qty === null || b.qty === "" ? null : Number(b.qty);
+  if (qty !== null && !(qty > 0 && qty < 100000)) throw new HttpError(422, "invalid", { field: "qty" });
   const res = await c.env.DB.prepare(
-    `INSERT INTO expenses (business_date, trip_id, category_id, shop, amount, mode, has_receipt, photo_key, note, client_id, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO expenses (business_date, trip_id, category_id, shop, amount, mode, has_receipt, photo_key, note, client_id, created_by, item, qty, unit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       date,
@@ -137,6 +140,9 @@ entries.post("/expenses", async (c) => {
       optionalText(b.note),
       clientId,
       user.id,
+      optionalText(b.item, 60),
+      qty,
+      qty ? optionalText(b.unit, 20) ?? "kg" : null,
     )
     .run();
   const id = Number(res.meta.last_row_id);

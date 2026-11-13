@@ -21,19 +21,24 @@ export function ReportFrame({ title, desc, children }: { title: string; desc: st
   );
 }
 
-/** Tooltip body shared by all charts. */
-export function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color?: string; payload?: Record<string, unknown> }[]; label?: string }) {
+/** Tooltip body shared by all charts. `fmt` formats values (rupees by default), `labelFmt` the heading (a date by default). */
+export function ChartTooltip({
+  active, payload, label, fmt = formatINR, labelFmt = (l: string) => formatDay(l),
+}: {
+  active?: boolean; payload?: { name: string; value: number; color?: string; payload?: Record<string, unknown> }[]; label?: string;
+  fmt?: (v: number) => string; labelFmt?: (l: string) => string;
+}) {
   if (!active || !payload?.length) return null;
   return (
     <div className="tooltip">
-      <strong>{label ? formatDay(String(label)) : ""}</strong>
+      <strong>{label !== undefined && label !== "" ? labelFmt(String(label)) : ""}</strong>
       {payload
         .filter((p) => p.value !== null && p.value !== undefined)
         .map((p) => (
           <div className="tt-row" key={p.name}>
             <i style={{ background: p.color }} />
             {p.name}
-            <b>{formatINR(p.value)}</b>
+            <b>{fmt(p.value)}</b>
           </div>
         ))}
     </div>
@@ -42,3 +47,28 @@ export function ChartTooltip({ active, payload, label }: { active?: boolean; pay
 
 export const axisTick = { fill: "var(--text-3)", fontSize: 12 };
 export const shortDay = (d: string) => formatDay(d, false);
+
+/** Horizontal bars for a ranked list (one series, so one colour). */
+export function BarList({ rows, total }: { rows: { key: string; label: string; amount: number; sub?: string }[]; total?: number }) {
+  const sum = total ?? rows.reduce((s, r) => s + r.amount, 0);
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.amount)));
+  return (
+    <div className="card bar-list">
+      {rows.map((r) => (
+        <div className="bar-item" key={r.key}>
+          <div className="top">
+            <span>{r.label}{r.sub ? <span className="faint small"> · {r.sub}</span> : null}</span>
+            <span className="num">
+              <strong>{formatINR(r.amount)}</strong>{sum > 0 && <span className="faint"> {Math.round((r.amount / sum) * 100)}%</span>}
+            </span>
+          </div>
+          <div className="bar-track">
+            <div className="bar-fill" style={{ width: `${(Math.max(0, r.amount) / max) * 100}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export const pctFmt = (v: number) => `${Math.round(v * 10) / 10}%`;
