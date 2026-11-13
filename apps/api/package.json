@@ -1,0 +1,23 @@
+{
+  "name": "@mausam/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply mausam --local",
+    "db:migrate:remote": "wrangler d1 migrations apply mausam --remote",
+    "typecheck": "tsc -p .",
+    "db:seed:demo": "node scripts/demo-seed.mjs > .wrangler/demo.sql && wrangler d1 execute mausam --local --file .wrangler/demo.sql"
+  },
+  "dependencies": {
+    "@mausam/shared": "workspace:*",
+    "hono": "^4.10.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261113.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.40.0"
+  }
+}
