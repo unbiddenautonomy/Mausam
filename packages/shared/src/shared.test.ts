@@ -104,3 +104,31 @@ describe("pay", () => {
     expect(c).toMatchObject({ present: 1, absent: 1, unmarked: 26 });
   });
 });
+
+import { findHeaderRow, guessMapping, parsePosAmount, parsePosDate } from "./pos";
+
+describe("pos import", () => {
+  it("reads Indian day-first dates in many shapes", () => {
+    expect(parsePosDate("03/11/2026")).toBe("2026-11-03");
+    expect(parsePosDate("3-11-26")).toBe("2026-11-03");
+    expect(parsePosDate("2026-11-03")).toBe("2026-11-03");
+    expect(parsePosDate("3rd Nov 2026")).toBe("2026-11-03");
+    expect(parsePosDate("Nov 3, 2026")).toBe("2026-11-03");
+    expect(parsePosDate(46329)).toBe("2026-11-03");
+    expect(parsePosDate(new Date(Date.UTC(2026, 10, 3)))).toBe("2026-11-03");
+    expect(parsePosDate("Total")).toBeNull();
+  });
+  it("reads rupee amounts", () => {
+    expect(parsePosAmount("₹1,23,456.50")).toBe(12345650);
+    expect(parsePosAmount(99.5)).toBe(9950);
+    expect(parsePosAmount("(200)")).toBe(-20000);
+    expect(parsePosAmount("")).toBeNull();
+  });
+  it("finds the header row and guesses columns", () => {
+    const rows = [["Mausam Restaurant"], ["Sales report", null], ["Date", "Bills", "Cash", "UPI", "Grand Total"], ["01/11/2026", 120, 30000, 50000, 80000]];
+    const h = findHeaderRow(rows);
+    expect(h).toBe(2);
+    const m = guessMapping(rows[h] as string[], "sales");
+    expect(m).toMatchObject({ date: 0, bills: 1, cash: 2, online: 3, total: 4 });
+  });
+});
