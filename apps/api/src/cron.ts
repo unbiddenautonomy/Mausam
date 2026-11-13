@@ -1,57 +1,84 @@
-import { addDays, businessDate, istMoment, usualRange } from "@mausam/shared";
+import { addDays, businessDate, DAY_START_HOUR, istMoment, monthCloseFor, usualRange, type MessageKey } from "@mausam/shared";
 import type { Env } from "./env";
 import { loadSettings } from "./lib/db";
+import { alertParams, notify, type Audience } from "./lib/notify";
 
-function at(date: string, hhmm: string): number {
+/** The moment an "HH:MM" time happens for a business date. Times before 5 am belong to the next calendar day. */
+export function dueAt(businessDate: string, hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
-  return istMoment(date, h, m).getTime();
+  const calendarDay = h < DAY_START_HOUR ? addDays(businessDate, 1) : businessDate;
+  return istMoment(calendarDay, h, m).getTime();
 }
 
-async function raise(
-  db: D1Database,
+/**
+ * Creates an alert once (UNIQUE(type, business_date) keeps it idempotent) and, if it is new, sends a push.
+ * Returns true when the alert was newly created.
+ */
+export async function raise(
+  env: Env,
   type: string,
   date: string,
   params: Record<string, unknown>,
   severity: "info" | "warn" | "critical" = "warn",
-  audience: "owner" | "manager" | "all" = "owner",
-) {
-  // UNIQUE(type, business_date) keeps this idempotent: running every 15 minutes never duplicates.
-  await db
-    .prepare(
-      `INSERT INTO alerts (type, business_date, severity, params, audience) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (type, business_date) DO NOTHING`,
-    )
+  audience: Audience = "owner",
+  url = "/alerts",
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `INSERT INTO alerts (type, business_date, severity, params, audience) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (type, business_date) DO NOTHING`,
+  )
     .bind(type, date, severity, JSON.stringify(params), audience)
     .run();
+  if (!res.meta.changes) return false;
+  const base = type.split(":")[0];
+  await notify(env, audience, { title: "push.alert_title", body: `alert.${base}` as MessageKey, params: alertParams(base, date, params) }, { url, dedupeKey: `alert:${type}:${date}` });
+  return true;
 }
 
 /**
- * Runs every 15 minutes. Raises alerts for overdue reports and unusual spending.
- * Push notifications (next build step) will be sent from here for each new alert.
+ * Runs every 15 minutes: reminders before things are due, alerts when they're overdue,
+ * and checks for unusual spending.
  */
 export async function runChecks(env: Env, now = new Date()): Promise<void> {
   const db = env.DB;
   const s = await loadSettings(db);
   const today = businessDate(now);
   const yesterday = addDays(today, -1);
+  const t = now.getTime();
 
-  // 1. Yesterday's closing missing after the escalation time (default 10 am).
-  if (now.getTime() >= at(today, s.close_escalate)) {
+  // ---- Reminders to managers ----
+  const trip = await db
+    .prepare("SELECT status, float_out FROM shopping_trips WHERE business_date = ? ORDER BY id DESC LIMIT 1")
+    .bind(today)
+    .first<{ status: string; float_out: number }>();
+  if (t >= dueAt(today, s.shopping_due) && trip?.status !== "closed") {
+    await notify(env, "manager", { title: "push.shopping_title", body: trip ? "push.shopping_open_body" : "push.shopping_body" }, { url: "/entries/shopping", dedupeKey: `remind:shopping:${today}` });
+  }
+  const closeToday = await db.prepare("SELECT 1 FROM day_closes WHERE business_date = ?").bind(today).first();
+  if (t >= dueAt(today, s.close_due) && !closeToday) {
+    await notify(env, "manager", { title: "push.close_title", body: "push.close_body" }, { url: "/entries/close", dedupeKey: `remind:close:${today}` });
+  }
+
+  // ---- Escalations ----
+  // Yesterday's closing still missing at the escalation time (default 10 am).
+  if (t >= dueAt(today, s.close_escalate)) {
     const close = await db.prepare("SELECT 1 FROM day_closes WHERE business_date = ?").bind(yesterday).first();
-    if (!close) await raise(db, "close_missing", yesterday, { date: yesterday }, "critical", "all");
+    if (!close) await raise(env, "close_missing", yesterday, { date: yesterday }, "critical", "all", `/entries/close/${yesterday}`);
+  }
+  // Shopping still open at the escalation time (default 1 pm).
+  if (t >= dueAt(today, s.shopping_escalate) && trip?.status === "open") {
+    await raise(env, "shopping_open", today, { date: today, amount: trip.float_out }, "warn", "all", "/entries/shopping");
   }
 
-  // 2. Shopping still open after the escalation time (default 1 pm).
-  if (now.getTime() >= at(today, s.shopping_escalate)) {
-    const trip = await db
-      .prepare("SELECT float_out FROM shopping_trips WHERE business_date = ? AND status = 'open'")
-      .bind(today)
-      .first<{ float_out: number }>();
-    if (trip) await raise(db, "shopping_open", today, { date: today, amount: trip.float_out }, "warn", "all");
+  // ---- Month close window: 27th to 3rd ----
+  const month = monthCloseFor(today);
+  if (month && t >= dueAt(today, "10:00")) {
+    const closed = await db.prepare("SELECT status FROM month_closes WHERE month = ?").bind(month).first<{ status: string }>().catch(() => null);
+    if (closed?.status !== "closed") await raise(env, "month_close", `${month}-01`, { month }, "info", "all", "/month");
   }
 
-  // 3. Unusual spending yesterday: a category far above its usual level for the last 8 weeks.
-  //    Only once there's enough history (usualRange needs 4+ days).
+  // ---- Unusual spending yesterday ----
+  // A category far above its usual daily amount over the last 8 weeks (needs 4+ days of history).
   const { results } = await db
     .prepare(
       `SELECT e.category_id, c.key, c.name_en, e.business_date, SUM(e.amount) AS amount
@@ -69,12 +96,17 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
     const range = usualRange(rows.filter((r) => r.business_date !== yesterday).map((r) => r.amount));
     if (range && y.amount > range.high && y.amount > range.median * 1.5) {
       await raise(
-        db,
+        env,
         `expense_high:${y.key}`,
         yesterday,
         { date: yesterday, category: y.name_en, amount: y.amount, usual: Math.round(range.median) },
         "info",
+        "owner",
+        `/entries/expenses?date=${yesterday}`,
       );
     }
   }
+
+  // Keep the dedupe table small.
+  await db.prepare("DELETE FROM notifications_sent WHERE at < datetime('now', '-14 days')").run();
 }

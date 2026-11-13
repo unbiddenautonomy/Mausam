@@ -23,5 +23,13 @@
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
   // Every 15 minutes: check what's overdue and raise alerts
   "triggers": { "crons": ["*/15 * * * *"] },
-  "vars": { "ALLOWED_ORIGIN": "*" }
+  "vars": {
+    "ALLOWED_ORIGIN": "*",
+    // Push notifications: paste the public key printed by `node scripts/vapid-keys.mjs`.
+    // The private key goes in a secret: `npx wrangler secret put VAPID_PRIVATE_KEY`.
+    "VAPID_PUBLIC_KEY": "",
+    "VAPID_SUBJECT": "mailto:owner@example.com",
+    // Model used to read handwritten memos. The API key goes in a secret: `npx wrangler secret put ANTHROPIC_API_KEY`.
+    "MEMO_MODEL": "claude-sonnet-5-5"
+  }
 }
