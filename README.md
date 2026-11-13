@@ -42,30 +42,49 @@ Follow [docs/cloudflare-setup.md](docs/cloudflare-setup.md).
 - **Locking:** a day locks at 11 am the next morning. After that, only the owner can change it.
 - **Audit:** every change is recorded, with who made it and when.
 
-## What's built and what's next
+## What's built
 
-**Built:**
+**Daily work (managers and owner):**
 - Phone + PIN login, with owner and manager roles.
 - Today's task list.
 - Morning shopping: cash taken, bills with photos, cash returned, and the gap check.
-- Expenses, with categories, photos, and no-bill tracking.
-- Close the day: memo photo and live checks.
-- Past closings.
-- Alerts:
+- Expenses, with categories, photos, no-bill tracking, and an optional item + quantity for price tracking.
+- Close the day: memo photo, live checks, and the POS total filled in when it has been imported.
+- Reading the handwritten memo with AI and comparing it with what was typed (up to 6 reads a day).
+- Attendance (present, half day, absent, leave) and advances paid from the counter.
+- Vendors: agreed rates, expected deliveries, deliveries, payments and what we owe. A delivery charged above the agreed rate raises an alert.
+- Phone reminders (Web Push) and alerts:
   - a closing missing by 10 am;
   - shopping still open by 1 pm;
+  - attendance not marked for yesterday;
   - a closing that was flagged;
-  - an expense category far above its usual amount.
-- Owner overview.
-- Reports: sales trend, expenses by category, cash vs online, and on-time reporting.
-- Manage pages: users, staff (pay can be left blank), categories, and reminder times.
+  - an expense category far above its usual amount;
+  - a vendor rate above the deal.
 - English, Hindi and Kannada.
 - Works offline: entries wait on the phone and send when the phone is back online.
 
-**Next:**
-1. Push notifications sent from the Worker (the app already receives them and shows a badge).
-2. Reading the handwritten memo with AI, and checking it against what the manager typed.
-3. Attendance, advances and month-end pay.
-4. Vendors and deliveries.
-5. Month close (27th to 3rd).
-6. Importing Excel exports from the current POS.
+**Owner only:**
+- Overview, and reports:
+  - sales trend and sales by weekday;
+  - expenses by category;
+  - cash vs online;
+  - on-time reporting;
+  - costs and profit (food cost %, wages %, what's left);
+  - best sellers;
+  - price watch.
+- Month-end pay: days worked, advances, adjustments, and mark as paid.
+- Month close (27th to 3rd): checklist, monthly bills, tally comparison, print, and lock. A closed month is locked for everyone until it is reopened.
+- Import daily sales and item sales from the POS's Excel or CSV export. The column matching is remembered.
+- Change history: who changed what, and when.
+- Manage pages: users, staff (pay can be left blank), categories, and reminder times.
+
+**Next:** the touchscreen POS in `apps/pos`.
+
+## Optional features that need keys
+
+- **Phone reminders:** run `node apps/api/scripts/vapid-keys.mjs` once, then follow section 5 of the setup guide.
+- **Memo reading:** add an Anthropic API key as a Worker secret (section 6 of the setup guide). Without it, the memo button explains that it's off.
+
+## Database changes
+
+New tables and columns are in `apps/api/migrations` (`0001` to `0004`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer, and the setup guide has the command for Cloudflare.
