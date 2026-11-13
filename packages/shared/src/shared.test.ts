@@ -72,3 +72,35 @@ describe("i18n", () => {
     expect(translate("kn", "app.name")).toBe("Mausam");
   });
 });
+
+import { computePay, countDays, monthDates } from "./pay";
+
+describe("pay", () => {
+  const none = { present: 0, half: 0, absent: 0, leave: 0, off: 0, unmarked: 0 };
+  it("monthly pay loses 1/30 per absent day, half days count half", () => {
+    const r = computePay({ pay_type: "monthly", rate: 1500000, days: { ...none, present: 26, half: 2, absent: 1, off: 1 }, advances: 200000 });
+    expect(r.days_absent).toBe(2);
+    expect(r.gross).toBe(1400000); // 15,000 − 2 × 500
+    expect(r.net).toBe(1200000);
+  });
+  it("unmarked days count as worked; joining mid-month reduces monthly pay", () => {
+    const r = computePay({ pay_type: "monthly", rate: 900000, days: { ...none, unmarked: 20 }, days_not_employed: 10, advances: 0 });
+    expect(r.days_worked).toBe(20);
+    expect(r.gross).toBe(600000);
+  });
+  it("daily pay is rate × days worked", () => {
+    const r = computePay({ pay_type: "daily", rate: 60000, days: { ...none, present: 20, half: 1, absent: 3, unmarked: 2 }, advances: 100000, adjustment: 5000 });
+    expect(r.days_worked).toBe(22.5);
+    expect(r.gross).toBe(1350000);
+    expect(r.net).toBe(1255000);
+  });
+  it("no pay set means nothing is earned", () => {
+    expect(computePay({ pay_type: null, rate: null, days: none, advances: 0 }).gross).toBe(0);
+  });
+  it("counts days and builds month dates", () => {
+    const dates = monthDates("2026-02");
+    expect(dates.length).toBe(28);
+    const c = countDays(dates, new Map([["2026-02-01", "present"], ["2026-02-02", "absent"]] as const));
+    expect(c).toMatchObject({ present: 1, absent: 1, unmarked: 26 });
+  });
+});

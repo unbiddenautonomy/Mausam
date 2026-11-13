@@ -12,6 +12,10 @@ export function EntriesHub() {
         <NavCard to="/entries/close" icon="moon" title={t("entries.close")} desc={t("entries.close_desc")} />
         <NavCard to="/entries/history" icon="history" title={t("entries.history")} desc={t("entries.history_desc")} />
       </div>
+      <div className="grid-2">
+        <NavCard to="/people/attendance" icon="checklist" title={t("people.attendance")} desc={t("people.attendance_desc")} />
+        <NavCard to="/people/advances" icon="wallet" title={t("people.advances")} desc={t("people.advances_desc")} />
+      </div>
     </div>
   );
 }

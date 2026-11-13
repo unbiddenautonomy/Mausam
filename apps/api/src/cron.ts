@@ -1,3 +1,4 @@
+import { attendanceMarked } from "./routes/people";
 import { addDays, businessDate, DAY_START_HOUR, istMoment, monthCloseFor, usualRange, type MessageKey } from "@mausam/shared";
 import type { Env } from "./env";
 import { loadSettings } from "./lib/db";
@@ -70,6 +71,14 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
     await raise(env, "shopping_open", today, { date: today, amount: trip.float_out }, "warn", "all", "/entries/shopping");
   }
 
+  // Nobody marked attendance yesterday (only once staff are set up).
+  if (t >= dueAt(today, s.close_escalate)) {
+    const staff = await db.prepare("SELECT COUNT(*) AS n FROM staff WHERE active = 1").first<{ n: number }>();
+    if ((staff?.n ?? 0) > 0 && !(await attendanceMarked(db, yesterday))) {
+      await raise(env, "attendance_missing", yesterday, { date: yesterday }, "warn", "all", "/people/attendance");
+    }
+  }
+
   // ---- Month close window: 27th to 3rd ----
   const month = monthCloseFor(today);
   if (month && t >= dueAt(today, "10:00")) {
@@ -83,7 +92,7 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
     .prepare(
       `SELECT e.category_id, c.key, c.name_en, e.business_date, SUM(e.amount) AS amount
        FROM expenses e JOIN expense_categories c ON c.id = e.category_id
-       WHERE e.deleted_at IS NULL AND e.business_date BETWEEN ? AND ?
+       WHERE e.deleted_at IS NULL AND e.source = 'manual' AND e.business_date BETWEEN ? AND ?
        GROUP BY e.category_id, e.business_date`,
     )
     .bind(addDays(yesterday, -56), yesterday)

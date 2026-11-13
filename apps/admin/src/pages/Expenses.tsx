@@ -12,6 +12,7 @@ interface Exp {
   amount: number;
   shop: string | null;
   mode: "cash" | "online";
+  source?: "manual" | "advance" | "vendor_payment";
   photo_key: string | null;
   has_receipt: boolean;
   note: string | null;
@@ -73,10 +74,14 @@ export function Expenses() {
                   {timeIST(e.created_at)} · {e.created_by_name} · {e.mode === "cash" ? t("common.cash") : t("common.online")}
                   {e.note ? ` · ${e.note}` : ""}
                 </span>
-                {!e.has_receipt && <span><Pill tone="warn">{t("expense.no_receipt")}</Pill></span>}
+                {e.source && e.source !== "manual" ? (
+                  <span><Pill>{e.source === "advance" ? t("people.advances") : t("vendor.payment")}</Pill></span>
+                ) : !e.has_receipt ? (
+                  <span><Pill tone="warn">{t("expense.no_receipt")}</Pill></span>
+                ) : null}
               </span>
               <span className="amount">{formatINR(e.amount)}</span>
-              {(user!.role === "owner" || e.created_by === user!.id) && (
+              {(!e.source || e.source === "manual") && (user!.role === "owner" || e.created_by === user!.id) && (
                 <button className="btn small danger" aria-label={t("common.delete")} onClick={() => remove(e)}><Icon name="trash" /></button>
               )}
             </div>

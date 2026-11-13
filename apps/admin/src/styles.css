@@ -338,3 +338,30 @@ details.table-view summary { cursor: pointer; color: var(--text-2); font-size: 0
 .memo-cell { display: grid; gap: 2px; align-content: start; justify-items: start; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
 .memo-cell strong { font-size: 1.1rem; }
 .bad-text { color: var(--bad); margin: 0; }
+
+/* Attendance */
+.att-row { flex-wrap: wrap; }
+.att-row .grow { min-width: 140px; }
+.att-pick { display: flex; gap: 4px; flex-wrap: wrap; }
+.att-pick button {
+  min-height: 40px; padding: 0 10px; border-radius: 8px; border: 1.5px solid var(--border);
+  background: var(--surface); color: var(--text-2); font-weight: 600; font-size: 0.85rem; cursor: pointer;
+}
+.att-pick button.on { color: var(--surface); border-color: transparent; }
+.att-pick .att-present.on { background: var(--good); }
+.att-pick .att-half.on { background: var(--warn); }
+.att-pick .att-absent.on { background: var(--bad); }
+.att-pick .att-leave.on, .att-pick .att-off.on { background: var(--text-2); }
+@media (max-width: 639px) { .att-pick { width: 100%; } .att-pick button { flex: 1; padding: 0 4px; } }
+.checkbox { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.checkbox input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--brand); }
+
+/* Month-end pay */
+.pay-list { display: grid; gap: 12px; }
+@media (min-width: 900px) { .pay-list { grid-template-columns: 1fr 1fr; } }
+.pay-card { display: grid; gap: 10px; align-content: start; }
+.pay-card.paid { opacity: 0.85; }
+.pay-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; font-variant-numeric: tabular-nums; }
+.pay-grid dt { color: var(--text-2); }
+.pay-grid dd { margin: 0; text-align: right; }
+.pay-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }

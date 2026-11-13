@@ -3,3 +3,4 @@ export * from "./dates";
 export * from "./types";
 export * from "./checks";
 export * from "./i18n";
+export * from "./pay";
