@@ -96,7 +96,7 @@ vendors.get("/:id{[0-9]+}", async (c) => {
   if (!vendor) throw new HttpError(404, "not_found");
   const items = await c.env.DB.prepare("SELECT * FROM vendor_items WHERE vendor_id = ? ORDER BY active DESC, item").bind(id).all();
   const history = await c.env.DB.prepare(
-    `SELECT 'delivery' AS kind, d.id, d.business_date, d.item AS label, d.qty, d.unit, d.rate, d.agreed_rate, d.amount, d.photo_key, d.note, u.name AS by_name, d.created_at
+    `SELECT 'delivery' AS kind, d.id AS id, d.business_date AS business_date, d.item AS label, d.qty AS qty, d.unit AS unit, d.rate AS rate, d.agreed_rate AS agreed_rate, d.amount AS amount, d.photo_key AS photo_key, d.note AS note, u.name AS by_name, d.created_at AS created_at
        FROM deliveries d LEFT JOIN users u ON u.id = d.created_by WHERE d.vendor_id = ? AND d.deleted_at IS NULL
      UNION ALL
      SELECT 'payment', p.id, p.business_date, p.mode, NULL, NULL, NULL, NULL, p.amount, NULL, p.note, u.name, p.created_at

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router";
-import { rupeesToPaise } from "@mausam/shared";
+import { formatINR, rupeesToPaise } from "@mausam/shared";
 import { sendOrQueue } from "../lib/api";
 import { useApi, useDraft } from "../lib/hooks";
 import { useSession } from "../lib/session";
@@ -32,6 +32,9 @@ export function AddExpense() {
     photo_key: null as string | null,
     no_receipt: false,
     note: "",
+    item: "",
+    qty: "",
+    unit: "kg",
     client_id: newClientId(),
   });
   const [error, setError] = useState<unknown>(null);
@@ -53,6 +56,9 @@ export function AddExpense() {
         photo_key: draft.photo_key,
         has_receipt: !draft.no_receipt,
         note: draft.note,
+        item: draft.item || null,
+        qty: draft.qty ? Number(draft.qty) : null,
+        unit: draft.qty ? draft.unit : null,
         trip_id: tripId ? Number(tripId) : null,
         business_date: date ?? undefined,
         client_id: draft.client_id,
@@ -100,6 +106,26 @@ export function AddExpense() {
         <Field label={`${t("expense.shop")} (${t("common.optional")})`} htmlFor="shop">
           <input id="shop" className="input" value={draft.shop} onChange={(e) => set("shop", e.target.value)} />
         </Field>
+
+        <details>
+          <summary className="muted" style={{ cursor: "pointer", padding: "6px 0" }}>{t("expense.qty_toggle")} · {t("common.optional")}</summary>
+          <div className="form" style={{ marginTop: 12 }}>
+            <Field label={t("expense.item")} htmlFor="item">
+              <input id="item" className="input" value={draft.item} placeholder={t("expense.item_eg")} onChange={(e) => set("item", e.target.value)} />
+            </Field>
+            <div className="grid-2">
+              <Field label={t("delivery.qty")} htmlFor="qty">
+                <input id="qty" className="input" inputMode="decimal" value={draft.qty} onChange={(e) => set("qty", e.target.value.replace(/[^\d.]/g, ""))} />
+              </Field>
+              <Field label={t("vendor.unit")} htmlFor="unit">
+                <select id="unit" className="select" value={draft.unit} onChange={(e) => set("unit", e.target.value)}>
+                  {["kg", "g", "litre", "pcs", "dozen", "packet", "crate", "box", "bag"].map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </Field>
+            </div>
+            {draft.qty && paise ? <p className="muted small" style={{ margin: 0 }}>{formatINR(Math.round(paise / Number(draft.qty)))} / {draft.unit}</p> : null}
+          </div>
+        </details>
 
         <div className="field">
           <span className="label">{t("expense.mode")}</span>

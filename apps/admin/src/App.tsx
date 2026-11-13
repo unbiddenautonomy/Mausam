@@ -17,6 +17,10 @@ import { ReportsHub } from "./pages/reports/ReportsHub";
 import { Advances, Attendance, Payroll, PeopleHub } from "./pages/people/People";
 import { VendorDetail, VendorList } from "./pages/vendors/Vendors";
 import { MonthClose } from "./pages/Month";
+const CostsReport = lazy(() => import("./pages/reports/CostsReport").then((m) => ({ default: m.CostsReport })));
+const ItemsReport = lazy(() => import("./pages/reports/ItemsReport").then((m) => ({ default: m.ItemsReport })));
+const PricesReport = lazy(() => import("./pages/reports/PricesReport").then((m) => ({ default: m.PricesReport })));
+import { AuditPage } from "./pages/manage/Audit";
 const PosImport = lazy(() => import("./pages/manage/PosImport").then((m) => ({ default: m.PosImport })));
 const SalesReport = lazy(() => import("./pages/reports/SalesReport").then((m) => ({ default: m.SalesReport })));
 const ExpenseReport = lazy(() => import("./pages/reports/ExpenseReport").then((m) => ({ default: m.ExpenseReport })));
@@ -61,6 +65,10 @@ export function App() {
               <Route path="reports/reporting" element={<Suspense fallback={<Loading />}><ReportingReport /></Suspense>} />
               <Route path="people/pay" element={<Payroll />} />
               <Route path="month" element={<MonthClose />} />
+              <Route path="reports/costs" element={<Suspense fallback={<Loading />}><CostsReport /></Suspense>} />
+              <Route path="reports/items" element={<Suspense fallback={<Loading />}><ItemsReport /></Suspense>} />
+              <Route path="reports/prices" element={<Suspense fallback={<Loading />}><PricesReport /></Suspense>} />
+              <Route path="manage/audit" element={<AuditPage />} />
               <Route path="manage" element={<ManageHub />} />
               <Route path="manage/users" element={<Users />} />
               <Route path="manage/staff" element={<StaffPage />} />

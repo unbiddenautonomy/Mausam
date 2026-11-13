@@ -381,3 +381,7 @@ a.check { text-decoration: none; }
   .card { box-shadow: none; break-inside: avoid; }
   .cols { display: block !important; }
 }
+.audit-row > summary { list-style: none; cursor: pointer; }
+.audit-row > summary::-webkit-details-marker { display: none; }
+.audit-row + .audit-row > summary { border-top: 1px solid var(--border); }
+.audit-row:first-child > summary { border-top: 0; }

@@ -160,8 +160,8 @@ export function PosImport() {
               ))}
             </div>
             {kind === "items" && (cols.date === null || cols.date === undefined) && (
-              <Field label={t("pos.single_date")} htmlFor="pos-date">
-                <input id="pos-date" type="date" className="input" value={singleDate} onChange={(e) => setSingleDate(e.target.value)} />
+              <Field label={t("pos.single_date")} htmlFor="pos-single-date">
+                <input id="pos-single-date" type="date" className="input" value={singleDate} onChange={(e) => setSingleDate(e.target.value)} />
               </Field>
             )}
           </div>
