@@ -235,8 +235,10 @@ entries.get("/closes/:date", async (c) => {
     .first();
   const exp = await sumCashExpenses(c.env.DB, date);
   const settings = await loadSettings(c.env.DB);
+  const pos = await c.env.DB.prepare("SELECT total, cash, online, bills FROM pos_daily WHERE business_date = ?").bind(date).first();
   return c.json({
     close: mapClose(close),
+    pos,
     expenses_entered: exp.s,
     expenses_count: exp.n,
     locked: isLocked(date, new Date(), settings.lock_hour),
@@ -261,6 +263,10 @@ entries.put("/closes/:date", async (c) => {
     pos_photo_key: optionalText(b.pos_photo_key, 200),
     note: optionalText(b.note),
   };
+  if (input.pos_sales === null) {
+    const pos = await db.prepare("SELECT total FROM pos_daily WHERE business_date = ?").bind(date).first<{ total: number }>();
+    if (pos) input.pos_sales = pos.total;
+  }
   const settings = await loadSettings(db);
   const entered = await sumCashExpenses(db, date);
   const flags = checkClose(input, { expensesEntered: entered.s, tolerance: settings.cash_tolerance });
@@ -322,3 +328,26 @@ entries.put("/closes/:date", async (c) => {
   }
   return c.json({ close: mapClose({ ...row!, submitted_by_name: user.name }) });
 });
+
+/** After a POS import: fill in POS sales on closes that had none and re-run their checks. */
+export async function applyPosToCloses(db: D1Database, from: string, to: string): Promise<number> {
+  const { results } = await db
+    .prepare(
+      `SELECT d.*, p.total AS pos_total FROM day_closes d JOIN pos_daily p ON p.business_date = d.business_date
+       WHERE d.business_date BETWEEN ? AND ? AND (d.pos_sales IS NULL OR d.pos_sales != p.total)`,
+    )
+    .bind(from, to)
+    .all<Record<string, unknown> & { business_date: string; pos_total: number }>();
+  const settings = await loadSettings(db);
+  for (const r of results) {
+    const entered = await sumCashExpenses(db, r.business_date);
+    const input = {
+      total_counter: Number(r.total_counter), cash: Number(r.cash), online: Number(r.online), expenses: Number(r.expenses),
+      pos_sales: r.pos_total, memo_photo_key: (r.memo_photo_key as string | null) ?? null,
+    };
+    const flags = checkClose(input, { expensesEntered: entered.s, tolerance: settings.cash_tolerance });
+    if (bool(r.late)) flags.push({ code: "late" });
+    await db.prepare("UPDATE day_closes SET pos_sales = ?, flags = ? WHERE business_date = ?").bind(r.pos_total, JSON.stringify(flags), r.business_date).run();
+  }
+  return results.length;
+}

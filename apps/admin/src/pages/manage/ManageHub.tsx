@@ -10,6 +10,8 @@ export function ManageHub() {
         <NavCard to="/manage/users" icon="key" title={t("manage.users")} desc={t("manage.users_desc")} />
         <NavCard to="/manage/staff" icon="users" title={t("manage.staff")} desc={t("manage.staff_desc")} />
         <NavCard to="/manage/categories" icon="tag" title={t("manage.categories")} desc={t("manage.categories_desc")} />
+        <NavCard to="/manage/import" icon="upload" title={t("manage.import")} desc={t("pos.desc")} />
+        <NavCard to="/manage/audit" icon="history" title={t("manage.audit")} desc={t("audit.desc")} />
         <NavCard to="/manage/settings" icon="clock" title={t("manage.settings")} desc={t("manage.settings_desc")} />
       </div>
     </div>

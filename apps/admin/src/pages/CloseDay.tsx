@@ -27,6 +27,7 @@ interface CloseRes {
   expenses_entered: number;
   locked: boolean;
   tolerance: number;
+  pos: { total: number } | null;
 }
 
 const toRupees = (p: number | null | undefined) => (p === null || p === undefined ? "" : String(p / 100));
@@ -129,7 +130,7 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
     cash: toRupees(c?.cash),
     online: toRupees(c?.online),
     expenses: toRupees(c?.expenses),
-    pos: toRupees(c?.pos_sales),
+    pos: toRupees(c?.pos_sales ?? data.pos?.total),
     memo: c?.memo_photo_key ?? (null as string | null),
     posPhoto: c?.pos_photo_key ?? (null as string | null),
     note: c?.note ?? "",

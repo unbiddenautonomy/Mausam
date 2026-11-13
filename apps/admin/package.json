@@ -11,12 +11,15 @@
   },
   "dependencies": {
     "@mausam/shared": "workspace:*",
+    "papaparse": "^5.7.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^7.9.0",
+    "read-excel-file": "^9.3.17",
     "recharts": "^3.3.0"
   },
   "devDependencies": {
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.0",

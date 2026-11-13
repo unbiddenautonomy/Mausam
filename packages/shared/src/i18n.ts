@@ -404,6 +404,8 @@ const en = {
   "pos.done": "Imported {n} rows",
   "pos.bad_rows": "{n} rows skipped (no date or amount)",
   "pos.history": "Past imports",
+  "pos.header_row": "Row with the column names",
+  "pos.xls_note": "Old .xls files: open in Excel or Google Sheets and save as .xlsx or .csv first.",
 
   "reports.costs": "Costs and profit",
   "reports.costs_desc": "Food cost %, wages % and what's left",
@@ -425,6 +427,7 @@ const en = {
   "manage.import": "Import from POS",
   "manage.audit": "Change history",
   "audit.title": "Change history",
+  "audit.desc": "Who changed what, and when",
   "audit.created": "Created",
   "audit.updated": "Changed",
   "audit.deleted": "Deleted",

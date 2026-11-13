@@ -17,6 +17,7 @@ import { ReportsHub } from "./pages/reports/ReportsHub";
 import { Advances, Attendance, Payroll, PeopleHub } from "./pages/people/People";
 import { VendorDetail, VendorList } from "./pages/vendors/Vendors";
 import { MonthClose } from "./pages/Month";
+const PosImport = lazy(() => import("./pages/manage/PosImport").then((m) => ({ default: m.PosImport })));
 const SalesReport = lazy(() => import("./pages/reports/SalesReport").then((m) => ({ default: m.SalesReport })));
 const ExpenseReport = lazy(() => import("./pages/reports/ExpenseReport").then((m) => ({ default: m.ExpenseReport })));
 const PaymentsReport = lazy(() => import("./pages/reports/PaymentsReport").then((m) => ({ default: m.PaymentsReport })));
@@ -65,6 +66,7 @@ export function App() {
               <Route path="manage/staff" element={<StaffPage />} />
               <Route path="manage/categories" element={<Categories />} />
               <Route path="manage/settings" element={<SettingsPage />} />
+              <Route path="manage/import" element={<Suspense fallback={<Loading />}><PosImport /></Suspense>} />
             </>
           )}
           <Route path="*" element={<Navigate to="/" replace />} />
