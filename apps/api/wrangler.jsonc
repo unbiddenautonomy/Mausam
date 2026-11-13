@@ -1,0 +1,27 @@
+{
+  // Cloudflare Worker for the Mausam admin app and its API. See docs/cloudflare-setup.md before deploying.
+  "name": "mausam-admin",
+  "main": "src/index.ts",
+  // The same Worker serves the admin app's built files and the /api routes, so it's one deploy and one web address.
+  // Run `pnpm build` at the repo root first so ../admin/dist exists.
+  "assets": {
+    "directory": "../admin/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mausam",
+      // Replace with the id printed by `wrangler d1 create mausam`
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
+  // Every 15 minutes: check what's overdue and raise alerts
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "vars": { "ALLOWED_ORIGIN": "*" }
+}

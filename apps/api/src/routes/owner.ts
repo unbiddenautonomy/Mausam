@@ -1,0 +1,316 @@
+import { Hono } from "hono";
+import { addDays, businessDate, DEFAULT_SETTINGS, type CloseFlag } from "@mausam/shared";
+import type { AppEnv } from "../env";
+import { hashPin, normalisePhone, requireRole, validPin } from "../lib/auth";
+import { audit, bool, loadSettings } from "../lib/db";
+import { HttpError, isDate, optionalPaise, optionalText, requireDate, requireText } from "../lib/http";
+
+export const owner = new Hono<AppEnv>();
+
+/* ---------- Alerts (owner and managers can see; only unseen count matters for badges) ---------- */
+
+owner.get("/alerts", requireRole("owner", "manager"), async (c) => {
+  const user = c.get("user");
+  const audience = user.role === "owner" ? "('owner','manager','all')" : "('manager','all')";
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, type, business_date, severity, params, created_at, seen_at FROM alerts
+     WHERE audience IN ${audience} ORDER BY seen_at IS NOT NULL, created_at DESC LIMIT 100`,
+  ).all<Record<string, unknown>>();
+  return c.json({ alerts: results.map((r) => ({ ...r, params: JSON.parse(String(r.params)) })) });
+});
+
+owner.post("/alerts/seen", requireRole("owner", "manager"), async (c) => {
+  const b = await c.req.json<{ ids?: number[] }>();
+  const user = c.get("user");
+  if (Array.isArray(b.ids) && b.ids.length) {
+    const ids = b.ids.map(Number).filter(Number.isInteger).slice(0, 200);
+    await c.env.DB.prepare(
+      `UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE id IN (${ids.map(() => "?").join(",")}) AND seen_at IS NULL`,
+    )
+      .bind(user.id, ...ids)
+      .run();
+  } else {
+    await c.env.DB.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE seen_at IS NULL").bind(user.id).run();
+  }
+  return c.json({ ok: true });
+});
+
+/* ---------- Everything below is owner-only ---------- */
+
+owner.use("/summary", requireRole("owner"));
+owner.use("/reports/*", requireRole("owner"));
+owner.use("/users", requireRole("owner"));
+owner.use("/users/*", requireRole("owner"));
+owner.use("/staff", requireRole("owner"));
+owner.use("/staff/*", requireRole("owner"));
+owner.use("/settings", requireRole("owner"));
+owner.use("/manage/categories", requireRole("owner"));
+owner.use("/manage/categories/*", requireRole("owner"));
+
+const parseClose = (r: Record<string, unknown> | null) =>
+  r ? { ...r, flags: JSON.parse(String(r.flags ?? "[]")) as CloseFlag[], late: bool(r.late) } : null;
+
+/** Owner home: one business day (default yesterday) with comparison and context. */
+owner.get("/summary", async (c) => {
+  const db = c.env.DB;
+  const q = c.req.query("date");
+  const date = isDate(q) ? q : addDays(businessDate(), -1);
+  const lastWeek = addDays(date, -7);
+  const closeSql = `SELECT d.*, u.name AS submitted_by_name FROM day_closes d JOIN users u ON u.id = d.submitted_by WHERE d.business_date = ?`;
+  const [close, compare] = await Promise.all([
+    db.prepare(closeSql).bind(date).first<Record<string, unknown>>(),
+    db.prepare(closeSql).bind(lastWeek).first<Record<string, unknown>>(),
+  ]);
+  const { results: byCat } = await db
+    .prepare(
+      `SELECT c.key, c.name_en AS name, c.name_hi, c.name_kn, SUM(e.amount) AS amount FROM expenses e
+       JOIN expense_categories c ON c.id = e.category_id
+       WHERE e.business_date = ? AND e.deleted_at IS NULL GROUP BY c.id ORDER BY amount DESC`,
+    )
+    .bind(date)
+    .all();
+  const noReceipt = await db
+    .prepare("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE business_date = ? AND has_receipt = 0 AND deleted_at IS NULL")
+    .bind(date)
+    .first<{ s: number }>();
+  const entered = await db
+    .prepare("SELECT COALESCE(SUM(amount),0) AS s FROM expenses WHERE business_date = ? AND deleted_at IS NULL")
+    .bind(date)
+    .first<{ s: number }>();
+  const from = addDays(date, -6);
+  const { results: week } = await db
+    .prepare("SELECT business_date, total_counter, expenses, late FROM day_closes WHERE business_date BETWEEN ? AND ? ORDER BY business_date")
+    .bind(from, date)
+    .all<{ business_date: string; total_counter: number; expenses: number; late: number }>();
+  const map = new Map(week.map((w) => [w.business_date, w]));
+  const last7 = [];
+  for (let d = from; d <= date; d = addDays(d, 1)) {
+    const w = map.get(d);
+    last7.push({
+      business_date: d,
+      total_counter: w?.total_counter ?? null,
+      expenses: w?.expenses ?? null,
+      status: w ? (bool(w.late) ? "late" : "on_time") : "missing",
+    });
+  }
+  return c.json({
+    business_date: date,
+    close: parseClose(close),
+    compare: parseClose(compare),
+    expenses_entered: entered?.s ?? 0,
+    expenses_by_category: byCat,
+    no_receipt_total: noReceipt?.s ?? 0,
+    last7,
+  });
+});
+
+function rangeFrom(c: { req: { query: (k: string) => string | undefined } }) {
+  const to = isDate(c.req.query("to")) ? c.req.query("to")! : businessDate();
+  const days = Math.min(Math.max(Number(c.req.query("days") ?? 30) || 30, 7), 366);
+  return { from: addDays(to, -(days - 1)), to };
+}
+
+/** Daily totals for sales, cash/online split and reporting punctuality. */
+owner.get("/reports/daily", async (c) => {
+  const { from, to } = rangeFrom(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT business_date, total_counter, cash, online, expenses, pos_sales, late, flags, submitted_at
+     FROM day_closes WHERE business_date BETWEEN ? AND ? ORDER BY business_date`,
+  )
+    .bind(from, to)
+    .all<Record<string, unknown>>();
+  return c.json({ from, to, days: results.map((r) => ({ ...r, late: bool(r.late), flags: JSON.parse(String(r.flags)) })) });
+});
+
+/** Expenses per category per week (weeks start Monday). */
+owner.get("/reports/expenses", async (c) => {
+  const { from, to } = rangeFrom(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.business_date, c.key, c.name_en AS name, c.name_hi, c.name_kn, SUM(e.amount) AS amount,
+            SUM(CASE WHEN e.has_receipt = 0 THEN e.amount ELSE 0 END) AS no_receipt
+     FROM expenses e JOIN expense_categories c ON c.id = e.category_id
+     WHERE e.deleted_at IS NULL AND e.business_date BETWEEN ? AND ?
+     GROUP BY e.business_date, c.id ORDER BY e.business_date`,
+  )
+    .bind(from, to)
+    .all();
+  return c.json({ from, to, rows: results });
+});
+
+/* ---------- App users ---------- */
+
+owner.get("/users", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT id, name, phone, role, language, active, created_at FROM users ORDER BY role = 'owner' DESC, name",
+  ).all();
+  return c.json({ users: results.map((r) => ({ ...r, active: bool(r.active) })) });
+});
+
+owner.post("/users", async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const name = requireText(b.name, "name", 80);
+  const phone = normalisePhone(b.phone);
+  if (!phone) throw new HttpError(422, "invalid", { field: "phone" });
+  if (!validPin(b.pin)) throw new HttpError(422, "invalid", { field: "pin" });
+  const role = ["owner", "manager", "staff"].includes(String(b.role)) ? String(b.role) : "manager";
+  const language = ["en", "hi", "kn"].includes(String(b.language)) ? String(b.language) : "en";
+  const exists = await c.env.DB.prepare("SELECT id FROM users WHERE phone = ?").bind(phone).first();
+  if (exists) throw new HttpError(409, "phone_taken");
+  const { hash, salt } = await hashPin(b.pin);
+  const res = await c.env.DB.prepare(
+    "INSERT INTO users (name, phone, role, pin_hash, pin_salt, language) VALUES (?, ?, ?, ?, ?, ?)",
+  )
+    .bind(name, phone, role, hash, salt, language)
+    .run();
+  const id = Number(res.meta.last_row_id);
+  await audit(c.env.DB, "users", id, "create", null, { name, phone, role }, c.get("user").id);
+  return c.json({ id }, 201);
+});
+
+owner.patch("/users/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<Record<string, unknown>>();
+  const before = await c.env.DB.prepare("SELECT id, name, phone, role, language, active FROM users WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!before) throw new HttpError(404, "not_found");
+  if (id === c.get("user").id && (b.active === false || (b.role && b.role !== "owner"))) {
+    throw new HttpError(422, "cannot_demote_self");
+  }
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (b.name !== undefined) (sets.push("name = ?"), binds.push(requireText(b.name, "name", 80)));
+  if (b.role !== undefined) {
+    if (!["owner", "manager", "staff"].includes(String(b.role))) throw new HttpError(422, "invalid", { field: "role" });
+    sets.push("role = ?"), binds.push(b.role);
+  }
+  if (b.language !== undefined) sets.push("language = ?"), binds.push(String(b.language));
+  if (b.active !== undefined) sets.push("active = ?"), binds.push(b.active ? 1 : 0);
+  if (b.pin !== undefined) {
+    if (!validPin(b.pin)) throw new HttpError(422, "invalid", { field: "pin" });
+    const { hash, salt } = await hashPin(b.pin);
+    sets.push("pin_hash = ?", "pin_salt = ?", "failed_logins = 0", "locked_until = NULL");
+    binds.push(hash, salt);
+  }
+  if (!sets.length) return c.json({ ok: true });
+  await c.env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
+  if (b.active === false || b.pin !== undefined) await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id).run();
+  const { pin: _p, ...logged } = b;
+  await audit(c.env.DB, "users", id, "update", before, { ...logged, pin_changed: b.pin !== undefined }, c.get("user").id);
+  return c.json({ ok: true });
+});
+
+/* ---------- Staff ---------- */
+
+owner.get("/staff", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT * FROM staff ORDER BY active DESC, name").all();
+  return c.json({ staff: results.map((r) => ({ ...r, active: bool(r.active) })) });
+});
+
+function staffFields(b: Record<string, unknown>) {
+  const payType = b.pay_type ? String(b.pay_type) : null;
+  if (payType && !["monthly", "daily", "shift"].includes(payType)) throw new HttpError(422, "invalid", { field: "pay_type" });
+  return {
+    name: requireText(b.name, "name", 80),
+    name_local: optionalText(b.name_local, 80),
+    role: optionalText(b.role, 60) ?? "",
+    phone: b.phone ? normalisePhone(b.phone) : null,
+    pay_type: payType,
+    pay_rate: optionalPaise(b.pay_rate, "pay_rate"),
+    joined_on: isDate(b.joined_on) ? b.joined_on : null,
+    active: b.active === false ? 0 : 1,
+  };
+}
+
+owner.post("/staff", async (c) => {
+  const f = staffFields(await c.req.json());
+  const res = await c.env.DB.prepare(
+    "INSERT INTO staff (name, name_local, role, phone, pay_type, pay_rate, joined_on, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  )
+    .bind(f.name, f.name_local, f.role, f.phone, f.pay_type, f.pay_rate, f.joined_on, f.active)
+    .run();
+  const id = Number(res.meta.last_row_id);
+  await audit(c.env.DB, "staff", id, "create", null, f, c.get("user").id);
+  return c.json({ id }, 201);
+});
+
+owner.put("/staff/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const before = await c.env.DB.prepare("SELECT * FROM staff WHERE id = ?").bind(id).first();
+  if (!before) throw new HttpError(404, "not_found");
+  const f = staffFields(await c.req.json());
+  await c.env.DB.prepare(
+    "UPDATE staff SET name = ?, name_local = ?, role = ?, phone = ?, pay_type = ?, pay_rate = ?, joined_on = ?, active = ? WHERE id = ?",
+  )
+    .bind(f.name, f.name_local, f.role, f.phone, f.pay_type, f.pay_rate, f.joined_on, f.active, id)
+    .run();
+  await audit(c.env.DB, "staff", id, "update", before, f, c.get("user").id);
+  return c.json({ ok: true });
+});
+
+/* ---------- Expense categories ---------- */
+
+owner.get("/manage/categories", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT * FROM expense_categories ORDER BY active DESC, sort, name_en").all();
+  return c.json({ categories: results.map((r) => ({ ...r, active: bool(r.active) })) });
+});
+
+owner.post("/manage/categories", async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const name = requireText(b.name_en, "name_en", 60);
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || `cat_${Date.now()}`;
+  const res = await c.env.DB.prepare(
+    "INSERT INTO expense_categories (key, name_en, name_hi, name_kn, sort) VALUES (?, ?, ?, ?, 500) ON CONFLICT (key) DO UPDATE SET active = 1, name_en = excluded.name_en",
+  )
+    .bind(key, name, optionalText(b.name_hi, 60), optionalText(b.name_kn, 60))
+    .run();
+  return c.json({ id: Number(res.meta.last_row_id) }, 201);
+});
+
+owner.put("/manage/categories/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<Record<string, unknown>>();
+  await c.env.DB.prepare("UPDATE expense_categories SET name_en = ?, name_hi = ?, name_kn = ?, active = ? WHERE id = ?")
+    .bind(requireText(b.name_en, "name_en", 60), optionalText(b.name_hi, 60), optionalText(b.name_kn, 60), b.active === false ? 0 : 1, id)
+    .run();
+  return c.json({ ok: true });
+});
+
+/* ---------- Settings ---------- */
+
+owner.get("/settings", async (c) => c.json({ settings: await loadSettings(c.env.DB) }));
+
+owner.put("/settings", async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const stmts = [];
+  for (const [key, def] of Object.entries(DEFAULT_SETTINGS)) {
+    if (b[key] === undefined) continue;
+    let value: string;
+    if (typeof def === "number") {
+      const n = Number(b[key]);
+      if (!Number.isFinite(n) || n < 0) throw new HttpError(422, "invalid", { field: key });
+      value = String(Math.round(n));
+    } else {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[key]))) throw new HttpError(422, "invalid", { field: key });
+      value = String(b[key]);
+    }
+    stmts.push(
+      c.env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(key, value),
+    );
+  }
+  if (stmts.length) await c.env.DB.batch(stmts);
+  return c.json({ settings: await loadSettings(c.env.DB) });
+});
+
+/* ---------- Audit trail for one record ---------- */
+
+owner.get("/audit/:table/:id", requireRole("owner"), async (c) => {
+  const table = c.req.param("table");
+  if (!["expenses", "day_closes", "shopping_trips", "staff", "users"].includes(table)) throw new HttpError(404, "not_found");
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.*, u.name AS user_name FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+     WHERE a.table_name = ? AND a.row_id = ? ORDER BY a.at DESC`,
+  )
+    .bind(table, Number(c.req.param("id")))
+    .all();
+  return c.json({ entries: results });
+});
+
