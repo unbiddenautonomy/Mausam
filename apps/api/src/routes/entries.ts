@@ -12,7 +12,7 @@ entries.use("*", requireRole("owner", "manager"));
 const EXPENSE_SELECT = `
   SELECT e.id, e.business_date, e.trip_id, e.category_id, c.key AS category_key, c.name_en AS category_name,
          c.name_hi AS category_name_hi, c.name_kn AS category_name_kn,
-         e.shop, e.amount, e.mode, e.has_receipt, e.photo_key, e.note, e.created_by, u.name AS created_by_name, e.created_at
+         e.shop, e.amount, e.mode, e.has_receipt, e.photo_key, e.note, e.source, e.ref_id, e.created_by, u.name AS created_by_name, e.created_at
   FROM expenses e
   JOIN expense_categories c ON c.id = e.category_id
   JOIN users u ON u.id = e.created_by
@@ -151,6 +151,8 @@ entries.delete("/expenses/:id", async (c) => {
   const row = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.id = ?`).bind(id).first<Record<string, unknown>>();
   if (!row) throw new HttpError(404, "not_found");
   if (user.role !== "owner" && row.created_by !== user.id) throw new HttpError(403, "not_allowed");
+  // Advances and vendor payments are removed from their own page, which removes this line too.
+  if (row.source !== "manual") throw new HttpError(409, "linked_entry", { source: row.source });
   await assertDayOpen(c.env.DB, user, String(row.business_date));
   await c.env.DB.prepare("UPDATE expenses SET deleted_at = datetime('now') WHERE id = ?").bind(id).run();
   await audit(c.env.DB, "expenses", id, "delete", row, null, user.id);

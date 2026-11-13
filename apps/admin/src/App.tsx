@@ -14,6 +14,7 @@ import { History } from "./pages/History";
 import { Alerts } from "./pages/Alerts";
 import { More } from "./pages/More";
 import { ReportsHub } from "./pages/reports/ReportsHub";
+import { Advances, Attendance, Payroll, PeopleHub } from "./pages/people/People";
 const SalesReport = lazy(() => import("./pages/reports/SalesReport").then((m) => ({ default: m.SalesReport })));
 const ExpenseReport = lazy(() => import("./pages/reports/ExpenseReport").then((m) => ({ default: m.ExpenseReport })));
 const PaymentsReport = lazy(() => import("./pages/reports/PaymentsReport").then((m) => ({ default: m.PaymentsReport })));
@@ -41,6 +42,9 @@ export function App() {
           <Route path="entries/close" element={<CloseDay />} />
           <Route path="entries/close/:date" element={<CloseDay />} />
           <Route path="entries/history" element={<History />} />
+          <Route path="people" element={<PeopleHub />} />
+          <Route path="people/attendance" element={<Attendance />} />
+          <Route path="people/advances" element={<Advances />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="more" element={<More />} />
           {owner && (
@@ -50,6 +54,7 @@ export function App() {
               <Route path="reports/expenses" element={<Suspense fallback={<Loading />}><ExpenseReport /></Suspense>} />
               <Route path="reports/payments" element={<Suspense fallback={<Loading />}><PaymentsReport /></Suspense>} />
               <Route path="reports/reporting" element={<Suspense fallback={<Loading />}><ReportingReport /></Suspense>} />
+              <Route path="people/pay" element={<Payroll />} />
               <Route path="manage" element={<ManageHub />} />
               <Route path="manage/users" element={<Users />} />
               <Route path="manage/staff" element={<StaffPage />} />

@@ -49,6 +49,9 @@ export interface Expense {
   has_receipt: boolean;
   photo_key: string | null;
   note: string | null;
+  /** manual = typed by a manager; advance / vendor_payment = added by the app for money paid from the counter. */
+  source?: "manual" | "advance" | "vendor_payment";
+  ref_id?: number | null;
   created_by: number;
   created_by_name?: string;
   created_at: string;
