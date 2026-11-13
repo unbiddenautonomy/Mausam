@@ -35,6 +35,7 @@ export function Layout() {
     { to: "/", icon: "today", label: t("nav.today"), end: true },
     { to: "/entries", icon: "entries", label: t("nav.entries") },
     { to: "/people", icon: "users", label: t("nav.people") },
+    { to: "/vendors", icon: "truck", label: t("nav.vendors") },
   ];
   const insight: NavItem[] = isOwner ? [{ to: "/reports", icon: "reports", label: t("nav.reports") }] : [];
   const admin: NavItem[] = isOwner ? [{ to: "/manage", icon: "manage", label: t("nav.manage") }] : [];
