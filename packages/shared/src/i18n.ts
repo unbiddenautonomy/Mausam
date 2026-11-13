@@ -371,6 +371,10 @@ const en = {
   "month.bills_total": "Monthly bills",
   "month.left": "Left after costs",
   "month.print": "Print or save as PDF",
+  "month.close_confirm": "Close the month? Entries for this month will be locked until you reopen it.",
+  "month.days_sales": "{n} days with sales",
+  "month.bill_cash": "Cash from the counter",
+  "error.month_closed": "This month is closed. Reopen it under Month close to change it.",
 
   "pos.title": "Import from POS",
   "pos.desc": "Excel or CSV export of daily sales or item sales",

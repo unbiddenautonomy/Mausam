@@ -31,6 +31,9 @@ export async function audit(
 
 /** Managers can't change a day after it locks. The owner always can. */
 export async function assertDayOpen(db: D1Database, user: AuthUser, date: string): Promise<void> {
+  // A closed month is locked for everyone; the owner reopens it first.
+  const month = await db.prepare("SELECT 1 FROM month_closes WHERE month = ? AND status = 'closed'").bind(date.slice(0, 7)).first();
+  if (month) throw new HttpError(409, "month_closed");
   if (user.role === "owner") return;
   const settings = await loadSettings(db);
   if (isLocked(date, new Date(), settings.lock_hour)) throw new HttpError(409, "day_locked");
