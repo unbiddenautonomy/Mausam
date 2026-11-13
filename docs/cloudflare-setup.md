@@ -69,7 +69,7 @@ Paste the private key when it asks. Keep a copy in a password manager. If you ev
 
 ## 6. Turn on memo reading (optional)
 
-The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (a memo costs about a rupee).
+The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (roughly ₹2 to ₹5 per memo). Each day's memo can be read at most 6 times, so costs stay small.
 
 1. Make an account at console.anthropic.com, add a little credit, and create an API key.
 2. Save it as a secret:

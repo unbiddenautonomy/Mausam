@@ -29,6 +29,13 @@ const paths: Record<string, string> = {
   trash: "M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3",
   plus: "M12 5v14M5 12h14",
   lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+  sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
+  truck: "M2 6h12v10H2zM14 9h4l4 4v3h-8M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+  upload: "M12 16V4M7 9l5-5 5 5M4 16v4h16v-4",
+  print: "M6 9V3h12v6M6 18H4v-7h16v7h-2M8 14h8v7H8z",
+  file: "M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6",
+  person: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0",
+  checklist: "M4 6l2 2 3-3M4 13l2 2 3-3M4 20l2 2 3-3M12 7h8M12 14h8M12 21h8",
 };
 
 export type IconName = keyof typeof paths;
