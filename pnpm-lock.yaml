@@ -54,9 +54,15 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^5.20261113.1
         version: 5.20261113.1
+      http_ece:
+        specifier: ^1.2.1
+        version: 1.2.1
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(lightningcss@1.33.0)
       wrangler:
         specifier: ^4.40.0
         version: 4.162.0(@cloudflare/workers-types@5.20261113.1)
@@ -950,6 +956,10 @@ packages:
   hono@4.13.18:
     resolution: {integrity: sha512-H9q/E1XizaWstJxUW881dmLxEj+t/TrGGnyxINkm4+sK0qUwsMtFdo2BWI9Vs3cIS19MU6b6iCijoUoEf4f3DA==}
     engines: {node: '>=16.9.0'}
+
+  http_ece@1.2.1:
+    resolution: {integrity: sha512-+tzLoMYgXvicu60sVFoswTiu6BiQ6EX3DORRJQ3W2dNpNWCyZ3tcmRFZZ3jgVyw8ziWUCeUARKCkYDY6JgFx+w==}
+    engines: {node: '>=16'}
 
   immer@11.2.10:
     resolution: {integrity: sha512-pzANBj+0A9u+prdhBJ14DVi44vCvVUQzBa8DKt6I0AMCokPHtt722BK9IX5bFC70xUSU9TnzLRIJLTGqIzjEFw==}
@@ -2019,6 +2029,8 @@ snapshots:
     optional: true
 
   hono@4.13.18: {}
+
+  http_ece@1.2.1: {}
 
   immer@11.2.10: {}
 

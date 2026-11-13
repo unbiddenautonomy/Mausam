@@ -6,6 +6,7 @@ import { catName, clock } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { ErrorNote, Loading, Money, PageHead, Pill, Stat } from "../components/ui";
 import { FlagList } from "./CloseDay";
+import { NotifyCard } from "../components/NotifyCard";
 
 interface TodayData {
   business_date: string;
@@ -26,6 +27,7 @@ export function Today() {
   return (
     <div className="page">
       <PageHead title={t("today.greeting", { name: user!.name.split(" ")[0] })} subtitle={formatDay(d.business_date)} />
+      <NotifyCard compact />
       {user!.role === "owner" ? (
         <div className="cols">
           <OwnerOverview date={addDays(d.business_date, -1)} />

@@ -7,6 +7,7 @@ import { auth } from "./routes/auth";
 import { entries } from "./routes/entries";
 import { owner } from "./routes/owner";
 import { photos } from "./routes/photos";
+import { push } from "./routes/push";
 import { runChecks } from "./cron";
 
 const app = new Hono<AppEnv>().basePath("/api");
@@ -21,6 +22,7 @@ app.route("/auth", auth);
 
 app.use("*", requireAuth);
 app.route("/photos", photos);
+app.route("/push", push);
 app.route("/", entries);
 app.route("/", owner);
 

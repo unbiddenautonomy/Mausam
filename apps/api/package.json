@@ -9,7 +9,8 @@
     "db:migrate:local": "wrangler d1 migrations apply mausam --local",
     "db:migrate:remote": "wrangler d1 migrations apply mausam --remote",
     "typecheck": "tsc -p .",
-    "db:seed:demo": "node scripts/demo-seed.mjs > .wrangler/demo.sql && wrangler d1 execute mausam --local --file .wrangler/demo.sql"
+    "db:seed:demo": "node scripts/demo-seed.mjs > .wrangler/demo.sql && wrangler d1 execute mausam --local --file .wrangler/demo.sql",
+    "test": "vitest run"
   },
   "dependencies": {
     "@mausam/shared": "workspace:*",
@@ -17,7 +18,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261113.1",
+    "http_ece": "^1.2.1",
     "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
     "wrangler": "^4.40.0"
   }
 }

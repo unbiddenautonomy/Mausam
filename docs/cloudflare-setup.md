@@ -46,7 +46,41 @@ Then:
 npx wrangler r2 bucket create mausam-photos
 ```
 
-## 5. Publish
+## 5. Turn on phone reminders
+
+Reminders are sent as phone notifications. They need a pair of keys, which you make once.
+
+```bash
+cd apps/api
+node scripts/vapid-keys.mjs
+```
+
+It prints two lines.
+
+1. Copy the **public key** into `apps/api/wrangler.jsonc`, in `"VAPID_PUBLIC_KEY": ""`, between the quotes.
+2. In the same file, change `"VAPID_SUBJECT"` to your own email, written as `mailto:you@example.com`. Push services only use it to contact you if something goes wrong.
+3. Save the **private key** as a secret. It's never written in a file:
+
+```bash
+npx wrangler secret put VAPID_PRIVATE_KEY
+```
+
+Paste the private key when it asks. Keep a copy in a password manager. If you ever make new keys, every phone has to turn reminders on again.
+
+## 6. Turn on memo reading (optional)
+
+The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (a memo costs about a rupee).
+
+1. Make an account at console.anthropic.com, add a little credit, and create an API key.
+2. Save it as a secret:
+
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+
+Without this key, everything else works and the "Read memo" button just says it isn't set up.
+
+## 7. Publish
 
 From the repo root:
 
@@ -54,9 +88,9 @@ From the repo root:
 pnpm ship
 ```
 
-This builds the app and uploads it. At the end, it prints your web address.
+This builds the app and uploads it. At the end, it prints your web address. Secrets you saved earlier stay in place.
 
-## 6. First login
+## 8. First login
 
 1. Open the web address on your phone.
 2. Create the owner account: your name, phone number, and a 4-digit PIN.
@@ -65,11 +99,11 @@ This builds the app and uploads it. At the end, it prints your web address.
 5. On each manager's phone:
    - Open the address in Chrome.
    - Tap the **⋮ menu → Add to Home screen**.
-   - Allow notifications when asked.
+   - Open **More → Turn on reminders** and allow notifications. Tap **Send a test** to check it works.
    - On Xiaomi, Oppo, Vivo and Realme phones, also go to **Settings → Battery → Chrome → No restrictions**. Otherwise reminders can arrive late.
    - On iPhone, use Safari: tap **Share → Add to Home Screen**. This needs iOS 16.4 or newer.
 
-## 7. Publishing updates later
+## 9. Publishing updates later
 
 ```bash
 git pull
@@ -78,7 +112,7 @@ pnpm --filter @mausam/api db:migrate:remote   # only when a new file was added t
 pnpm ship
 ```
 
-## 8. Using your own domain later (optional)
+## 10. Using your own domain later (optional)
 
 Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go to **Workers & Pages → mausam-admin → Settings → Domains & Routes → Add custom domain**, and enter `admin.mausam.in`.
 

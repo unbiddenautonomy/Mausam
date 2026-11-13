@@ -3,6 +3,7 @@ import { businessDate, checkClose, isLocked, type CloseFlag } from "@mausam/shar
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { assertDayOpen, audit, bool, loadSettings } from "../lib/db";
+import { alertParams, notify } from "../lib/notify";
 import { HttpError, isDate, optionalPaise, optionalText, requireDate, requirePaise } from "../lib/http";
 
 export const entries = new Hono<AppEnv>();
@@ -308,6 +309,14 @@ entries.put("/closes/:date", async (c) => {
       )
       .bind(date, JSON.stringify({ count: serious.length }))
       .run();
+    c.executionCtx.waitUntil(
+      notify(
+        c.env,
+        "owner",
+        { title: "push.alert_title", body: "alert.close_flag", params: alertParams("close_flag", date, { count: serious.length }) },
+        { url: `/entries/close/${date}`, dedupeKey: `alert:close_flag:${date}:${JSON.stringify(serious)}` },
+      ),
+    );
   }
   return c.json({ close: mapClose({ ...row!, submitted_by_name: user.name }) });
 });
