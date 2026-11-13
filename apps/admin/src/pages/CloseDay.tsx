@@ -7,6 +7,7 @@ import { useSession } from "../lib/session";
 import { timeIST } from "../lib/format";
 import { Icon } from "../components/Icon";
 import { ErrorNote, Field, Loading, MoneyInput, PageHead, PhotoInput, useToast } from "../components/ui";
+import { MemoReader, type MemoResult } from "../components/MemoReader";
 
 interface CloseRow {
   total_counter: number;
@@ -58,7 +59,7 @@ export function CloseDay() {
       <PageHead title={t("close.title")} subtitle={t("close.for", { date: formatDay(date) })} back={params.date ? "/entries/history" : "/entries"} />
       {locked && <div className="check warn"><Icon name="lock" /><span className="t">{t("common.locked")}</span></div>}
       {close && !editing ? (
-        <Submitted close={close} onEdit={canEdit ? () => setEditing(true) : undefined} />
+        <Submitted date={date} close={close} onEdit={canEdit ? () => setEditing(true) : undefined} />
       ) : canEdit ? (
         <CloseForm date={date} data={res.data} onDone={() => (setEditing(false), res.reload())} />
       ) : null}
@@ -66,7 +67,7 @@ export function CloseDay() {
   );
 }
 
-function Submitted({ close, onEdit }: { close: CloseRow; onEdit?: () => void }) {
+function Submitted({ date, close, onEdit }: { date: string; close: CloseRow; onEdit?: () => void }) {
   const t = useSession().t;
   const rows: [string, number | null][] = [
     [t("close.total_counter"), close.total_counter],
@@ -91,6 +92,11 @@ function Submitted({ close, onEdit }: { close: CloseRow; onEdit?: () => void }) 
         ))}
         {close.note && <div className="row"><span className="grow muted">{close.note}</span></div>}
       </div>
+      <MemoReader
+        date={date}
+        photoKey={close.memo_photo_key}
+        typed={{ total: close.total_counter, cash: close.cash, online: close.online, expenses: close.expenses }}
+      />
       <div className="grid-2">
         {close.memo_photo_key && (
           <a href={photoUrl(close.memo_photo_key)} target="_blank" rel="noreferrer" className="card" style={{ display: "grid", gap: 8 }}>
@@ -175,6 +181,15 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
     }
   }
 
+  const useMemo = (r: MemoResult) =>
+    setF((x) => ({
+      ...x,
+      total: r.total !== null ? toRupees(r.total) : x.total,
+      cash: r.cash !== null ? toRupees(r.cash) : x.cash,
+      online: r.online !== null ? toRupees(r.online) : x.online,
+      expenses: r.expenses_total !== null ? toRupees(r.expenses_total) : x.expenses,
+    }));
+
   const money = (key: "total" | "cash" | "online" | "expenses" | "pos", label: string, help: string) => (
     <Field label={label} help={help} htmlFor={key}>
       <MoneyInput id={key} value={f[key]} onChange={(x) => set(key, x)} />
@@ -185,6 +200,7 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
     <div className="cols">
       <div className="form">
         <PhotoInput label={t("close.memo_photo")} kind="memo" value={f.memo} onChange={(k) => set("memo", k)} />
+        <MemoReader date={date} photoKey={f.memo} typed={{ total: v.total_counter, cash: v.cash, online: v.online, expenses: v.expenses }} onUse={useMemo} />
         {money("total", t("close.total_counter"), t("close.total_help"))}
         <div className="grid-2">
           {money("cash", t("close.cash"), t("close.cash_help"))}

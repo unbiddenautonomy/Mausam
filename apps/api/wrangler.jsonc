@@ -30,6 +30,6 @@
     "VAPID_PUBLIC_KEY": "",
     "VAPID_SUBJECT": "mailto:owner@example.com",
     // Model used to read handwritten memos. The API key goes in a secret: `npx wrangler secret put ANTHROPIC_API_KEY`.
-    "MEMO_MODEL": "claude-sonnet-5-5"
+    "MEMO_MODEL": "claude-opus-5-5"
   }
 }
