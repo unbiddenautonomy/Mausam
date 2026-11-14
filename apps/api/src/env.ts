@@ -5,7 +5,7 @@ export interface Env {
   PHOTOS: R2Bucket;
   ALLOWED_ORIGIN: string;
   VAPID_PUBLIC_KEY?: string;
-  VAPID_PRIVATE_KEY?: string; // secret: set with `wrangler secret put VAPID_PRIVATE_KEY`
+  VAPID_PRIVATE_KEY?: string; // optional; otherwise keys are made and kept in settings
   VAPID_SUBJECT?: string;
   ANTHROPIC_API_KEY?: string; // secret: for reading handwritten memos
   MEMO_MODEL?: string;

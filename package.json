@@ -6,9 +6,10 @@
     "dev:api": "pnpm --filter @mausam/api dev",
     "dev:admin": "pnpm --filter @mausam/admin dev",
     "build": "pnpm --filter @mausam/admin build",
-    "ship": "pnpm build && pnpm --filter @mausam/api run deploy",
+    "ship": "pnpm build && pnpm --filter @mausam/api release",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "release": "pnpm --filter @mausam/api release"
   },
   "packageManager": "pnpm@10.28.0",
   "pnpm": {

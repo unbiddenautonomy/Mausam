@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { HttpError } from "../lib/http";
-import { vapidFrom } from "../lib/notify";
+import { getVapid } from "../lib/notify";
 import { sendPush } from "../lib/webpush";
 
 export const push = new Hono<AppEnv>();
 
-/** The public key the browser needs to subscribe. `null` when push isn't set up on the server yet. */
-push.get("/key", (c) => c.json({ key: vapidFrom(c.env)?.publicKey ?? null }));
+/** The public key the browser needs to subscribe. The Worker makes its keys on first use. */
+push.get("/key", async (c) => c.json({ key: (await getVapid(c.env, new URL(c.req.url).origin)).publicKey }));
 
 push.post("/subscribe", async (c) => {
   const b = await c.req.json<{ endpoint?: string; keys?: { p256dh?: string; auth?: string } }>();
@@ -29,8 +29,7 @@ push.post("/unsubscribe", async (c) => {
 
 /** Sends a test notification to all of this person's devices. */
 push.post("/test", async (c) => {
-  const vapid = vapidFrom(c.env);
-  if (!vapid) throw new HttpError(409, "push_not_configured");
+  const vapid = await getVapid(c.env, new URL(c.req.url).origin);
   const { results } = await c.env.DB.prepare("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?")
     .bind(c.get("user").id)
     .all<{ endpoint: string; p256dh: string; auth: string }>();
