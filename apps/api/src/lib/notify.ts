@@ -1,10 +1,38 @@
 import { formatDay, formatINR, translate, type Lang, type MessageKey } from "@mausam/shared";
 import type { Env } from "../env";
-import { sendPush, type VapidKeys } from "./webpush";
+import { generateVapidKeys, sendPush, type VapidKeys } from "./webpush";
 
-export function vapidFrom(env: Env): VapidKeys | null {
-  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return null;
-  return { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT || "mailto:admin@example.com" };
+/**
+ * Reminder (VAPID) keys. If VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are set on the Worker they win.
+ * Otherwise the Worker makes a key pair the first time it's needed and keeps it in the settings table,
+ * so nobody has to generate keys by hand. The private key never leaves the server.
+ */
+export async function getVapid(env: Env, origin?: string): Promise<VapidKeys> {
+  const db = env.DB;
+  if (origin) await db.prepare("INSERT INTO settings (key, value) VALUES ('app_origin', ?) ON CONFLICT (key) DO NOTHING").bind(origin).run();
+  const rows = await db
+    .prepare("SELECT key, value FROM settings WHERE key IN ('vapid_public', 'vapid_private', 'app_origin')")
+    .all<{ key: string; value: string }>();
+  const saved = new Map(rows.results.map((r) => [r.key, r.value]));
+  const subject = env.VAPID_SUBJECT || saved.get("app_origin") || origin || "https://mausam.workers.dev";
+  if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) return { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject };
+  let publicKey = saved.get("vapid_public");
+  let privateKey = saved.get("vapid_private");
+  if (!publicKey || !privateKey) {
+    const fresh = await generateVapidKeys();
+    // Two requests could race here; ON CONFLICT keeps the first pair, and we re-read it.
+    await db.batch([
+      db.prepare("INSERT INTO settings (key, value) VALUES ('vapid_public', ?) ON CONFLICT (key) DO NOTHING").bind(fresh.publicKey),
+      db.prepare("INSERT INTO settings (key, value) VALUES ('vapid_private', ?) ON CONFLICT (key) DO NOTHING").bind(fresh.privateKey),
+    ]);
+    const again = await db
+      .prepare("SELECT key, value FROM settings WHERE key IN ('vapid_public', 'vapid_private')")
+      .all<{ key: string; value: string }>();
+    const m = new Map(again.results.map((r) => [r.key, r.value]));
+    publicKey = m.get("vapid_public")!;
+    privateKey = m.get("vapid_private")!;
+  }
+  return { publicKey, privateKey, subject };
 }
 
 export type Audience = "owner" | "manager" | "all";
@@ -39,8 +67,7 @@ export async function notify(
     const res = await db.prepare("INSERT INTO notifications_sent (key) VALUES (?) ON CONFLICT (key) DO NOTHING").bind(opts.dedupeKey).run();
     if (!res.meta.changes) return 0;
   }
-  const vapid = vapidFrom(env);
-  if (!vapid) return 0;
+  const vapid = await getVapid(env);
   const roles = audience === "owner" ? ["owner"] : audience === "manager" ? ["manager"] : ["owner", "manager"];
   const { results } = await db
     .prepare(

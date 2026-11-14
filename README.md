@@ -34,9 +34,9 @@ Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
 
 ## Put it online
 
-Start with [docs/go-live-checklist.md](docs/go-live-checklist.md), which links to the detailed [docs/cloudflare-setup.md](docs/cloudflare-setup.md). GitHub checks every pull request (types, tests, build), and can publish automatically once Cloudflare keys are added (checklist section 4).
+Cloudflare connects to this GitHub repo and publishes the app every time code is pushed to `main`, so no particular computer is needed. Set it up once from a browser by following [docs/cloudflare-setup.md](docs/cloudflare-setup.md). Database changes in `apps/api/migrations` are applied automatically as part of each publish.
 
-The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
+The steps in order, with checks, are in [docs/go-live-checklist.md](docs/go-live-checklist.md). GitHub also checks every pull request (types, tests, build). The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 
 ## How the money works
 
@@ -91,11 +91,11 @@ The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 - Admin pages: **Manage → Menu** (items, prices, GST), **Manage → Tables**, and **POS bills** (every bill by day).
 - See [docs/pos-plan.md](docs/pos-plan.md) for the design and what's next.
 
-## Optional features that need keys
+## Optional features
 
-- **Phone reminders:** run `node apps/api/scripts/vapid-keys.mjs` once, then follow section 5 of the setup guide.
-- **Memo reading:** add an Anthropic API key as a Worker secret (section 6 of the setup guide). Without it, the memo button explains that it's off.
-- **Setup code:** a `SETUP_CODE` secret protects the first-run owner screen (section 6b). For local secrets, copy `apps/api/.dev.vars.example` to `apps/api/.dev.vars`.
+- **Phone reminders** work with no setup. The Worker makes its own reminder (VAPID) keys the first time someone turns reminders on, and keeps them in the database. To use your own keys instead, set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` on the Worker; `node apps/api/scripts/vapid-keys.mjs` makes a pair.
+- **Memo reading** needs an Anthropic API key, added as a Worker secret named `ANTHROPIC_API_KEY` (section 5 of the setup guide). Without it, the memo button explains that it's off.
+- **Setup code:** a `SETUP_CODE` secret protects the first-run owner screen (section 6 of the setup guide). For local secrets, copy `apps/api/.dev.vars.example` to `apps/api/.dev.vars`.
 
 ## Safety built in
 
@@ -105,4 +105,4 @@ The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 
 ## Database changes
 
-New tables and columns are in `apps/api/migrations` (`0001` to `0005`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer, and the setup guide has the command for Cloudflare.
+New tables and columns are in `apps/api/migrations` (`0001` to `0005`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer. Online, each publish applies them automatically (`pnpm release`).
