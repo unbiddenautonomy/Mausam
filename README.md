@@ -33,7 +33,9 @@ Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
 
 ## Put it online
 
-Follow [docs/cloudflare-setup.md](docs/cloudflare-setup.md).
+Start with [docs/go-live-checklist.md](docs/go-live-checklist.md), which links to the detailed [docs/cloudflare-setup.md](docs/cloudflare-setup.md). GitHub checks every pull request (types, tests, build), and can publish automatically once Cloudflare keys are added (checklist section 4).
+
+The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 
 ## How the money works
 
@@ -84,6 +86,13 @@ Follow [docs/cloudflare-setup.md](docs/cloudflare-setup.md).
 
 - **Phone reminders:** run `node apps/api/scripts/vapid-keys.mjs` once, then follow section 5 of the setup guide.
 - **Memo reading:** add an Anthropic API key as a Worker secret (section 6 of the setup guide). Without it, the memo button explains that it's off.
+- **Setup code:** a `SETUP_CODE` secret protects the first-run owner screen (section 6b). For local secrets, copy `apps/api/.dev.vars.example` to `apps/api/.dev.vars`.
+
+## Safety built in
+
+- Logins: PINs are hashed; 5 wrong tries lock an account for 15 minutes, and one address can try 10 logins a minute.
+- Nightly database backup to R2 (35 days kept), plus D1 Time Travel. Restore steps are in the setup guide.
+- Security headers on the app and API, no cross-site API access by default, and request logs in the Cloudflare dashboard.
 
 ## Database changes
 

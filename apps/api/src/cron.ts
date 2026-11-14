@@ -116,6 +116,7 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
     }
   }
 
-  // Keep the dedupe table small.
+  // Keep the dedupe table small, and drop expired logins.
   await db.prepare("DELETE FROM notifications_sent WHERE at < datetime('now', '-14 days')").run();
+  await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now.toISOString()).run();
 }

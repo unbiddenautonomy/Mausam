@@ -1,5 +1,7 @@
 # Putting Mausam online with Cloudflare
 
+> Doing this for the first time? Follow [go-live-checklist.md](go-live-checklist.md); it puts these steps in order and adds the checks.
+
 This takes about 30 minutes the first time. You do it once; after that, publishing an update is a single command.
 
 At the end you'll have one web address, such as `https://mausam-admin.<your-name>.workers.dev`, that serves both the app and its API. It's free to start. Cloudflare's $5/month plan is only needed once usage grows.
@@ -80,6 +82,16 @@ npx wrangler secret put ANTHROPIC_API_KEY
 
 Without this key, everything else works and the "Read memo" button just says it isn't set up.
 
+## 6b. Protect the first login (recommended)
+
+Until the owner account exists, anyone who opens the web address could create it. Pick a setup code and save it as a secret:
+
+```bash
+npx wrangler secret put SETUP_CODE
+```
+
+The first-run screen will then ask for it. Once the owner exists, the code isn't used again.
+
 ## 7. Publish
 
 From the repo root:
@@ -112,13 +124,26 @@ pnpm --filter @mausam/api db:migrate:remote   # only when a new file was added t
 pnpm ship
 ```
 
+Or let GitHub do it: see section 4 of the [go-live checklist](go-live-checklist.md). The **Deploy** workflow applies database changes and publishes whenever you run it (or on every merge to `main`, if you turn that on).
+
 ## 10. Using your own domain later (optional)
 
 Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go to **Workers & Pages → mausam-admin → Settings → Domains & Routes → Add custom domain**, and enter `admin.mausam.in`.
 
 ## Things to know
 
-- **Backups:** D1 keeps 30 days of history automatically. You can restore from the dashboard under **D1 → mausam → Time Travel**.
+- **Backups, two layers:**
+  - D1 Time Travel keeps 30 days of history (7 days on the free plan). Restore from **D1 → mausam → Time Travel**, or `npx wrangler d1 time-travel restore mausam --timestamp=<ISO time>`.
+  - Every day after 4 am India time, the Worker writes a full copy to R2 as `backups/YYYY-MM-DD.json` and keeps 35 days (`BACKUP_DAYS` in `wrangler.jsonc`). Login sessions aren't included, so after a restore everyone logs in again.
+- **Restoring a nightly backup:**
+  ```bash
+  cd apps/api
+  npx wrangler r2 object get mausam-photos/backups/2026-11-14.json --remote --file backup.json
+  node scripts/restore-backup.mjs backup.json > restore.sql
+  npx wrangler d1 execute mausam --remote --file restore.sql
+  ```
+  This replaces all data with the backup. To be safe, download today's backup first, so you can undo.
+- **Login protection:** 5 wrong PINs lock that account for 15 minutes, and one internet address can try at most 10 logins a minute.
 - **Photos** are private and only shown to logged-in users.
 - **Reminders:** the Worker checks for overdue reports every 15 minutes, using the `triggers.crons` setting in `wrangler.jsonc`.
 - **Costs:** Workers, D1 and R2 all have free allowances that should cover a single restaurant at first. Check https://developers.cloudflare.com/workers/platform/pricing/ for current limits.
@@ -131,4 +156,7 @@ Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go t
 | `R2 bucket not found` | Step 4: create the `mausam-photos` bucket, with exactly that name. |
 | The app opens, but login says "Something went wrong" | The tables are missing. Run `pnpm --filter @mausam/api db:migrate:remote`. |
 | `Assets directory does not exist` | Run `pnpm build` first. `pnpm ship` does this for you. |
-| You want to see errors as they happen | `cd apps/api && npx wrangler tail` streams the live logs. |
+| You want to see errors as they happen | `cd apps/api && npx wrangler tail` streams the live logs, or open **Workers & Pages → mausam-admin → Logs**. |
+| First-run screen says the setup code is wrong | It must match the `SETUP_CODE` secret exactly. Set it again with `npx wrangler secret put SETUP_CODE`. |
+| Deploy workflow fails on "placeholder database id" | Commit the real `database_id` in `apps/api/wrangler.jsonc`. |
+| `/api/health` says `"ok": false` | The database isn't reachable or has no tables. Run `pnpm --filter @mausam/api db:migrate:remote`. |
