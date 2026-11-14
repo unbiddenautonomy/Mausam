@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatINR, rupeesToPaise, shoppingGap } from "@mausam/shared";
-import { api, ApiError, photoUrl } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, timeIST } from "../lib/format";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorNote, Field, Loading, Money, MoneyInput, PageHead, Pill, Stat, useToast } from "../components/ui";
+import { Empty, ErrorNote, Field, Loading, Money, MoneyInput, PageHead, Photo, Pill, Stat, useToast } from "../components/ui";
 
 interface Trip {
   id: number;
@@ -130,7 +130,7 @@ function TripView({ id }: { id: number }) {
           {expenses.length === 0 && <Empty>{t("shopping.no_bills")}</Empty>}
           {expenses.map((e) => (
             <div className="row" key={e.id}>
-              {e.photo_key ? <img className="thumb" src={photoUrl(e.photo_key)} alt="" /> : <span className="thumb" style={{ display: "grid", placeItems: "center" }}><Icon name="receipt" /></span>}
+              {e.photo_key ? <Photo className="thumb" photoKey={e.photo_key} /> : <span className="thumb" style={{ display: "grid", placeItems: "center" }}><Icon name="receipt" /></span>}
               <span className="grow">
                 <strong className="ellipsis">{catName(e, lang)}{e.shop ? ` · ${e.shop}` : ""}</strong>
                 <span className="muted small">

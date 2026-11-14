@@ -144,3 +144,21 @@ export async function uploadPhoto(file: File, kind: string): Promise<string> {
 }
 
 export const photoUrl = (key: string) => `/api/photos/${key}`;
+
+/**
+ * Photos need the login token, which an <img src> can't send. Fetch them with the token and hand back a
+ * local object URL instead. Results are kept for the session so lists don't download twice.
+ */
+const photoCache = new Map<string, Promise<string>>();
+export function loadPhoto(key: string): Promise<string> {
+  let p = photoCache.get(key);
+  if (!p) {
+    p = fetch(photoUrl(key), { headers: token ? { Authorization: `Bearer ${token}` } : {} }).then(async (res) => {
+      if (!res.ok) throw new ApiError(res.status, "photo_failed");
+      return URL.createObjectURL(await res.blob());
+    });
+    p.catch(() => photoCache.delete(key));
+    photoCache.set(key, p);
+  }
+  return p;
+}

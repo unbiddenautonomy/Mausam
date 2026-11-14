@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { businessDate, checkClose, formatDay, formatINR, rupeesToPaise, type CloseFlag } from "@mausam/shared";
-import { photoUrl, sendOrQueue } from "../lib/api";
+import { sendOrQueue } from "../lib/api";
 import { useApi, useDraft } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { timeIST } from "../lib/format";
 import { Icon } from "../components/Icon";
-import { ErrorNote, Field, Loading, MoneyInput, PageHead, PhotoInput, useToast } from "../components/ui";
+import { ErrorNote, Field, Loading, MoneyInput, PageHead, Photo, PhotoInput, PhotoLink, useToast } from "../components/ui";
 import { MemoReader, type MemoResult } from "../components/MemoReader";
 
 interface CloseRow {
@@ -100,16 +100,16 @@ function Submitted({ date, close, onEdit }: { date: string; close: CloseRow; onE
       />
       <div className="grid-2">
         {close.memo_photo_key && (
-          <a href={photoUrl(close.memo_photo_key)} target="_blank" rel="noreferrer" className="card" style={{ display: "grid", gap: 8 }}>
+          <PhotoLink photoKey={close.memo_photo_key} className="card" style={{ display: "grid", gap: 8 }}>
             <strong>{t("close.memo_photo")}</strong>
-            <img src={photoUrl(close.memo_photo_key)} alt={t("close.memo_photo")} style={{ width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 8 }} />
-          </a>
+            <Photo photoKey={close.memo_photo_key} alt={t("close.memo_photo")} style={{ width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 8 }} />
+          </PhotoLink>
         )}
         {close.pos_photo_key && (
-          <a href={photoUrl(close.pos_photo_key)} target="_blank" rel="noreferrer" className="card" style={{ display: "grid", gap: 8 }}>
+          <PhotoLink photoKey={close.pos_photo_key} className="card" style={{ display: "grid", gap: 8 }}>
             <strong>{t("close.pos_photo")}</strong>
-            <img src={photoUrl(close.pos_photo_key)} alt={t("close.pos_photo")} style={{ width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 8 }} />
-          </a>
+            <Photo photoKey={close.pos_photo_key} alt={t("close.pos_photo")} style={{ width: "100%", maxHeight: 360, objectFit: "contain", borderRadius: 8 }} />
+          </PhotoLink>
         )}
       </div>
       {onEdit && (
