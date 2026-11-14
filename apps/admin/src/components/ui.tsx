@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { formatINR, type MessageKey } from "@mausam/shared";
-import { ApiError, photoUrl, uploadPhoto } from "../lib/api";
+import { formatINR, rupeesToPaise, type MessageKey } from "@mausam/shared";
+import { ApiError, loadPhoto, uploadPhoto } from "../lib/api";
 import { useT } from "../lib/session";
 import { Icon, type IconName } from "./Icon";
 
@@ -70,7 +70,12 @@ export function Field({ label, help, error, children, htmlFor }: { label: string
 
 /** Rupee input. Value is the text the person typed; parse with rupeesToPaise. */
 export function MoneyInput({ id, value, onChange, autoFocus }: { id?: string; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
+  const t = useT();
+  const paise = value ? rupeesToPaise(value) : null;
+  // Read the amount back in Indian format (₹1,25,000) so an extra zero is easy to spot.
+  const echo = paise && paise >= 100_000 ? t("money.you_typed", { amount: formatINR(paise) }) : null;
   return (
+    <>
     <div className="money">
       <input
         id={id}
@@ -83,6 +88,8 @@ export function MoneyInput({ id, value, onChange, autoFocus }: { id?: string; va
         onChange={(e) => onChange(e.target.value.replace(/[^\d.,]/g, ""))}
       />
     </div>
+    {echo && <span className="money-echo num" aria-live="polite">{echo}</span>}
+    </>
   );
 }
 
@@ -121,7 +128,8 @@ export function PhotoInput({ label, kind, value, onChange }: { label: string; ki
       setBusy(false);
     }
   }
-  const src = preview ?? (value ? photoUrl(value) : null);
+  const stored = usePhoto(preview ? null : value);
+  const src = preview ?? stored;
   return (
     <div className="field">
       <label htmlFor={id} className="photo-input">
@@ -134,6 +142,35 @@ export function PhotoInput({ label, kind, value, onChange }: { label: string; ki
       </label>
       {error && <span className="error">{error}</span>}
     </div>
+  );
+}
+
+/** The object URL for a stored photo, or null while it loads (or if it can't be loaded). */
+export function usePhoto(key: string | null | undefined): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    setSrc(null);
+    if (!key) return;
+    let live = true;
+    loadPhoto(key).then((u) => live && setSrc(u)).catch(() => {});
+    return () => void (live = false);
+  }, [key]);
+  return src;
+}
+
+/** A stored photo (receipt, memo). Shows a soft placeholder until it has loaded. */
+export function Photo({ photoKey, alt = "", className, style }: { photoKey: string; alt?: string; className?: string; style?: CSSProperties }) {
+  const src = usePhoto(photoKey);
+  return src ? <img src={src} alt={alt} className={className} style={style} /> : <span className={`${className ?? ""} photo-loading`} style={style} aria-label={alt} />;
+}
+
+/** Opens a stored photo full size in a new tab. */
+export function PhotoLink({ photoKey, className, style, children }: { photoKey: string; className?: string; style?: CSSProperties; children: ReactNode }) {
+  const src = usePhoto(photoKey);
+  return (
+    <a href={src ?? undefined} target="_blank" rel="noreferrer" className={className} style={style}>
+      {children}
+    </a>
   );
 }
 
