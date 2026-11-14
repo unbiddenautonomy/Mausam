@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { deleteFiles, fileExists, listFiles, putFile } from "./files";
 
 /** Tables left out of backups: login tokens (people simply log in again) and the push de-duplication log. */
 const SKIP = new Set(["sessions", "notifications_sent", "d1_migrations"]);
@@ -47,26 +48,23 @@ export async function snapshot(db: D1Database, now = new Date()): Promise<Backup
 }
 
 /**
- * Once a day (after 4 am India time) writes a full copy of the database to R2 as backups/YYYY-MM-DD.json,
+ * Once a day (after 4 am India time) writes a full copy of the database to KV storage as backups/YYYY-MM-DD.json,
  * and deletes copies older than BACKUP_DAYS (default 35). Restore with apps/api/scripts/restore-backup.mjs.
  */
 export async function runBackup(env: Env, now = new Date()): Promise<string | null> {
   const { date, hour } = istDate(now);
   if (hour < BACKUP_HOUR_IST) return null;
   const key = `backups/${date}.json`;
-  if (await env.PHOTOS.head(key)) return null;
+  if (await fileExists(env, key)) return null;
 
   const data = await snapshot(env.DB, now);
-  await env.PHOTOS.put(key, JSON.stringify(data), {
-    httpMetadata: { contentType: "application/json" },
-    customMetadata: { tables: String(Object.keys(data.tables).length) },
-  });
-
   const keep = Math.max(7, Number(env.BACKUP_DAYS) || 35);
+  // KV deletes each copy by itself after `keep` days; the cleanup below catches copies made with a longer setting.
+  await putFile(env, key, JSON.stringify(data), "application/json", { days: keep });
+
   const cutoff = new Date(Date.parse(`${date}T00:00:00Z`) - keep * 86_400_000).toISOString().slice(0, 10);
-  const listed = await env.PHOTOS.list({ prefix: "backups/" });
-  const old = listed.objects.map((o) => o.key).filter((k) => k.slice(8, 18) < cutoff);
-  if (old.length) await env.PHOTOS.delete(old);
+  const old = (await listFiles(env, "backups/")).filter((k) => k.slice(8, 18) < cutoff);
+  if (old.length) await deleteFiles(env, old);
   console.log(JSON.stringify({ msg: "backup_written", key, deleted: old.length }));
   return key;
 }

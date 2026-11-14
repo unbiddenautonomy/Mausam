@@ -7,7 +7,7 @@ Admin app for Mausam Restaurant: managers log morning shopping, expenses and the
 | Folder | What it is |
 | --- | --- |
 | `apps/admin` | The web app (React + Vite). Works on phones and desktops, and can be installed to the home screen. |
-| `apps/api` | The API on a Cloudflare Worker (Hono), with the D1 database and R2 photo storage. In production this same Worker also serves the admin app. |
+| `apps/api` | The API on a Cloudflare Worker (Hono), with the D1 database and KV storage for photos and backups. In production this same Worker also serves the admin app. |
 | `apps/pos` | The touchscreen POS for the billing counter (React + Vite), served at `/pos/`. Works offline and syncs bills. |
 | `packages/shared` | Code both apps use: money and date rules, closing checks, and the English, Hindi and Kannada text. |
 | `docs/` | Setup guide and notes. |
@@ -100,7 +100,7 @@ The steps in order, with checks, are in [docs/go-live-checklist.md](docs/go-live
 ## Safety built in
 
 - Logins: PINs are hashed; 5 wrong tries lock an account for 15 minutes, and one address can try 10 logins a minute.
-- Nightly database backup to R2 (35 days kept), plus D1 Time Travel. Restore steps are in the setup guide.
+- Nightly database backup to KV storage (35 days kept), plus D1 Time Travel. Restore steps are in the setup guide.
 - Security headers on the app and API, no cross-site API access by default, and request logs in the Cloudflare dashboard.
 
 ## Database changes
