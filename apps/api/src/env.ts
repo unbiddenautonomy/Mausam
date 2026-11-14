@@ -9,6 +9,10 @@ export interface Env {
   VAPID_SUBJECT?: string;
   ANTHROPIC_API_KEY?: string; // secret: for reading handwritten memos
   MEMO_MODEL?: string;
+  SETUP_CODE?: string; // secret: if set, creating the first owner account needs this code
+  BACKUP_DAYS?: string; // how many nightly backups to keep in R2 (default 35)
+  LOGIN_LIMITER?: RateLimit; // Workers rate limiting bindings (optional; see wrangler.jsonc)
+  API_LIMITER?: RateLimit;
 }
 
 export interface AuthUser {

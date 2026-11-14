@@ -21,10 +21,21 @@
     }
   ],
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
-  // Every 15 minutes: check what's overdue and raise alerts
+  // Every 15 minutes: check what's overdue and raise alerts. The same run takes the nightly backup (after 4 am IST).
   "triggers": { "crons": ["*/15 * * * *"] },
+  // Slow down PIN guessing and runaway clients. These need no setup: Cloudflare creates them on deploy.
+  // namespace_id is just a number unique within your account.
+  "ratelimits": [
+    { "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "API_LIMITER", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } }
+  ],
+  // Keep request logs and errors for a few days in the dashboard (Workers → mausam-admin → Logs).
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
   "vars": {
-    "ALLOWED_ORIGIN": "*",
+    // Leave empty: the app and API share one address. Only list other sites (comma-separated) if they must call the API.
+    "ALLOWED_ORIGIN": "",
+    // How many nightly database backups to keep in R2 (backups/YYYY-MM-DD.json).
+    "BACKUP_DAYS": "35",
     // Push notifications: paste the public key printed by `node scripts/vapid-keys.mjs`.
     // The private key goes in a secret: `npx wrangler secret put VAPID_PRIVATE_KEY`.
     "VAPID_PUBLIC_KEY": "",
@@ -32,4 +43,8 @@
     // Model used to read handwritten memos. The API key goes in a secret: `npx wrangler secret put ANTHROPIC_API_KEY`.
     "MEMO_MODEL": "claude-opus-5-5"
   }
+  // Secrets (never in this file). Set with `npx wrangler secret put NAME`:
+  //   VAPID_PRIVATE_KEY   phone reminders
+  //   ANTHROPIC_API_KEY   memo reading (optional)
+  //   SETUP_CODE          required to create the first owner account (recommended)
 }
