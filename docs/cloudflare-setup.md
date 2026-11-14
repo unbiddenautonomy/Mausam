@@ -1,96 +1,67 @@
 # Putting Mausam online with Cloudflare
 
-This takes about 30 minutes the first time. You do it once; after that, publishing an update is a single command.
+Everything here is done in a web browser. You don't need to install anything, and no single computer is "the" Mausam computer. The code lives on GitHub. Cloudflare watches the GitHub repo and publishes the app by itself every time new code is pushed.
 
-At the end you'll have one web address, such as `https://mausam-admin.<your-name>.workers.dev`, that serves both the app and its API. It's free to start. Cloudflare's $5/month plan is only needed once usage grows.
+A laptop or desktop screen is easier for the Cloudflare dashboard, but a phone works too.
+
+It takes about 20 minutes the first time. At the end you'll have one web address, such as `https://mausam-admin.<your-name>.workers.dev`, that serves both the app and its API. It's free to start. Cloudflare's $5/month plan is only needed once usage grows.
 
 ## 1. What you need
 
 - A Cloudflare account. Sign up free at https://dash.cloudflare.com/sign-up.
-- This repo on your computer, with `pnpm install` already run (see the README).
+- The GitHub account that holds the Mausam repo.
 
-## 2. Log in to Cloudflare from your computer
+## 2. Turn on photo storage
 
-```bash
-cd apps/api
-npx wrangler login
-```
+Bill and memo photos are kept in Cloudflare R2, which has to be switched on once.
 
-A browser window opens. Click **Allow**.
+1. In the Cloudflare dashboard, open **R2 Object Storage**.
+2. Click **Purchase / Enable**. It's free up to 10 GB, but it may ask for a card.
 
-## 3. Create the database
+You don't need to create anything inside it. The first publish makes the `mausam-photos` storage for you.
 
-```bash
-npx wrangler d1 create mausam
-```
+## 3. Make a publishing key
 
-It prints a block that includes `"database_id": "…"`. Copy that id into `apps/api/wrangler.jsonc`, replacing `00000000-0000-0000-0000-000000000000`.
+Cloudflare needs permission to create the database and update it when the app changes.
 
-Then create the tables:
+1. Open **Manage Account → Account API Tokens**, then click **Create Token**.
+2. Next to **Edit Cloudflare Workers**, click **Use template**.
+3. Under **Permissions**, click **Add more**. Choose **Account**, then **D1**, then **Edit**.
+4. Click **Continue to summary**, then **Create Token**.
 
-```bash
-npx wrangler d1 migrations apply mausam --remote
-```
+You don't need to copy the token anywhere. You'll pick it from a list in the next step.
 
-Answer **y** when it asks.
+## 4. Connect the GitHub repo
 
-**Never** run `db:seed:demo` against the remote database. The demo data is for your computer only.
+1. Open **Workers & Pages**, then **Create**, then **Import a repository**.
+2. Connect GitHub when it asks. Allow access to the **Mausam** repo.
+3. Pick the Mausam repo and fill in these fields exactly:
 
-## 4. Create photo storage
+| Field | Value |
+| --- | --- |
+| Project name | `mausam-admin` |
+| Build command | `pnpm install --frozen-lockfile && pnpm build` |
+| Deploy command | `pnpm release` |
+| Root directory | leave empty, or `/` |
+| API token | the token you made in step 3 |
 
-R2 has to be turned on once before you can use it. In the Cloudflare dashboard, open **R2 Object Storage** and click **Purchase / Enable**. It's free up to 10 GB, though it may ask for a card.
+4. Click **Create and deploy**. Look for **API token** under **Advanced settings** if it isn't on the main form.
 
-Then:
+The first build takes 2 to 3 minutes. It creates the `mausam` database and its tables, and the photo storage. When it's done, the page shows your web address.
 
-```bash
-npx wrangler r2 bucket create mausam-photos
-```
+**If the first build fails** with a permissions or D1 error, the token wasn't picked. Open **mausam-admin → Settings → Build → API token**, choose the token from step 3, then retry the build from the **Deployments** tab.
 
-## 5. Turn on phone reminders
-
-Reminders are sent as phone notifications. They need a pair of keys, which you make once.
-
-```bash
-cd apps/api
-node scripts/vapid-keys.mjs
-```
-
-It prints two lines.
-
-1. Copy the **public key** into `apps/api/wrangler.jsonc`, in `"VAPID_PUBLIC_KEY": ""`, between the quotes.
-2. In the same file, change `"VAPID_SUBJECT"` to your own email, written as `mailto:you@example.com`. Push services only use it to contact you if something goes wrong.
-3. Save the **private key** as a secret. It's never written in a file:
-
-```bash
-npx wrangler secret put VAPID_PRIVATE_KEY
-```
-
-Paste the private key when it asks. Keep a copy in a password manager. If you ever make new keys, every phone has to turn reminders on again.
-
-## 6. Turn on memo reading (optional)
+## 5. Turn on memo reading (optional)
 
 The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (roughly ₹2 to ₹5 per memo). Each day's memo can be read at most 6 times, so costs stay small.
 
 1. Make an account at console.anthropic.com, add a little credit, and create an API key.
-2. Save it as a secret:
-
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-```
+2. In Cloudflare, open **mausam-admin → Settings → Variables and Secrets**, then click **Add**.
+3. Set **Type** to **Secret**, **Variable name** to `ANTHROPIC_API_KEY`, and paste the key as the value. Click **Deploy**.
 
 Without this key, everything else works and the "Read memo" button just says it isn't set up.
 
-## 7. Publish
-
-From the repo root:
-
-```bash
-pnpm ship
-```
-
-This builds the app and uploads it. At the end, it prints your web address. Secrets you saved earlier stay in place.
-
-## 8. First login
+## 6. First login
 
 1. Open the web address on your phone.
 2. Create the owner account: your name, phone number, and a 4-digit PIN.
@@ -103,16 +74,15 @@ This builds the app and uploads it. At the end, it prints your web address. Secr
    - On Xiaomi, Oppo, Vivo and Realme phones, also go to **Settings → Battery → Chrome → No restrictions**. Otherwise reminders can arrive late.
    - On iPhone, use Safari: tap **Share → Add to Home Screen**. This needs iOS 16.4 or newer.
 
-## 9. Publishing updates later
+Phone reminders need no setup. The app makes its own reminder keys the first time someone turns them on.
 
-```bash
-git pull
-pnpm install
-pnpm --filter @mausam/api db:migrate:remote   # only when a new file was added to apps/api/migrations
-pnpm ship
-```
+## 7. Updates
 
-## 10. Using your own domain later (optional)
+There's nothing to do. When new code is pushed to the `main` branch on GitHub, Cloudflare builds and publishes it within a few minutes, and applies any database changes on the way. You can watch it under **mausam-admin → Deployments**.
+
+If an update ever breaks something, open **Deployments**, find the previous version, and choose **Rollback**.
+
+## 8. Using your own domain later (optional)
 
 Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go to **Workers & Pages → mausam-admin → Settings → Domains & Routes → Add custom domain**, and enter `admin.mausam.in`.
 
@@ -120,15 +90,25 @@ Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go t
 
 - **Backups:** D1 keeps 30 days of history automatically. You can restore from the dashboard under **D1 → mausam → Time Travel**.
 - **Photos** are private and only shown to logged-in users.
-- **Reminders:** the Worker checks for overdue reports every 15 minutes, using the `triggers.crons` setting in `wrangler.jsonc`.
+- **Reminders:** the app checks for overdue reports every 15 minutes, using the `triggers.crons` setting in `apps/api/wrangler.jsonc`.
 - **Costs:** Workers, D1 and R2 all have free allowances that should cover a single restaurant at first. Check https://developers.cloudflare.com/workers/platform/pricing/ for current limits.
+- **Demo data** is only for trying the app on a developer's computer. It is never sent to the live database.
 
 ## If something goes wrong
 
 | Problem | Fix |
 | --- | --- |
-| `database_id` error when publishing | Step 3: paste the id from `wrangler d1 create` into `wrangler.jsonc`. |
-| `R2 bucket not found` | Step 4: create the `mausam-photos` bucket, with exactly that name. |
-| The app opens, but login says "Something went wrong" | The tables are missing. Run `pnpm --filter @mausam/api db:migrate:remote`. |
-| `Assets directory does not exist` | Run `pnpm build` first. `pnpm ship` does this for you. |
-| You want to see errors as they happen | `cd apps/api && npx wrangler tail` streams the live logs. |
+| Build says the name in the Wrangler file must match the Worker | The project must be called exactly `mausam-admin`. |
+| Build fails with a D1 or permissions error | Step 3 and the last part of step 4: make the token with **D1 · Edit** and pick it under **Settings → Build → API token**. |
+| Build fails with an R2 error | Step 2: turn on R2 once, then retry the build. |
+| The app opens, but login says "Something went wrong" | The tables are missing. Retry the latest build under **Deployments**. It creates them. |
+| You want to see errors as they happen | **mausam-admin → Observability → Logs** shows the live logs. |
+
+## Publishing from a computer instead (optional)
+
+A developer can also publish from their own computer. This is the same thing the automatic build does. From the repo root, after `pnpm install`:
+
+```bash
+cd apps/api && npx wrangler login && cd ../..
+pnpm ship
+```
