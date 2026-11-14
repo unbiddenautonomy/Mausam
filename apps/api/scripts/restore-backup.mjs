@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Turns a nightly backup (backups/YYYY-MM-DD.json from R2) into SQL that replaces the data in a database
+// Turns a nightly backup (backups/YYYY-MM-DD.json from the FILES storage) into SQL that replaces the data in a database
 // that already has all migrations applied. See docs/cloudflare-setup.md → "Restoring a backup".
 //
 //   node scripts/restore-backup.mjs backup.json > restore.sql

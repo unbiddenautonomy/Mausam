@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { businessDate } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { randomHex, requireRole } from "../lib/auth";
+import { getFile, putFile } from "../lib/files";
 import { HttpError } from "../lib/http";
 
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = 5 * 1024 * 1024; // the app shrinks photos to well under 1 MB first
 const TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 export const photos = new Hono<AppEnv>();
@@ -19,21 +20,18 @@ photos.post("/", requireRole("owner", "manager"), async (c) => {
   if (body.byteLength > MAX_BYTES) throw new HttpError(413, "too_large");
   const kind = (c.req.query("kind") ?? "receipt").replace(/[^a-z_]/g, "").slice(0, 20) || "receipt";
   const key = `${businessDate()}/${kind}-${randomHex(8)}.${ext}`;
-  await c.env.PHOTOS.put(key, body, {
-    httpMetadata: { contentType: type },
-    customMetadata: { uploaded_by: String(c.get("user").id) },
-  });
+  await putFile(c.env, key, body, type);
   return c.json({ key }, 201);
 });
 
 photos.get("/*", requireRole("owner", "manager"), async (c) => {
   const key = c.req.path.replace(/^\/api\/photos\//, "");
   if (!/^\d{4}-\d{2}-\d{2}\/[a-z_]+-[0-9a-f]{16}\.(jpg|png|webp)$/.test(key)) throw new HttpError(404, "not_found");
-  const obj = await c.env.PHOTOS.get(key);
+  const obj = await getFile(c.env, key);
   if (!obj) throw new HttpError(404, "not_found");
   return new Response(obj.body, {
     headers: {
-      "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg",
+      "Content-Type": obj.contentType.startsWith("image/") ? obj.contentType : "image/jpeg",
       "Cache-Control": "private, max-age=31536000, immutable",
     },
   });

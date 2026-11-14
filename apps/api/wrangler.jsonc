@@ -19,8 +19,8 @@
       "migrations_dir": "migrations"
     }
   ],
-  // Created on the first deploy if it doesn't exist yet.
-  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
+  // Photos and nightly backups, in Workers KV (free, no card needed). No id needed: the first deploy creates it.
+  "kv_namespaces": [{ "binding": "FILES" }],
   // Every 15 minutes: check what's overdue and raise alerts. The same run takes the nightly backup (after 4 am IST).
   "triggers": { "crons": ["*/15 * * * *"] },
   // Slow down PIN guessing and runaway clients. These need no setup: Cloudflare creates them on deploy.
@@ -34,8 +34,10 @@
   "vars": {
     // Leave empty: the app and API share one address. Only list other sites (comma-separated) if they must call the API.
     "ALLOWED_ORIGIN": "",
-    // How many nightly database backups to keep in R2 (backups/YYYY-MM-DD.json).
+    // How many nightly database backups to keep (backups/YYYY-MM-DD.json in the FILES storage).
     "BACKUP_DAYS": "35",
+    // How long bill and memo photos are kept. 400 days keeps the free 1 GB of storage from filling up.
+    "PHOTO_DAYS": "400",
     // Phone reminders need no setup: the Worker makes its own keys on first use and keeps them in the database.
     // Model used to read handwritten memos. The API key is a secret named ANTHROPIC_API_KEY,
     // added in the Cloudflare dashboard (see docs/cloudflare-setup.md).

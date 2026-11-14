@@ -69,9 +69,9 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
-      Promise.allSettled([runChecks(env), runBackup(env)]).then((results) => {
+      Promise.allSettled([runChecks(env), runBackup(env, new Date(event.scheduledTime))]).then((results) => {
         for (const r of results) if (r.status === "rejected") console.error(JSON.stringify({ msg: "scheduled_failed", error: String(r.reason) }));
       }),
     );

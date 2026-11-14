@@ -122,7 +122,7 @@ if (typeof window !== "undefined") {
 /* ---------- Photos ---------- */
 
 /** Shrink a camera photo on the phone (max 1600px, JPEG) before uploading. Saves data and time. */
-export async function shrinkImage(file: File, maxSide = 1600, quality = 0.8): Promise<Blob> {
+export async function shrinkImage(file: File, maxSide = 1600, quality = 0.75): Promise<Blob> {
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) return file;
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));

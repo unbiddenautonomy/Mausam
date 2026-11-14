@@ -3,6 +3,7 @@ import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { HttpError, requireDate } from "../lib/http";
 import { MemoError, memoToPaise, readMemo } from "../lib/memo";
+import { getFile } from "../lib/files";
 
 const KEY_RE = /^\d{4}-\d{2}-\d{2}\/[a-z_]+-[0-9a-f]{16}\.(jpg|png|webp)$/;
 const MEDIA = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" } as const;
@@ -35,7 +36,7 @@ memo.post("/read", async (c) => {
   const used = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM memo_reads WHERE business_date = ?").bind(date).first<{ n: number }>();
   if ((used?.n ?? 0) >= MAX_READS_PER_DAY) throw new HttpError(429, "too_many_reads");
 
-  const obj = await c.env.PHOTOS.get(key);
+  const obj = await getFile(c.env, key);
   if (!obj) throw new HttpError(404, "not_found");
   const ext = key.split(".").pop() as keyof typeof MEDIA;
   const model = c.env.MEMO_MODEL || "claude-opus-5-5";
@@ -43,7 +44,7 @@ memo.post("/read", async (c) => {
   const userId = c.get("user").id;
 
   try {
-    const { read, model: servedBy } = await readMemo(c.env.ANTHROPIC_API_KEY, model, { data: await obj.arrayBuffer(), mediaType: MEDIA[ext] });
+    const { read, model: servedBy } = await readMemo(c.env.ANTHROPIC_API_KEY, model, { data: obj.body, mediaType: MEDIA[ext] });
     const result = memoToPaise(read);
     const ins = await c.env.DB.prepare(
       "INSERT INTO memo_reads (business_date, kind, photo_key, model, status, result, created_by) VALUES (?, ?, ?, ?, 'ok', ?, ?)",

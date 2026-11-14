@@ -10,50 +10,46 @@ It takes about 20 minutes the first time. At the end you'll have one web address
 
 ## 1. What you need
 
-- A Cloudflare account. Sign up free at https://dash.cloudflare.com/sign-up.
+- A Cloudflare account. Sign up free at https://dash.cloudflare.com/sign-up. An account you already use for other projects is fine: everything below is new and named "mausam", so nothing else is touched.
 - The GitHub account that holds the Mausam repo.
 
-## 2. Turn on photo storage
+No card is needed. The database, photos and backups all fit in Cloudflare's free plan.
 
-Bill and memo photos are kept in Cloudflare R2, which has to be switched on once.
-
-1. In the Cloudflare dashboard, open **R2 Object Storage**.
-2. Click **Purchase / Enable**. It's free up to 10 GB, but it may ask for a card.
-
-You don't need to create anything inside it. The first publish makes the `mausam-photos` storage for you.
-
-## 3. Make a publishing key
+## 2. Make a publishing key (3 minutes)
 
 Cloudflare needs permission to create the database and update it when the app changes.
 
-1. Open **Manage Account → Account API Tokens**, then click **Create Token**.
-2. Next to **Edit Cloudflare Workers**, click **Use template**.
-3. Under **Permissions**, click **Add more**. Choose **Account**, then **D1**, then **Edit**.
-4. Click **Continue to summary**, then **Create Token**.
+1. Log in at https://dash.cloudflare.com and pick your account.
+2. In the left menu, click **Manage account**, then **Account API tokens**, then **Create Token**.
+3. Find the row **Edit Cloudflare Workers** and click **Use template**.
+4. Under **Permissions**, click **+ Add more**. In the three boxes pick **Account**, then **D1**, then **Edit**.
+5. Under **Account Resources**, choose your account.
+6. Click **Continue to summary**, then **Create Token**.
 
 You don't need to copy the token anywhere. You'll pick it from a list in the next step.
 
-## 4. Connect the GitHub repo
+## 3. Create the app from GitHub (10 minutes)
 
-1. Open **Workers & Pages**, then **Create**, then **Import a repository**.
-2. Connect GitHub when it asks. Allow access to the **Mausam** repo.
-3. Pick the Mausam repo and fill in these fields exactly:
+1. In the left menu, click **Workers & Pages**, then the **Create** button.
+2. Choose **Import a repository**. On some screens it's under **Continue with GitHub**.
+3. Click **Connect GitHub**. A GitHub page opens. Allow Cloudflare to access the **Mausam** repo, and you're sent back.
+4. Click **Mausam** in the list, and fill in these fields exactly:
 
 | Field | Value |
 | --- | --- |
 | Project name | `mausam-admin` |
 | Build command | `pnpm install --frozen-lockfile && pnpm build` |
 | Deploy command | `pnpm release` |
-| Root directory | leave empty, or `/` |
-| API token | the token you made in step 3 |
+| Root directory | leave empty |
+| API token (under **Advanced settings**) | the token you made in step 2 |
 
-4. Click **Create and deploy**. Look for **API token** under **Advanced settings** if it isn't on the main form.
+5. Click **Create and deploy**.
 
-The first build takes 2 to 3 minutes. It creates the `mausam` database and its tables, and the photo storage. When it's done, the page shows your web address.
+The first build takes 2 to 3 minutes. It creates the `mausam` database and its tables, and the storage for photos and backups. When it says **Success**, the page shows your web address, ending in `.workers.dev`.
 
-**If the first build fails** with a permissions or D1 error, the token wasn't picked. Open **mausam-admin → Settings → Build → API token**, choose the token from step 3, then retry the build from the **Deployments** tab.
+**If the first build fails** with a permissions or D1 error, the token wasn't picked. Open **mausam-admin → Settings → Build → API token**, choose the token from step 2, then retry the build from the **Deployments** tab.
 
-## 5. Turn on memo reading (optional)
+## 4. Turn on memo reading (optional)
 
 The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (roughly ₹2 to ₹5 per memo). Each day's memo can be read at most 6 times, so costs stay small.
 
@@ -63,7 +59,7 @@ The app can read the handwritten closing memo photo and fill in the numbers. It 
 
 Without this key, everything else works and the "Read memo" button just says it isn't set up.
 
-## 6. Protect the first login (recommended)
+## 5. Protect the first login (recommended)
 
 Until the owner account exists, anyone who opens the web address could create it. To stop that, add a setup code before you open the app:
 
@@ -72,7 +68,7 @@ Until the owner account exists, anyone who opens the web address could create it
 
 The first-run screen will then ask for it. Once the owner exists, the code isn't used again.
 
-## 7. First login
+## 6. First login
 
 1. Open the web address on your phone.
 2. Create the owner account: your name, phone number, and a 4-digit PIN.
@@ -87,7 +83,7 @@ The first-run screen will then ask for it. Once the owner exists, the code isn't
 
 Phone reminders need no setup. The app makes its own reminder keys the first time someone turns them on.
 
-## 7b. Set up the billing counter (POS)
+## 7. Set up the billing counter (POS)
 
 The POS is at the same address plus `/pos/`, for example `https://mausam-admin.<your-name>.workers.dev/pos/`.
 
@@ -116,19 +112,19 @@ Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go t
 
 - **Backups, two layers:**
   - D1 Time Travel keeps 30 days of history (7 days on the free plan). Restore from **D1 → mausam → Time Travel**, or `npx wrangler d1 time-travel restore mausam --timestamp=<ISO time>`.
-  - Every day after 4 am India time, the Worker writes a full copy to R2 as `backups/YYYY-MM-DD.json` and keeps 35 days (`BACKUP_DAYS` in `wrangler.jsonc`). Login sessions aren't included, so after a restore everyone logs in again.
+  - Every day after 4 am India time, the Worker writes a full copy as `backups/YYYY-MM-DD.json` in its file storage (Workers KV) and keeps 35 days (`BACKUP_DAYS` in `wrangler.jsonc`). Login sessions aren't included, so after a restore everyone logs in again.
 - **Restoring a nightly backup:**
   ```bash
   cd apps/api
-  npx wrangler r2 object get mausam-photos/backups/2026-11-14.json --remote --file backup.json
+  npx wrangler kv key get --binding FILES --remote backups/2026-11-14.json > backup.json
   node scripts/restore-backup.mjs backup.json > restore.sql
   npx wrangler d1 execute mausam --remote --file restore.sql
   ```
   This replaces all data with the backup. To be safe, download today's backup first, so you can undo.
 - **Login protection:** 5 wrong PINs lock that account for 15 minutes, and one internet address can try at most 10 logins a minute.
-- **Photos** are private and only shown to logged-in users.
+- **Photos** are private and only shown to logged-in users. They are kept in Workers KV, which is free up to 1 GB, about a year of bill photos. Photos older than 400 days are deleted by themselves so the space never fills (`PHOTO_DAYS` in `wrangler.jsonc`). If you ever want to keep them longer, ask for them to be moved to R2, which needs a card.
 - **Reminders:** the app checks for overdue reports every 15 minutes, using the `triggers.crons` setting in `apps/api/wrangler.jsonc`.
-- **Costs:** Workers, D1 and R2 all have free allowances that should cover a single restaurant at first. Check https://developers.cloudflare.com/workers/platform/pricing/ for current limits.
+- **Costs:** Workers, D1 and KV all have free allowances that should cover a single restaurant, with no card on file. Check https://developers.cloudflare.com/workers/platform/pricing/ for current limits.
 - **Demo data** is only for trying the app on a developer's computer. It is never sent to the live database.
 
 ## If something goes wrong
@@ -136,8 +132,7 @@ Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go t
 | Problem | Fix |
 | --- | --- |
 | Build says the name in the Wrangler file must match the Worker | The project must be called exactly `mausam-admin`. |
-| Build fails with a D1 or permissions error | Step 3 and the last part of step 4: make the token with **D1 · Edit** and pick it under **Settings → Build → API token**. |
-| Build fails with an R2 error | Step 2: turn on R2 once, then retry the build. |
+| Build fails with a D1 or permissions error | Step 2 and the last part of step 3: make the token with **D1 · Edit** and pick it under **Settings → Build → API token**. |
 | The app opens, but login says "Something went wrong" | The tables are missing. Retry the latest build under **Deployments**. It creates them. |
 | You want to see errors as they happen | **mausam-admin → Observability → Logs** shows the live logs. |
 | First-run screen says the setup code is wrong | It must match the `SETUP_CODE` secret exactly. Set it again under **Settings → Variables and Secrets**. |
