@@ -3,7 +3,7 @@
   "name": "mausam-admin",
   "main": "src/index.ts",
   // The same Worker serves the admin app's built files and the /api routes, so it's one deploy and one web address.
-  // Run `pnpm build` at the repo root first so ../admin/dist exists.
+  // `pnpm build` at the repo root makes ../admin/dist; Cloudflare's build step runs it for you.
   "assets": {
     "directory": "../admin/dist",
     "not_found_handling": "single-page-application",
@@ -15,11 +15,11 @@
     {
       "binding": "DB",
       "database_name": "mausam",
-      // Replace with the id printed by `wrangler d1 create mausam`
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // No id needed: the first deploy creates the "mausam" database, and later deploys find it by name.
       "migrations_dir": "migrations"
     }
   ],
+  // Created on the first deploy if it doesn't exist yet.
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
   // Every 15 minutes: check what's overdue and raise alerts. The same run takes the nightly backup (after 4 am IST).
   "triggers": { "crons": ["*/15 * * * *"] },
@@ -29,22 +29,19 @@
     { "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     { "name": "API_LIMITER", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } }
   ],
-  // Keep request logs and errors for a few days in the dashboard (Workers → mausam-admin → Logs).
+  // Live logs in the dashboard under mausam-admin → Observability
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   "vars": {
     // Leave empty: the app and API share one address. Only list other sites (comma-separated) if they must call the API.
     "ALLOWED_ORIGIN": "",
     // How many nightly database backups to keep in R2 (backups/YYYY-MM-DD.json).
     "BACKUP_DAYS": "35",
-    // Push notifications: paste the public key printed by `node scripts/vapid-keys.mjs`.
-    // The private key goes in a secret: `npx wrangler secret put VAPID_PRIVATE_KEY`.
-    "VAPID_PUBLIC_KEY": "",
-    "VAPID_SUBJECT": "mailto:owner@example.com",
-    // Model used to read handwritten memos. The API key goes in a secret: `npx wrangler secret put ANTHROPIC_API_KEY`.
+    // Phone reminders need no setup: the Worker makes its own keys on first use and keeps them in the database.
+    // Model used to read handwritten memos. The API key is a secret named ANTHROPIC_API_KEY,
+    // added in the Cloudflare dashboard (see docs/cloudflare-setup.md).
     "MEMO_MODEL": "claude-opus-5-5"
   }
-  // Secrets (never in this file). Set with `npx wrangler secret put NAME`:
-  //   VAPID_PRIVATE_KEY   phone reminders
+  // Secrets (never in this file). Add them in the Cloudflare dashboard (Settings → Variables and secrets):
   //   ANTHROPIC_API_KEY   memo reading (optional)
   //   SETUP_CODE          required to create the first owner account (recommended)
 }

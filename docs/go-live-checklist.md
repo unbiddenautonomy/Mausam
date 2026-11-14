@@ -1,55 +1,47 @@
 # Go-live checklist
 
-Everything in the code is ready. These are the steps only you can do, because they need your accounts. Plan about 45 minutes, on a computer, the first time. The detailed commands are in [cloudflare-setup.md](cloudflare-setup.md); this page is the order to do them in and how to check each one.
+Everything in the code is ready. These are the steps only you can do, because they need your accounts. Everything is done in a web browser; plan about 30 minutes the first time. The detailed clicks are in [cloudflare-setup.md](cloudflare-setup.md); this page is the order to do them in and how to check each one.
 
 ## Before you start
 
 - [ ] A Cloudflare account (free): https://dash.cloudflare.com/sign-up
-- [ ] Node.js 22+ and pnpm on your computer, and `pnpm install` run in this repo.
-- [ ] Decide the email to use for push notifications (`VAPID_SUBJECT`). Any address you read is fine.
+- [ ] The GitHub account that holds the Mausam repo.
 - [ ] Optional: an Anthropic API key, only if you want the app to read handwritten memo photos.
 
-## 1. Cloudflare resources (setup guide steps 2 to 4)
+## 1. Connect Cloudflare to GitHub (setup guide steps 2 to 4)
 
-- [ ] `npx wrangler login` and click **Allow**.
-- [ ] `npx wrangler d1 create mausam`, then paste the `database_id` into `apps/api/wrangler.jsonc`.
-- [ ] `npx wrangler d1 migrations apply mausam --remote`.
-- [ ] Turn on R2 in the dashboard, then `npx wrangler r2 bucket create mausam-photos`.
+- [ ] Turn on R2 once in the dashboard.
+- [ ] Make the publishing token (Edit Cloudflare Workers template, plus **D1 · Edit**).
+- [ ] Import the repo under **Workers & Pages → Create**, with the project name `mausam-admin`, build command `pnpm install --frozen-lockfile && pnpm build` and deploy command `pnpm release`.
+- [ ] Wait for the first build to finish. It creates the database, its tables and the photo storage. Note the web address.
 
-## 2. Keys and secrets (setup guide steps 5 and 6)
+## 2. Secrets (setup guide steps 5 and 6)
 
-Secrets are typed into the terminal once and never saved in a file. Keep a copy of each in a password manager.
+Add these under **mausam-admin → Settings → Variables and Secrets**, type **Secret**. Keep a copy of each in a password manager.
 
-- [ ] `node apps/api/scripts/vapid-keys.mjs`. Public key and email go in `wrangler.jsonc`; then `npx wrangler secret put VAPID_PRIVATE_KEY`.
-- [ ] **Setup code (recommended):** pick a phrase only you know, then `npx wrangler secret put SETUP_CODE`. Until the owner account exists, anyone who finds the web address could create it; with this set, they'd also need the code.
-- [ ] Optional: `npx wrangler secret put ANTHROPIC_API_KEY`.
+- [ ] **`SETUP_CODE` (recommended), before you open the app.** Until the owner account exists, anyone who finds the web address could create it; with this set, they'd also need the code.
+- [ ] Optional: `ANTHROPIC_API_KEY` for memo reading.
 
-## 3. First publish and owner account
+Phone reminder keys need no setup; the app makes its own.
 
-- [ ] `pnpm ship` from the repo root. Note the web address it prints.
-- [ ] Open `<address>/api/health`. It should say `{"ok":true,"migrations":5}`.
+## 3. Owner account
+
+- [ ] Open `<address>/api/health`. It should say `"ok":true` and list the number of migrations.
 - [ ] Straight away, open the address on your phone and create the owner account (with the setup code).
 - [ ] Add managers (**Manage → App users**) and staff (**Manage → Staff**).
-- [ ] On each manager's phone: add to home screen, turn on reminders, **Send a test** (setup guide step 8).
+- [ ] On each manager's phone: add to home screen, turn on reminders, **Send a test** (setup guide step 7).
+- [ ] Billing counter: add the menu and tables, then open `<address>/pos/` on the counter PC (setup guide step 7b).
 
-## 4. Automatic publishing from GitHub (optional, recommended)
+## 4. Updates
 
-After this, merging a pull request is all it takes to publish an update. Database changes are applied first.
-
-- [ ] Create an API token: Cloudflare dashboard → **My Profile → API Tokens → Create Token → "Edit Cloudflare Workers"** template. Add **Account → D1 → Edit** to its permissions. Limit it to your account.
-- [ ] Find your **Account ID** on the Workers & Pages overview page (right-hand side).
-- [ ] In GitHub: **Settings → Secrets and variables → Actions**:
-  - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
-  - Variables: `APP_URL` = your web address (so each deploy checks the app answers), and `AUTO_DEPLOY` = `true` if you want every merge to publish.
-- [ ] Commit the real `database_id` in `wrangler.jsonc` (it's not a secret). The deploy refuses to run with the placeholder.
-- [ ] Test it: **Actions → Deploy → Run workflow**.
+Nothing to set up. Every merge to `main` is built and published by Cloudflare within a few minutes, with database changes applied on the way. GitHub checks every pull request first (types, tests, build). If an update breaks something, use **Rollback** under **mausam-admin → Deployments**.
 
 ## 5. Safety nets to confirm in the first week
 
 - [ ] **Backups:** the morning after launch, check R2 → `mausam-photos` → `backups/` has a file for today. One is written every day after 4 am and kept for 35 days. D1 Time Travel also keeps 30 days (7 on the free plan).
-- [ ] **Errors:** Workers & Pages → `mausam-admin` → **Logs** shows requests and any errors.
+- [ ] **Errors:** **mausam-admin → Observability → Logs** shows requests and any errors.
 - [ ] **Translations:** have a native Hindi and a native Kannada speaker each spend 15 minutes clicking through the app. The translations are first drafts.
-- [ ] **Your custom domain** (optional): setup guide step 10.
+- [ ] **Your custom domain** (optional): setup guide step 9.
 
 ## Still open (doesn't block launch)
 
