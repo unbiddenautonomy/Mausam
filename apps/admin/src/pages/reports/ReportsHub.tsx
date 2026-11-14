@@ -7,6 +7,7 @@ export function ReportsHub() {
     <div className="page">
       <PageHead title={t("reports.title")} />
       <div className="grid-2">
+        <NavCard to="/bills" icon="receipt" title={t("bills.title")} desc={t("bills.desc")} />
         <NavCard to="/reports/sales" icon="trend" title={t("reports.sales")} desc={t("reports.sales_desc")} />
         <NavCard to="/reports/expenses" icon="pie" title={t("reports.expenses")} desc={t("reports.expenses_desc")} />
         <NavCard to="/reports/payments" icon="wallet" title={t("reports.cash")} desc={t("reports.cash_desc")} />

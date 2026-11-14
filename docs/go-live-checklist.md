@@ -27,7 +27,7 @@ Secrets are typed into the terminal once and never saved in a file. Keep a copy 
 ## 3. First publish and owner account
 
 - [ ] `pnpm ship` from the repo root. Note the web address it prints.
-- [ ] Open `<address>/api/health`. It should say `{"ok":true,"migrations":4}`.
+- [ ] Open `<address>/api/health`. It should say `{"ok":true,"migrations":5}`.
 - [ ] Straight away, open the address on your phone and create the owner account (with the setup code).
 - [ ] Add managers (**Manage → App users**) and staff (**Manage → Staff**).
 - [ ] On each manager's phone: add to home screen, turn on reminders, **Send a test** (setup guide step 8).

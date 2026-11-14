@@ -64,7 +64,7 @@ pos.post("/import", async (c) => {
         db.prepare(
           `INSERT INTO pos_daily (business_date, total, cash, online, bills, dine_in, parcel, discount, cancelled, import_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (business_date) DO UPDATE SET total = excluded.total, cash = excluded.cash, online = excluded.online, bills = excluded.bills,
-             dine_in = excluded.dine_in, parcel = excluded.parcel, discount = excluded.discount, cancelled = excluded.cancelled, import_id = excluded.import_id`,
+             dine_in = excluded.dine_in, parcel = excluded.parcel, discount = excluded.discount, cancelled = excluded.cancelled, import_id = excluded.import_id, source = 'import'`,
         ).bind(raw.date, int(raw.total), int(raw.cash), int(raw.online), int(raw.bills), int(raw.dine_in), int(raw.parcel), int(raw.discount), int(raw.cancelled), importId),
       );
     }

@@ -15,6 +15,7 @@ import { vendors } from "./routes/vendors";
 import { month } from "./routes/month";
 import { pos } from "./routes/pos";
 import { analytics } from "./routes/analytics";
+import { billing } from "./routes/billing";
 import { runChecks } from "./cron";
 import { runBackup } from "./lib/backup";
 import { rateLimit } from "./lib/ratelimit";
@@ -54,6 +55,7 @@ app.route("/vendors", vendors);
 app.route("/month", month);
 app.route("/pos", pos);
 app.route("/analytics", analytics);
+app.route("/billing", billing);
 app.route("/", entries);
 app.route("/", owner);
 
