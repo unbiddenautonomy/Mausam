@@ -138,6 +138,9 @@ export function AddExpense() {
 
         <ErrorNote error={error} />
         <div className="sticky-actions">
+          {!ready && !busy && (
+            <span className="sticky-hint">{!paise || draft.category_id <= 0 ? t("expense.need_more") : t("expense.need_bill")}</span>
+          )}
           <button className="btn primary block" disabled={!ready || busy} onClick={save}>
             <Icon name="check" /> {t("common.save")}
           </button>

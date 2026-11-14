@@ -1,0 +1,13 @@
+# Local development secrets. Copy to apps/api/.dev.vars (which git ignores) and fill in what you need.
+# In production these are Worker secrets, added in the Cloudflare dashboard. Never commit real values.
+
+# Phone reminders work without keys (the Worker makes its own). To use your own pair from
+# `node scripts/vapid-keys.mjs`, set both:
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+
+# Memo reading (optional): an API key from console.anthropic.com.
+ANTHROPIC_API_KEY=
+
+# If set, creating the first owner account asks for this code. Leave empty locally.
+SETUP_CODE=

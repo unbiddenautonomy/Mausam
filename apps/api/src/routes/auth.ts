@@ -9,10 +9,17 @@ const LANGS = ["en", "hi", "kn"];
 
 export const auth = new Hono<AppEnv>();
 
+function sameText(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 /** Is this a brand-new install with no owner yet? */
 auth.get("/setup", async (c) => {
   const row = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
-  return c.json({ needs_setup: (row?.n ?? 0) === 0 });
+  return c.json({ needs_setup: (row?.n ?? 0) === 0, code_required: !!c.env.SETUP_CODE });
 });
 
 /** First run only: create the owner account. */
@@ -20,6 +27,10 @@ auth.post("/setup", async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
   if ((count?.n ?? 0) > 0) throw new HttpError(409, "already_set_up");
+  // Until the owner exists, anyone with the web address could create it. SETUP_CODE (a Worker secret) closes that gap.
+  if (c.env.SETUP_CODE && !sameText(String(body.setup_code ?? "").trim(), c.env.SETUP_CODE.trim())) {
+    throw new HttpError(403, "wrong_setup_code");
+  }
   const name = requireText(body.name, "name", 80);
   const phone = normalisePhone(body.phone);
   if (!phone) throw new HttpError(422, "invalid", { field: "phone" });

@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { addDays, formatDay, formatINR, formatINRShort, type CloseFlag, type Lang } from "@mausam/shared";
+import { addDays, DAY_START_HOUR, formatDay, formatINR, formatINRShort, istMoment, type CloseFlag, type Lang } from "@mausam/shared";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, clock } from "../lib/format";
@@ -40,15 +40,25 @@ export function Today() {
   );
 }
 
+/** When an "HH:MM" deadline falls for a business day (times before 5 am belong to the next calendar day). */
+function dueAt(date: string, hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return istMoment(h < DAY_START_HOUR ? addDays(date, 1) : date, h, m).getTime();
+}
+
 function TaskList({ d }: { d: TodayData }) {
-  const t = useSession().t;
+  const { t, user } = useSession();
   const shop = d.shopping;
-  const tasks = [
+  const now = Date.now();
+  const late = (hhmm: string) => now > dueAt(d.business_date, hhmm);
+  const tasks: { to: string; icon: "cart" | "receipt" | "moon"; title: string; state: "done" | "open" | "todo" | "late"; sub: string; cta: string; ctaTo: string }[] = [
     {
       to: "/entries/shopping",
       icon: "cart" as const,
       title: t("entries.shopping"),
-      state: shop.status === "closed" ? "done" : shop.status === "open" ? "open" : "todo",
+      state: shop.status === "closed" ? "done" : late(d.settings.shopping_due) ? "late" : shop.status === "open" ? "open" : "todo",
+      cta: shop.status === "open" ? t("task.go_shopping_open") : t("task.go_shopping"),
+      ctaTo: "/entries/shopping",
       sub:
         shop.status === "not_started"
           ? t("today.due", { time: clock(d.settings.shopping_due) })
@@ -59,19 +69,42 @@ function TaskList({ d }: { d: TodayData }) {
       icon: "receipt" as const,
       title: t("entries.expenses"),
       state: d.expenses.count > 0 ? "open" : "todo",
+      cta: t("task.go_expense"),
+      ctaTo: "/entries/expenses/new",
       sub: t("today.entries_count", { count: d.expenses.count, amount: formatINR(d.expenses.total) }),
     },
     {
       to: "/entries/close",
       icon: "moon" as const,
       title: t("entries.close"),
-      state: d.close.status === "done" ? "done" : "todo",
+      state: d.close.status === "done" ? "done" : late(d.settings.close_due) ? "late" : "todo",
+      cta: t("task.go_close"),
+      ctaTo: "/entries/close",
       sub: d.close.close ? formatINR(d.close.close.total_counter) : t("today.due", { time: clock(d.settings.close_due) }),
     },
   ];
-  const label = { done: t("status.done"), open: t("status.open"), todo: t("status.pending") } as const;
+  const label = { done: t("status.done"), open: t("status.open"), todo: t("status.pending"), late: t("status.late") } as const;
+  // For managers, put the one thing to do now at the top with a big button. Expenses are ongoing, so they're never "next".
+  const next = user?.role === "owner" ? undefined : tasks.find((x) => x.icon !== "receipt" && x.state !== "done");
+  const allDone = tasks[0].state === "done" && tasks[2].state === "done";
   return (
     <section className="section">
+      {user?.role !== "owner" && (next ? (
+        <div className={`card next-up${next.state === "late" ? " late" : ""}`}>
+          <span className="eyebrow">{t("today.next_up")}</span>
+          <div className="next-row">
+            <span className="dot"><Icon name={next.icon} /></span>
+            <span className="grow">
+              <strong>{next.title}</strong>
+              <span className="small">{next.sub}</span>
+            </span>
+            {next.state === "late" && <Pill tone="bad">{label.late}</Pill>}
+          </div>
+          <Link to={next.ctaTo} className="btn primary block big">{next.cta} <Icon name="chevron" /></Link>
+        </div>
+      ) : allDone ? (
+        <div className="check good"><Icon name="check" /><span className="t">{t("today.all_done")}</span></div>
+      ) : null)}
       <h2>{t("today.tasks")}</h2>
       <div className="card flush list">
         {tasks.map((task) => (
@@ -83,7 +116,7 @@ function TaskList({ d }: { d: TodayData }) {
               <strong>{task.title}</strong>
               <span className="muted small">{task.sub}</span>
             </span>
-            <Pill tone={task.state === "done" ? "good" : task.state === "open" ? "warn" : undefined}>{label[task.state as keyof typeof label]}</Pill>
+            <Pill tone={task.state === "done" ? "good" : task.state === "late" ? "bad" : task.state === "open" ? "warn" : undefined}>{label[task.state]}</Pill>
           </Link>
         ))}
       </div>

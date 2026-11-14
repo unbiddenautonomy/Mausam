@@ -21,15 +21,27 @@
   ],
   // Created on the first deploy if it doesn't exist yet.
   "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "mausam-photos" }],
-  // Live logs in the dashboard under mausam-admin → Observability
-  "observability": { "enabled": true },
-  // Every 15 minutes: check what's overdue and raise alerts
+  // Every 15 minutes: check what's overdue and raise alerts. The same run takes the nightly backup (after 4 am IST).
   "triggers": { "crons": ["*/15 * * * *"] },
+  // Slow down PIN guessing and runaway clients. These need no setup: Cloudflare creates them on deploy.
+  // namespace_id is just a number unique within your account.
+  "ratelimits": [
+    { "name": "LOGIN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "API_LIMITER", "namespace_id": "1002", "simple": { "limit": 300, "period": 60 } }
+  ],
+  // Live logs in the dashboard under mausam-admin → Observability
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
   "vars": {
-    "ALLOWED_ORIGIN": "*",
+    // Leave empty: the app and API share one address. Only list other sites (comma-separated) if they must call the API.
+    "ALLOWED_ORIGIN": "",
+    // How many nightly database backups to keep in R2 (backups/YYYY-MM-DD.json).
+    "BACKUP_DAYS": "35",
     // Phone reminders need no setup: the Worker makes its own keys on first use and keeps them in the database.
     // Model used to read handwritten memos. The API key is a secret named ANTHROPIC_API_KEY,
     // added in the Cloudflare dashboard (see docs/cloudflare-setup.md).
     "MEMO_MODEL": "claude-opus-5-5"
   }
+  // Secrets (never in this file). Add them in the Cloudflare dashboard (Settings → Variables and secrets):
+  //   ANTHROPIC_API_KEY   memo reading (optional)
+  //   SETUP_CODE          required to create the first owner account (recommended)
 }

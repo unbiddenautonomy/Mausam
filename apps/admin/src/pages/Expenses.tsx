@@ -1,11 +1,11 @@
 import { Link, useSearchParams } from "react-router";
 import { addDays, businessDate, formatDay, formatINR } from "@mausam/shared";
-import { api, photoUrl } from "../lib/api";
+import { api } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, timeIST } from "../lib/format";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorNote, Loading, PageHead, Pill } from "../components/ui";
+import { Empty, ErrorNote, Loading, PageHead, Photo, PhotoLink, Pill } from "../components/ui";
 
 interface Exp {
   id: number;
@@ -64,7 +64,7 @@ export function Expenses() {
           {res.data.expenses.map((e) => (
             <div className="row" key={e.id}>
               {e.photo_key ? (
-                <a href={photoUrl(e.photo_key)} target="_blank" rel="noreferrer"><img className="thumb" src={photoUrl(e.photo_key)} alt="" /></a>
+                <PhotoLink photoKey={e.photo_key}><Photo className="thumb" photoKey={e.photo_key} /></PhotoLink>
               ) : (
                 <span className="thumb" style={{ display: "grid", placeItems: "center", color: "var(--text-3)" }}><Icon name="receipt" /></span>
               )}

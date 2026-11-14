@@ -35,6 +35,8 @@ Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
 
 Cloudflare connects to this GitHub repo and publishes the app every time code is pushed to `main`, so no particular computer is needed. Set it up once from a browser by following [docs/cloudflare-setup.md](docs/cloudflare-setup.md). Database changes in `apps/api/migrations` are applied automatically as part of each publish.
 
+The steps in order, with checks, are in [docs/go-live-checklist.md](docs/go-live-checklist.md). GitHub also checks every pull request (types, tests, build). The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
+
 ## How the money works
 
 - **The formula:** cash left in the drawer + online + expenses paid from the counter = total counter. The app checks this on every closing.
@@ -84,6 +86,13 @@ Cloudflare connects to this GitHub repo and publishes the app every time code is
 
 - **Phone reminders** work with no setup. The Worker makes its own reminder (VAPID) keys the first time someone turns reminders on, and keeps them in the database. To use your own keys instead, set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` on the Worker; `node apps/api/scripts/vapid-keys.mjs` makes a pair.
 - **Memo reading** needs an Anthropic API key, added as a Worker secret named `ANTHROPIC_API_KEY` (section 5 of the setup guide). Without it, the memo button explains that it's off.
+- **Setup code:** a `SETUP_CODE` secret protects the first-run owner screen (section 6 of the setup guide). For local secrets, copy `apps/api/.dev.vars.example` to `apps/api/.dev.vars`.
+
+## Safety built in
+
+- Logins: PINs are hashed; 5 wrong tries lock an account for 15 minutes, and one address can try 10 logins a minute.
+- Nightly database backup to R2 (35 days kept), plus D1 Time Travel. Restore steps are in the setup guide.
+- Security headers on the app and API, no cross-site API access by default, and request logs in the Cloudflare dashboard.
 
 ## Database changes
 

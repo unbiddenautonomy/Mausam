@@ -1,5 +1,7 @@
 # Putting Mausam online with Cloudflare
 
+> Doing this for the first time? [go-live-checklist.md](go-live-checklist.md) puts these steps in order and adds the checks.
+
 Everything here is done in a web browser. You don't need to install anything, and no single computer is "the" Mausam computer. The code lives on GitHub. Cloudflare watches the GitHub repo and publishes the app by itself every time new code is pushed.
 
 A laptop or desktop screen is easier for the Cloudflare dashboard, but a phone works too.
@@ -61,7 +63,16 @@ The app can read the handwritten closing memo photo and fill in the numbers. It 
 
 Without this key, everything else works and the "Read memo" button just says it isn't set up.
 
-## 6. First login
+## 6. Protect the first login (recommended)
+
+Until the owner account exists, anyone who opens the web address could create it. To stop that, add a setup code before you open the app:
+
+1. Open **mausam-admin → Settings → Variables and Secrets**, then click **Add**.
+2. Set **Type** to **Secret**, **Variable name** to `SETUP_CODE`, and type a code only you know. Click **Deploy**.
+
+The first-run screen will then ask for it. Once the owner exists, the code isn't used again.
+
+## 7. First login
 
 1. Open the web address on your phone.
 2. Create the owner account: your name, phone number, and a 4-digit PIN.
@@ -76,19 +87,30 @@ Without this key, everything else works and the "Read memo" button just says it 
 
 Phone reminders need no setup. The app makes its own reminder keys the first time someone turns them on.
 
-## 7. Updates
+## 8. Updates
 
 There's nothing to do. When new code is pushed to the `main` branch on GitHub, Cloudflare builds and publishes it within a few minutes, and applies any database changes on the way. You can watch it under **mausam-admin → Deployments**.
 
 If an update ever breaks something, open **Deployments**, find the previous version, and choose **Rollback**.
 
-## 8. Using your own domain later (optional)
+## 9. Using your own domain later (optional)
 
 Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go to **Workers & Pages → mausam-admin → Settings → Domains & Routes → Add custom domain**, and enter `admin.mausam.in`.
 
 ## Things to know
 
-- **Backups:** D1 keeps 30 days of history automatically. You can restore from the dashboard under **D1 → mausam → Time Travel**.
+- **Backups, two layers:**
+  - D1 Time Travel keeps 30 days of history (7 days on the free plan). Restore from **D1 → mausam → Time Travel**, or `npx wrangler d1 time-travel restore mausam --timestamp=<ISO time>`.
+  - Every day after 4 am India time, the Worker writes a full copy to R2 as `backups/YYYY-MM-DD.json` and keeps 35 days (`BACKUP_DAYS` in `wrangler.jsonc`). Login sessions aren't included, so after a restore everyone logs in again.
+- **Restoring a nightly backup:**
+  ```bash
+  cd apps/api
+  npx wrangler r2 object get mausam-photos/backups/2026-11-14.json --remote --file backup.json
+  node scripts/restore-backup.mjs backup.json > restore.sql
+  npx wrangler d1 execute mausam --remote --file restore.sql
+  ```
+  This replaces all data with the backup. To be safe, download today's backup first, so you can undo.
+- **Login protection:** 5 wrong PINs lock that account for 15 minutes, and one internet address can try at most 10 logins a minute.
 - **Photos** are private and only shown to logged-in users.
 - **Reminders:** the app checks for overdue reports every 15 minutes, using the `triggers.crons` setting in `apps/api/wrangler.jsonc`.
 - **Costs:** Workers, D1 and R2 all have free allowances that should cover a single restaurant at first. Check https://developers.cloudflare.com/workers/platform/pricing/ for current limits.
@@ -103,6 +125,8 @@ Once you buy a domain (for example `mausam.in`), add it to Cloudflare. Then go t
 | Build fails with an R2 error | Step 2: turn on R2 once, then retry the build. |
 | The app opens, but login says "Something went wrong" | The tables are missing. Retry the latest build under **Deployments**. It creates them. |
 | You want to see errors as they happen | **mausam-admin → Observability → Logs** shows the live logs. |
+| First-run screen says the setup code is wrong | It must match the `SETUP_CODE` secret exactly. Set it again under **Settings → Variables and Secrets**. |
+| `/api/health` says `"ok": false` | The database isn't reachable or has no tables. Retry the latest build under **Deployments**. |
 
 ## Publishing from a computer instead (optional)
 
