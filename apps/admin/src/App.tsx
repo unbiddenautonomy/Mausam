@@ -31,6 +31,9 @@ import { Users } from "./pages/manage/Users";
 import { StaffPage } from "./pages/manage/Staff";
 import { Categories } from "./pages/manage/Categories";
 import { SettingsPage } from "./pages/manage/Settings";
+import { MenuPage } from "./pages/pos/Menu";
+import { TablesPage } from "./pages/pos/Tables";
+import { BillsPage } from "./pages/pos/Bills";
 
 export function App() {
   const { user, ready } = useSession();
@@ -56,6 +59,7 @@ export function App() {
           <Route path="vendors/:id" element={<VendorDetail />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="more" element={<More />} />
+          {(owner || user.role === "manager") && <Route path="bills" element={<BillsPage />} />}
           {owner && (
             <>
               <Route path="reports" element={<ReportsHub />} />
@@ -74,6 +78,8 @@ export function App() {
               <Route path="manage/staff" element={<StaffPage />} />
               <Route path="manage/categories" element={<Categories />} />
               <Route path="manage/settings" element={<SettingsPage />} />
+              <Route path="manage/menu" element={<MenuPage />} />
+              <Route path="manage/tables" element={<TablesPage />} />
               <Route path="manage/import" element={<Suspense fallback={<Loading />}><PosImport /></Suspense>} />
             </>
           )}

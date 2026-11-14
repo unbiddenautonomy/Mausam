@@ -87,6 +87,21 @@ The first-run screen will then ask for it. Once the owner exists, the code isn't
 
 Phone reminders need no setup. The app makes its own reminder keys the first time someone turns them on.
 
+## 7b. Set up the billing counter (POS)
+
+The POS is at the same address plus `/pos/`, for example `https://mausam-admin.<your-name>.workers.dev/pos/`.
+
+1. In the admin app, open **Manage → Menu** and add your categories and items with prices. Set GST under **Bills and GST** (GSTIN, rate, and whether prices include GST).
+2. Open **Manage → Tables** and add your tables. For example, area "Garden", first table "C1", 15 tables.
+3. Open **Manage → App users** and add a user for the counter with the **staff** role. A cashier can then bill, but can't see reports or change settings.
+4. On the counter PC, open the `/pos/` address in Chrome, log in with that user, and pick the counter letter (**A** for the first counter).
+5. **Printing without a dialog:** set the receipt printer as the Windows default printer. Then make a Chrome shortcut for the POS with these extra options in its target:
+   ```
+   --kiosk --kiosk-printing https://<your address>/pos/
+   ```
+   Bills and kitchen tickets then print straight away on 80 mm paper. To leave kiosk mode, press Alt+F4.
+6. If the internet drops, keep billing. Bills are saved on the counter and sent automatically when it's back. The **Day summary** screen shows anything not sent yet.
+
 ## 8. Updates
 
 There's nothing to do. When new code is pushed to the `main` branch on GitHub, Cloudflare builds and publishes it within a few minutes, and applies any database changes on the way. You can watch it under **mausam-admin → Deployments**.

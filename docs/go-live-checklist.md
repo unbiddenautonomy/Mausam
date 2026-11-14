@@ -30,6 +30,7 @@ Phone reminder keys need no setup; the app makes its own.
 - [ ] Straight away, open the address on your phone and create the owner account (with the setup code).
 - [ ] Add managers (**Manage → App users**) and staff (**Manage → Staff**).
 - [ ] On each manager's phone: add to home screen, turn on reminders, **Send a test** (setup guide step 7).
+- [ ] Billing counter: add the menu and tables, then open `<address>/pos/` on the counter PC (setup guide step 7b).
 
 ## 4. Updates
 

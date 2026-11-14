@@ -14,6 +14,7 @@ export function More() {
         <NavCard to="/alerts" icon="bell" title={t("nav.alerts")} />
         <NavCard to="/people" icon="users" title={t("people.title")} desc={t("people.payroll_desc")} />
         <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />
+        <NavCard to="/bills" icon="receipt" title={t("bills.title")} desc={t("bills.desc")} />
         <NavCard to="/entries/history" icon="history" title={t("entries.history")} desc={t("entries.history_desc")} />
         {owner && <NavCard to="/month" icon="calendar" title={t("month.title")} desc={t("month.desc")} />}
         {owner && <NavCard to="/manage" icon="manage" title={t("nav.manage")} desc={t("manage.users_desc")} />}
