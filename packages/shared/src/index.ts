@@ -5,3 +5,4 @@ export * from "./checks";
 export * from "./i18n";
 export * from "./pay";
 export * from "./pos";
+export * from "./billing";

@@ -115,6 +115,21 @@ This builds the app and uploads it. At the end, it prints your web address. Secr
    - On Xiaomi, Oppo, Vivo and Realme phones, also go to **Settings → Battery → Chrome → No restrictions**. Otherwise reminders can arrive late.
    - On iPhone, use Safari: tap **Share → Add to Home Screen**. This needs iOS 16.4 or newer.
 
+## 8b. Set up the billing counter (POS)
+
+The POS is at the same address plus `/pos/`, for example `https://mausam-admin.<your-name>.workers.dev/pos/`.
+
+1. In the admin app, open **Manage → Menu** and add your categories and items with prices. Set GST under **Bills and GST** (GSTIN, rate, and whether prices include GST).
+2. Open **Manage → Tables** and add your tables. For example, area "Garden", first table "C1", 15 tables.
+3. Open **Manage → App users** and add a user for the counter with the **staff** role. A cashier can then bill, but can't see reports or change settings.
+4. On the counter PC, open the `/pos/` address in Chrome, log in with that user, and pick the counter letter (**A** for the first counter).
+5. **Printing without a dialog:** set the receipt printer as the Windows default printer. Then make a Chrome shortcut for the POS with these extra options in its target:
+   ```
+   --kiosk --kiosk-printing https://<your address>/pos/
+   ```
+   Bills and kitchen tickets then print straight away on 80 mm paper. To leave kiosk mode, press Alt+F4.
+6. If the internet drops, keep billing. Bills are saved on the counter and sent automatically when it's back. The **Day summary** screen shows anything not sent yet.
+
 ## 9. Publishing updates later
 
 ```bash

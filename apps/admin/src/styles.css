@@ -406,3 +406,10 @@ a.check { text-decoration: none; }
 .audit-row + .audit-row > summary { border-top: 1px solid var(--border); }
 .audit-row:first-child > summary { border-top: 0; }
 .next-up .pill { background: var(--surface); }
+
+/* POS menu and tables (admin) */
+.veg-dot { width: 14px; height: 14px; border: 2px solid var(--good); border-radius: 3px; flex: none; position: relative; }
+.veg-dot::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--good); }
+.veg-dot.nonveg { border-color: var(--bad); }
+.veg-dot.nonveg::after { background: var(--bad); }
+.tile.off { opacity: 0.5; border-style: dashed; }

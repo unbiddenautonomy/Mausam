@@ -8,7 +8,7 @@ Admin app for Mausam Restaurant: managers log morning shopping, expenses and the
 | --- | --- |
 | `apps/admin` | The web app (React + Vite). Works on phones and desktops, and can be installed to the home screen. |
 | `apps/api` | The API on a Cloudflare Worker (Hono), with the D1 database and R2 photo storage. In production this same Worker also serves the admin app. |
-| `apps/pos` | Later: the touchscreen POS. |
+| `apps/pos` | The touchscreen POS for the billing counter (React + Vite), served at `/pos/`. Works offline and syncs bills. |
 | `packages/shared` | Code both apps use: money and date rules, closing checks, and the English, Hindi and Kannada text. |
 | `docs/` | Setup guide and notes. |
 
@@ -22,12 +22,13 @@ pnpm setup:local                          # builds the app and creates the local
 pnpm --filter @mausam/api db:seed:demo    # optional: 5 weeks of demo data
 pnpm dev:api                              # terminal 1: API on http://localhost:8787
 pnpm dev:admin                            # terminal 2: app on http://localhost:5173
+pnpm dev:pos                              # optional, terminal 3: POS on http://localhost:5174/pos/
 ```
 
 Open http://localhost:5173 on your computer, or `http://<your-computer's-IP>:5173` on a phone on the same Wi-Fi.
 
 - **Without demo data**, the first screen asks you to create the owner account.
-- **With demo data**, log in as owner `9000000001` / PIN `1234`, or as a manager `9000000002` / PIN `1111`.
+- **With demo data**, log in as owner `9000000001` / PIN `1234`, or as a manager `9000000002` / PIN `1111`. On the POS, use the counter login `9000000004` / PIN `2222`.
 
 Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
 
@@ -80,7 +81,15 @@ The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 - Change history: who changed what, and when.
 - Manage pages: users, staff (pay can be left blank), categories, and reminder times.
 
-**Next:** the touchscreen POS in `apps/pos`.
+**Touchscreen POS (`apps/pos`):**
+- Tables by area with Free / Ordering / Bill printed colours, and parcels with token numbers.
+- Big item buttons by category, favourites and search; + / − and kitchen notes on each line.
+- Kitchen tickets (only what's new), bills with GST (CGST/SGST), discounts, cancel with a reason.
+- Payment by cash (with change to give back), UPI, card, or split.
+- Works with no internet: bills are numbered on the counter (e.g. `A2627-00042`) and sent when online. Re-sending is harmless.
+- Synced bills fill in the day's POS figures, so the closing check and the sales and best-seller reports use them directly.
+- Admin pages: **Manage → Menu** (items, prices, GST), **Manage → Tables**, and **POS bills** (every bill by day).
+- See [docs/pos-plan.md](docs/pos-plan.md) for the design and what's next.
 
 ## Optional features that need keys
 
@@ -96,4 +105,4 @@ The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 
 ## Database changes
 
-New tables and columns are in `apps/api/migrations` (`0001` to `0004`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer, and the setup guide has the command for Cloudflare.
+New tables and columns are in `apps/api/migrations` (`0001` to `0005`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer, and the setup guide has the command for Cloudflare.
