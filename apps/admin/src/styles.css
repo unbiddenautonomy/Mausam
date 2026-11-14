@@ -245,10 +245,30 @@ p { margin: 0; }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .btn-row > .btn { flex: 1; }
 .sticky-actions {
-  position: sticky; bottom: calc(var(--tabbar) + 12px + env(safe-area-inset-bottom)); z-index: 5;
+  position: sticky; bottom: calc(var(--tabbar) + env(safe-area-inset-bottom)); z-index: 5;
   display: grid; gap: 8px;
+  /* Solid backing so the button never floats see-through over the form behind it. */
+  margin: 0 -16px; padding: 16px 16px 12px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 14px);
 }
-@media (min-width: 900px) { .sticky-actions { bottom: 16px; } }
+.sticky-actions .btn:disabled { opacity: 1; background: var(--surface-2); border-color: var(--border); color: var(--text-3); }
+.sticky-hint { text-align: center; font-size: 0.875rem; color: var(--text-2); }
+.money-echo { display: block; margin-top: 6px; font-size: 0.95rem; font-weight: 600; color: var(--brand); }
+.photo-loading { display: inline-block; background: var(--surface-2); min-height: 48px; min-width: 48px; border-radius: 8px; }
+
+/* "Next up" card on the manager's Today screen: one obvious thing to do. */
+.next-up { display: grid; gap: 14px; border: 2px solid var(--brand); background: var(--brand-soft); margin-bottom: 20px; }
+.next-up.late { border-color: var(--bad); background: var(--bad-soft); }
+.next-up .eyebrow { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brand); }
+.next-up.late .eyebrow { color: var(--bad); }
+.next-up .next-row { display: flex; align-items: center; gap: 14px; }
+.next-up .next-row .grow { flex: 1; display: grid; gap: 2px; }
+.next-up .next-row strong { font-size: 1.15rem; }
+.next-up .dot { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--brand); flex: none; }
+.next-up .dot svg { width: 24px; height: 24px; }
+.btn.big { min-height: 56px; font-size: 1.05rem; }
+.task.late .dot { border-color: var(--bad); color: var(--bad); }
+@media (min-width: 900px) { .sticky-actions { bottom: 0; } }
 
 .segmented { display: flex; background: var(--surface-2); border-radius: var(--radius-sm); padding: 4px; gap: 4px; }
 .segmented button {
@@ -385,3 +405,4 @@ a.check { text-decoration: none; }
 .audit-row > summary::-webkit-details-marker { display: none; }
 .audit-row + .audit-row > summary { border-top: 1px solid var(--border); }
 .audit-row:first-child > summary { border-top: 0; }
+.next-up .pill { background: var(--surface); }

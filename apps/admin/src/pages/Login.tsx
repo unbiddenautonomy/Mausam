@@ -12,11 +12,18 @@ export function Login() {
   const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
+  const [code, setCode] = useState("");
+  const [codeRequired, setCodeRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ needs_setup: boolean }>("/auth/setup").then((r) => setNeedsSetup(r.needs_setup)).catch(() => setNeedsSetup(false));
+    api<{ needs_setup: boolean; code_required?: boolean }>("/auth/setup")
+      .then((r) => {
+        setNeedsSetup(r.needs_setup);
+        setCodeRequired(!!r.code_required);
+      })
+      .catch(() => setNeedsSetup(false));
   }, []);
 
   async function submit(e: FormEvent) {
@@ -26,11 +33,17 @@ export function Login() {
     setBusy(true);
     try {
       const r = needsSetup
-        ? await api<{ token: string; user: User }>("/auth/setup", { method: "POST", json: { name, phone, pin, language: lang } })
+        ? await api<{ token: string; user: User }>("/auth/setup", { method: "POST", json: { name, phone, pin, language: lang, setup_code: code } })
         : await api<{ token: string; user: User }>("/auth/login", { method: "POST", json: { phone, pin } });
       signIn(r.token, r.user);
     } catch (err) {
-      setError(err instanceof ApiError && (err.code === "wrong_login" || err.code === "too_many_tries") ? t("login.wrong") : t("common.error"));
+      const code = err instanceof ApiError ? err.code : "";
+      setError(
+        code === "wrong_login" ? t("login.wrong")
+        : code === "too_many_tries" ? t("login.too_many")
+        : code === "wrong_setup_code" ? t("setup.wrong_code")
+        : t("common.error"),
+      );
     } finally {
       setBusy(false);
     }
@@ -62,7 +75,12 @@ export function Login() {
           </Field>
           <Field label={t("login.pin")} htmlFor="pin">{pinInput("pin", pin, setPin)}</Field>
           {needsSetup && <Field label={t("setup.confirm_pin")} htmlFor="pin2">{pinInput("pin2", pin2, setPin2)}</Field>}
-          {error && <div className="check bad"><span className="t">{error}</span></div>}
+          {needsSetup && codeRequired && (
+            <Field label={t("setup.code")} help={t("setup.code_help")} htmlFor="setup-code">
+              <input id="setup-code" className="input" required autoComplete="off" autoCapitalize="off" value={code} onChange={(e) => setCode(e.target.value)} />
+            </Field>
+          )}
+          {error && <div className="check bad" role="alert"><span className="t">{error}</span></div>}
           <button className="btn primary block" disabled={busy || needsSetup === null}>
             {needsSetup ? t("setup.submit") : t("login.submit")}
           </button>
