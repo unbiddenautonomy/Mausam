@@ -16,10 +16,22 @@ function sameText(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/** A developer's own computer or local network, where first-run setup may skip the code. */
+export function isLocalHost(url: string): boolean {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "::1" || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+}
+
 /** Is this a brand-new install with no owner yet? */
 auth.get("/setup", async (c) => {
   const row = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
-  return c.json({ needs_setup: (row?.n ?? 0) === 0, code_required: !!c.env.SETUP_CODE });
+  const local = isLocalHost(c.req.url);
+  return c.json({
+    needs_setup: (row?.n ?? 0) === 0,
+    code_required: !!c.env.SETUP_CODE || !local,
+    // Online without a SETUP_CODE secret, first-run setup is refused rather than left open to anyone.
+    code_missing: !c.env.SETUP_CODE && !local,
+  });
 });
 
 /** First run only: create the owner account. */
@@ -28,6 +40,8 @@ auth.post("/setup", async (c) => {
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM users").first<{ n: number }>();
   if ((count?.n ?? 0) > 0) throw new HttpError(409, "already_set_up");
   // Until the owner exists, anyone with the web address could create it. SETUP_CODE (a Worker secret) closes that gap.
+  // Online, the code is required: without the secret, setup is refused instead of left open.
+  if (!c.env.SETUP_CODE && !isLocalHost(c.req.url)) throw new HttpError(403, "setup_code_missing");
   if (c.env.SETUP_CODE && !sameText(String(body.setup_code ?? "").trim(), c.env.SETUP_CODE.trim())) {
     throw new HttpError(403, "wrong_setup_code");
   }
