@@ -4,19 +4,23 @@ import { api } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Icon } from "../../components/Icon";
-import { ErrorNote, Field, Loading, MoneyInput, PageHead, Pill, Segmented, useToast } from "../../components/ui";
+import { ErrorNote, Field, Loading, MoneyInput, PageHead, Segmented, useToast } from "../../components/ui";
 
 export interface MenuCategory { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number; active: number }
 export interface MenuItem {
   id: number; category_id: number; name: string; short_name: string | null; price: number; tax_rate: number | null;
   hsn: string | null; veg: number; favourite: number; sort: number; active: number;
 }
-interface PosSettings { gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string }
+export interface PosSettings {
+  gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string;
+  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean;
+}
 
 /** Owner: the POS menu. Categories down the side on desktop, items as a list, one form for add and edit. */
 export function MenuPage() {
   const { t } = useSession();
   const res = useApi<{ categories: MenuCategory[]; items: MenuItem[] }>("/billing/menu");
+  const useGst = !!useApi<{ settings: PosSettings }>("/billing/settings").data?.settings.use_gst;
   const [cat, setCat] = useState<number | null>(null);
   const [editing, setEditing] = useState<MenuItem | "new" | null>(null);
   const [newCat, setNewCat] = useState("");
@@ -76,7 +80,7 @@ export function MenuPage() {
                 <span className={`veg-dot ${i.veg ? "veg" : "nonveg"}`} aria-label={i.veg ? t("menu.veg") : t("menu.nonveg")} />
                 <span className="grow">
                   <strong>{i.name}{i.favourite ? " ★" : ""}</strong>
-                  <span className="muted small">{[i.short_name, i.tax_rate !== null ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
+                  <span className="muted small">{[i.short_name, i.tax_rate !== null && useGst ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
                 </span>
                 <span className="amount">{formatINR(i.price)}</span>
                 <Icon name="chevron" />
@@ -98,7 +102,6 @@ export function MenuPage() {
               <button className="btn primary" disabled={!newCat.trim()} onClick={addCategory}><Icon name="plus" /> {t("common.add")}</button>
             </div>
           </div>
-          <GstSettings />
         </>
       )}
     </div>
@@ -107,6 +110,7 @@ export function MenuPage() {
 
 function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: MenuItem | null; categories: MenuCategory[]; defaultCategory?: number; onDone: () => void }) {
   const { t } = useSession();
+  const useGst = !!useApi<{ settings: PosSettings }>("/billing/settings").data?.settings.use_gst;
   const toast = useToast();
   const [f, setF] = useState({
     name: initial?.name ?? "",
@@ -152,7 +156,7 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
       </div>
       <div className="grid-2">
         <Field label={`${t("menu.short_name")} (${t("common.optional")})`} help={t("menu.short_name_help")} htmlFor="m-short"><input id="m-short" className="input" value={f.short_name} onChange={(e) => setF({ ...f, short_name: e.target.value })} /></Field>
-        <Field label={`${t("menu.gst")} (${t("common.optional")})`} help={t("menu.gst_help")} htmlFor="m-tax"><input id="m-tax" className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} /></Field>
+        {useGst && <Field label={`${t("menu.gst")} (${t("common.optional")})`} help={t("menu.gst_help")} htmlFor="m-tax"><input id="m-tax" className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} /></Field>}
       </div>
       <Segmented value={f.veg ? "veg" : "non"} onChange={(v) => setF({ ...f, veg: v === "veg" })} options={[{ value: "veg", label: t("menu.veg") }, { value: "non", label: t("menu.nonveg") }]} />
       <label className="check" style={{ cursor: "pointer", background: "var(--surface-2)" }}>
@@ -170,44 +174,6 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
         <button className="btn" onClick={onDone}>{t("common.cancel")}</button>
         <button className="btn primary" disabled={!ready} onClick={save}><Icon name="check" /> {t("common.save")}</button>
       </div>
-    </div>
-  );
-}
-
-function GstSettings() {
-  const { t } = useSession();
-  const toast = useToast();
-  const res = useApi<{ settings: PosSettings }>("/billing/settings");
-  const [f, setF] = useState<PosSettings | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const s = f ?? res.data?.settings ?? null;
-  if (!s) return null;
-  async function save() {
-    setError(null);
-    try {
-      const r = await api<{ settings: PosSettings }>("/billing/settings", { method: "PUT", json: s });
-      setF(r.settings);
-      toast(t("common.saved"));
-    } catch (e) {
-      setError(e);
-    }
-  }
-  return (
-    <div className="card form">
-      <h2>{t("menu.bill_settings")}</h2>
-      <div className="grid-2">
-        <Field label={`GSTIN (${t("common.optional")})`} help={t("menu.gstin_help")} htmlFor="g-in"><input id="g-in" className="input" value={s.gstin} onChange={(e) => setF({ ...s, gstin: e.target.value.toUpperCase() })} /></Field>
-        <Field label={t("menu.gst_default")} htmlFor="g-rate"><input id="g-rate" className="input" inputMode="decimal" value={String(s.gst_rate / 100)} onChange={(e) => setF({ ...s, gst_rate: Math.round(Number(e.target.value.replace(/[^\d.]/g, "") || 0) * 100) })} /></Field>
-      </div>
-      <div className="field">
-        <span className="label">{t("menu.prices_are")}</span>
-        <Segmented value={s.prices_include_tax ? "inc" : "exc"} onChange={(v) => setF({ ...s, prices_include_tax: v === "inc" })} options={[{ value: "inc", label: t("menu.include_gst") }, { value: "exc", label: t("menu.plus_gst") }]} />
-      </div>
-      <Field label={t("menu.bill_header")} htmlFor="g-h"><input id="g-h" className="input" value={s.bill_header} onChange={(e) => setF({ ...s, bill_header: e.target.value })} /></Field>
-      <Field label={t("menu.bill_footer")} htmlFor="g-f"><input id="g-f" className="input" value={s.bill_footer} onChange={(e) => setF({ ...s, bill_footer: e.target.value })} /></Field>
-      <ErrorNote error={error} />
-      <button className="btn primary" disabled={!f} onClick={save}><Icon name="check" /> {t("common.save")}</button>
-      {!s.gstin && <Pill tone="warn">{t("menu.no_gstin")}</Pill>}
     </div>
   );
 }

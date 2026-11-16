@@ -151,3 +151,35 @@ describe("Kannada", () => {
     }
   });
 });
+
+import { percentToBp, waiterCommission } from "./billing";
+import { parseUserList } from "./types";
+
+describe("waiter commission", () => {
+  it("is a % of the bill, rounded to the paisa", () => {
+    expect(waiterCommission(123400, 250)).toBe(3085);
+    expect(waiterCommission(99, 250)).toBe(2);
+    expect(waiterCommission(100000, 0)).toBe(0);
+    expect(waiterCommission(-5, 500)).toBe(0);
+  });
+  it("reads a typed percent", () => {
+    expect(percentToBp("2.5")).toBe(250);
+    expect(percentToBp("10")).toBe(1000);
+    expect(percentToBp("")).toBeNull();
+    expect(percentToBp("150")).toBeNull();
+  });
+  it("is added to month-end pay", () => {
+    const none = { present: 0, half: 0, absent: 0, leave: 0, off: 0, unmarked: 30 };
+    const r = computePay({ pay_type: null, rate: null, days: none, advances: 50000, commission: 312000 });
+    expect(r.gross).toBe(0);
+    expect(r.net).toBe(262000);
+  });
+});
+
+describe("reminder recipients", () => {
+  it("reads a list of user ids", () => {
+    expect(parseUserList("3, 5,3,x,0,-1")).toEqual([3, 5]);
+    expect(parseUserList("")).toEqual([]);
+    expect(parseUserList(null)).toEqual([]);
+  });
+});

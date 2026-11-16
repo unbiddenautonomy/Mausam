@@ -314,7 +314,30 @@ entries.put("/closes/:date", async (c) => {
 
   // A missing-close alert is resolved by the submission; a flagged close raises one for the owner.
   await db.prepare("UPDATE alerts SET seen_at = datetime('now') WHERE type = 'close_missing' AND business_date = ? AND seen_at IS NULL").bind(date).run();
-  const serious = flags.filter((f) => f.code !== "no_memo_photo");
+  // A memo that doesn't add up is accepted, but the owner and every manager get an alert, so it's looked at the same day.
+  const mismatch = flags.find((f) => f.code === "formula_mismatch");
+  if (mismatch) {
+    const params = { amount: Math.abs(mismatch.diff ?? 0), diff: mismatch.diff ?? 0, name: user.name };
+    await db
+      .prepare(
+        `INSERT INTO alerts (type, business_date, severity, params, audience) VALUES ('close_unbalanced', ?, 'critical', ?, 'all')
+         ON CONFLICT (type, business_date) DO UPDATE SET params = excluded.params, seen_at = NULL, seen_by = NULL`,
+      )
+      .bind(date, JSON.stringify(params))
+      .run();
+    c.executionCtx.waitUntil(
+      notify(
+        c.env,
+        "all",
+        { title: "push.alert_title", body: "alert.close_unbalanced", params: alertParams("close_unbalanced", date, params) },
+        { url: `/entries/close/${date}`, dedupeKey: `alert:close_unbalanced:${date}:${mismatch.diff}` },
+      ),
+    );
+  } else {
+    // Fixed on a later edit: the alert is settled.
+    await db.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE type = 'close_unbalanced' AND business_date = ? AND seen_at IS NULL").bind(user.id, date).run();
+  }
+  const serious = flags.filter((f) => f.code !== "no_memo_photo" && f.code !== "formula_mismatch");
   if (serious.length) {
     await db
       .prepare(

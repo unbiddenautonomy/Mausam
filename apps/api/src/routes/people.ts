@@ -5,6 +5,7 @@ import { requireRole } from "../lib/auth";
 import { addCounterExpense, removeCounterExpense } from "../lib/counter";
 import { assertDayOpen, audit, bool } from "../lib/db";
 import { HttpError, optionalText, requireDate, requirePaise } from "../lib/http";
+import { commissionFor } from "./billing";
 
 const STATUSES: AttendanceStatus[] = ["present", "half", "absent", "leave", "off"];
 const isMonth = (v: unknown): v is string => typeof v === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);
@@ -121,10 +122,10 @@ people.delete("/advances/:id", async (c) => {
 
 /* ---------- Month-end pay (owner) ---------- */
 
-interface StaffRow { id: number; name: string; role: string; pay_type: PayType | null; pay_rate: number | null; joined_on: string | null }
+interface StaffRow { id: number; name: string; role: string; pay_type: PayType | null; pay_rate: number | null; joined_on: string | null; is_waiter: number }
 interface PayrollRow {
   staff_id: number; pay_type: string | null; rate: number | null; days_worked: number; days_absent: number; days_unmarked: number;
-  gross: number; advances: number; adjustment: number; net: number; status: "draft" | "paid"; paid_on: string | null; note: string | null;
+  gross: number; advances: number; adjustment: number; net: number; commission: number; status: "draft" | "paid"; paid_on: string | null; note: string | null;
 }
 
 /** Works out one person's pay for a month from attendance and advances. */
@@ -142,14 +143,16 @@ async function computeFor(db: D1Database, month: string, s: StaffRow, adjustment
     .prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM advances WHERE staff_id = ? AND deleted_at IS NULL AND business_date LIKE ? || '-%'")
     .bind(s.id, month)
     .first<{ t: number }>();
-  const pay = computePay({ pay_type: s.pay_type, rate: s.pay_rate, days: counts, days_not_employed: notEmployed, advances: adv?.t ?? 0, adjustment });
-  return { ...pay, counts, advances: adv?.t ?? 0, partial: dates.length < all.length - notEmployed };
+  // Commission is counted for anyone who served bills, even if they're no longer marked as a waiter.
+  const commission = await commissionFor(db, s.id, month);
+  const pay = computePay({ pay_type: s.pay_type, rate: s.pay_rate, days: counts, days_not_employed: notEmployed, advances: adv?.t ?? 0, adjustment, commission });
+  return { ...pay, counts, commission, advances: adv?.t ?? 0, partial: dates.length < all.length - notEmployed };
 }
 
 people.get("/payroll/:month", requireRole("owner"), async (c) => {
   const month = requireMonth(c.req.param("month"));
   const { results: staff } = await c.env.DB.prepare(
-    `SELECT id, name, role, pay_type, pay_rate, joined_on FROM staff
+    `SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter FROM staff
      WHERE active = 1 OR id IN (SELECT staff_id FROM payroll WHERE month = ?) ORDER BY role, name`,
   )
     .bind(month)
@@ -168,11 +171,14 @@ people.get("/payroll/:month", requireRole("owner"), async (c) => {
     rows.push({
       staff_id: s.id, name: s.name, role: s.role, pay_type: s.pay_type, rate: s.pay_rate,
       days_worked: p.days_worked, days_absent: p.days_absent, days_unmarked: p.counts.unmarked,
-      gross: p.gross, advances: p.advances, adjustment: row?.adjustment ?? 0, net: p.net,
+      gross: p.gross, commission: p.commission, advances: p.advances, adjustment: row?.adjustment ?? 0, net: p.net,
       status: "draft" as const, paid_on: null, note: row?.note ?? null, partial: p.partial,
     });
   }
-  const totals = rows.reduce((t, r) => ({ gross: t.gross + r.gross, advances: t.advances + r.advances, net: t.net + r.net }), { gross: 0, advances: 0, net: 0 });
+  const totals = rows.reduce(
+    (t, r) => ({ gross: t.gross + r.gross, commission: t.commission + (r.commission ?? 0), advances: t.advances + r.advances, net: t.net + r.net }),
+    { gross: 0, commission: 0, advances: 0, net: 0 },
+  );
   return c.json({ month, rows, totals });
 });
 
@@ -181,7 +187,7 @@ people.put("/payroll/:month/:staffId", requireRole("owner"), async (c) => {
   const user = c.get("user");
   const month = requireMonth(c.req.param("month"));
   const staffId = Number(c.req.param("staffId"));
-  const s = await c.env.DB.prepare("SELECT id, name, role, pay_type, pay_rate, joined_on FROM staff WHERE id = ?").bind(staffId).first<StaffRow>();
+  const s = await c.env.DB.prepare("SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter FROM staff WHERE id = ?").bind(staffId).first<StaffRow>();
   if (!s) throw new HttpError(404, "not_found");
   const b = await c.req.json<{ adjustment?: unknown; note?: unknown; status?: unknown }>();
   const before = await c.env.DB.prepare("SELECT * FROM payroll WHERE staff_id = ? AND month = ?").bind(staffId, month).first<PayrollRow>();
@@ -195,14 +201,15 @@ people.put("/payroll/:month/:staffId", requireRole("owner"), async (c) => {
   const p = await computeFor(c.env.DB, month, s, adjustment);
   const note = b.note === undefined ? before?.note ?? null : optionalText(b.note);
   await c.env.DB.prepare(
-    `INSERT INTO payroll (staff_id, month, pay_type, rate, days_worked, days_absent, days_unmarked, gross, advances, adjustment, net, status, paid_on, note, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `INSERT INTO payroll (staff_id, month, pay_type, rate, days_worked, days_absent, days_unmarked, gross, advances, adjustment, net, status, paid_on, note, commission, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT (staff_id, month) DO UPDATE SET pay_type = excluded.pay_type, rate = excluded.rate, days_worked = excluded.days_worked,
        days_absent = excluded.days_absent, days_unmarked = excluded.days_unmarked, gross = excluded.gross, advances = excluded.advances,
-       adjustment = excluded.adjustment, net = excluded.net, status = excluded.status, paid_on = excluded.paid_on, note = excluded.note, updated_at = excluded.updated_at`,
+       adjustment = excluded.adjustment, net = excluded.net, status = excluded.status, paid_on = excluded.paid_on, note = excluded.note,
+       commission = excluded.commission, updated_at = excluded.updated_at`,
   )
     .bind(staffId, month, s.pay_type, s.pay_rate, p.days_worked, p.days_absent, p.counts.unmarked, p.gross, p.advances, adjustment, p.net, status,
-      status === "paid" ? businessDate() : null, note)
+      status === "paid" ? businessDate() : null, note, p.commission)
     .run();
   await audit(c.env.DB, "payroll", staffId, before ? "update" : "create", before, { month, status, adjustment, net: p.net }, user.id);
   return c.json({ ok: true, net: p.net });

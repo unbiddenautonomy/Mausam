@@ -2,6 +2,7 @@
 // - Monthly pay: the full amount, less 1/30 for each absent or leave day (a half day counts as ½),
 //   and less 1/30 for each day of the month before the person joined.
 // - Daily or per-shift pay: rate × days worked (a half day counts as ½).
+// - Waiters also get their commission on the bills they served (from the POS), added on top.
 // - Days nobody marked count as worked, so a forgotten register never cuts anyone's pay.
 //   The owner sees how many days were unmarked and can adjust.
 
@@ -24,6 +25,7 @@ export interface PayInput {
   days_not_employed?: number; // days of the month before joining
   advances: number; // paise
   adjustment?: number; // paise, + or -
+  commission?: number; // paise: a waiter's commission on the bills they served this month
 }
 
 export interface PayResult {
@@ -47,7 +49,7 @@ export function computePay(p: PayInput): PayResult {
     }
     gross = Math.round(gross / 100) * 100; // whole rupees
   }
-  return { days_worked, days_absent, gross, net: gross - p.advances + (p.adjustment ?? 0) };
+  return { days_worked, days_absent, gross, net: gross + (p.commission ?? 0) - p.advances + (p.adjustment ?? 0) };
 }
 
 /** Counts statuses for a list of dates, treating dates with no mark as unmarked. */

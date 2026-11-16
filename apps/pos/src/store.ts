@@ -4,8 +4,19 @@ import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, t
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
 export interface Item { id: number; category_id: number; name: string; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
 export interface Table { id: number; area: string; name: string; seats: number; sort: number }
-export interface Waiter { id: number; name: string; name_local: string | null }
-export interface PosSettings { gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string }
+export interface Waiter { id: number; name: string; name_local: string | null; waiter_code?: string | null }
+export interface PosSettings {
+  gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string;
+  /** Show the table map; off = orders by number, table number typed in if wanted. */
+  use_tables?: boolean;
+  /** Charge GST (also needs a GSTIN). */
+  use_gst?: boolean;
+  /** A receipt printer is connected; off = bills and kitchen orders are shown on screen. */
+  printing?: boolean;
+  commission_bp?: number;
+  /** A dine-in order needs a waiter before payment. */
+  waiter_required?: boolean;
+}
 export interface Config { categories: Category[]; items: Item[]; tables: Table[]; waiters: Waiter[]; settings: PosSettings; fetched_at: string }
 
 export interface Line { key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null }
@@ -82,9 +93,9 @@ export const storage = {
 
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
 
-/** GST applies only once a GSTIN is set; an item can override the default rate. */
+/** GST applies only when it's switched on and a GSTIN is set; an item can override the default rate. */
 export function rateFor(item: Item, s: PosSettings): number {
-  if (!s.gstin) return 0;
+  if (s.use_gst === false || !s.gstin) return 0;
   return item.tax_rate ?? s.gst_rate;
 }
 
@@ -118,10 +129,10 @@ export function unsent(order: Order): Line[] {
   return order.lines.filter((l) => l.qty > l.sent).map((l) => ({ ...l, qty: l.qty - l.sent }));
 }
 
-export function newOrder(type: Order["type"], table: Table | null, token: number | null): Order {
+export function newOrder(type: Order["type"], table: Table | null, token: number | null, opts: { waiter?: number | null; tableName?: string | null } = {}): Order {
   const now = new Date();
   return {
-    id: uid(), type, table_id: table?.id ?? null, table_name: table?.name ?? null, token, waiter_staff_id: null, guests: null,
+    id: uid(), type, table_id: table?.id ?? null, table_name: table?.name ?? (opts.tableName?.trim() || null), token, waiter_staff_id: opts.waiter ?? null, guests: null,
     lines: [], discount: 0, opened_at: now.toISOString(), bill_no: null, business_date: businessDate(now),
   };
 }
@@ -159,4 +170,35 @@ export function toBill(order: Order, s: PosSettings, status: Bill["status"], pay
 export function pruneBills(bills: Bill[]): Bill[] {
   const cutoff = new Date(Date.now() - 3 * 86_400_000).toISOString();
   return bills.filter((b) => !b.synced || b.closed_at > cutoff);
+}
+
+/** Does this order still need a waiter before it can be paid? Only dine-in, only when required, and only once waiters exist. */
+export function needsWaiter(order: Order, config: Pick<Config, "settings" | "waiters">): boolean {
+  return order.type === "dine_in" && config.settings.waiter_required !== false && config.waiters.length > 0 && !order.waiter_staff_id;
+}
+
+/** Use the table map only when it's switched on and tables are set up. */
+export function usesTables(config: Pick<Config, "settings" | "tables">): boolean {
+  return !!config.settings.use_tables && config.tables.length > 0;
+}
+
+/** How an order is named on screen: its table, or its order (token) number. */
+export function orderLabel(o: Pick<Order, "type" | "table_name" | "token">, t: (k: "table" | "parcel" | "order_no", p?: Record<string, string | number>) => string): string {
+  if (o.type === "parcel") return `${t("parcel")} #${o.token ?? ""}`;
+  if (o.table_name) return `${t("table")} ${o.table_name}${o.token ? ` · #${o.token}` : ""}`;
+  return t("order_no", { n: o.token ?? "" });
+}
+
+/** Today's paid bills grouped by waiter, biggest first (for the day summary). */
+export function byWaiter(bills: Bill[], waiters: Waiter[]): { id: number | null; name: string; bills: number; total: number }[] {
+  const m = new Map<number | null, { id: number | null; name: string; bills: number; total: number }>();
+  for (const b of bills) {
+    if (b.status !== "paid") continue;
+    const id = b.waiter_staff_id ?? null;
+    const row = m.get(id) ?? { id, name: waiters.find((w) => w.id === id)?.name ?? "", bills: 0, total: 0 };
+    row.bills++;
+    row.total += b.total;
+    m.set(id, row);
+  }
+  return [...m.values()].sort((a, b) => (a.id === null ? 1 : b.id === null ? -1 : b.total - a.total));
 }

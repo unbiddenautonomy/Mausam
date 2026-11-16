@@ -28,6 +28,9 @@ export function Alerts() {
       amount: typeof p.amount === "number" ? formatINR(p.amount) : "",
       usual: typeof p.usual === "number" ? formatINR(p.usual) : "",
       category: String(p.category ?? ""),
+      name: String(p.name ?? ""),
+      vendor: String(p.vendor ?? ""),
+      month: String(p.month ?? ""),
     });
   }
   const link = (a: AlertRow) => (a.type === "shopping_open" ? "/entries/shopping" : a.type.startsWith("expense_high") ? `/entries/expenses?date=${a.business_date}` : `/entries/close/${a.business_date}`);
