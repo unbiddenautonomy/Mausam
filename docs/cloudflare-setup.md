@@ -28,14 +28,28 @@ The token has to be made under your **profile**. A token made under **Manage acc
 1. Click the **person icon** at the top right → **My Profile**.
 2. In the left menu, click **API Tokens**, then **Create Token**.
 3. Find the row **Edit Cloudflare Workers** and click **Use template** on it.
-4. Under **Permissions** there are already several rows. Click **+ Add more** under them. In the new row, pick **Account**, then **D1**, then **Edit**.
-5. Under **Account Resources**: **Include** → your account.
-6. Under **Zone Resources**: **Include** → **All zones from an account** → your account. Fill this in even if you don't own a domain.
-7. Leave everything else as it is, including the token name. Click **Continue to summary**.
-   - **If Continue to summary is greyed out** and only **Cancel** works, a box is still empty. Look again at **Account Resources** and **Zone Resources**: each needs all its drop-downs chosen, not just **Include**. A **Permissions** row left half-filled also greys it out; finish it or remove it with the ✕.
-8. The summary page lists what the token can do. Check that **D1 : Edit** is in the list, then click **Create Token**.
 
-**You should see:** "*Edit Cloudflare Workers* API token was successfully created" with a long code. You don't need to copy it. You'll pick it by name in step 3. Click **View all API tokens** or just leave the page.
+Cloudflare shows one of two layouts next. Follow the one you see.
+
+**Layout A: a list of "Policies" (Zone policy, Account policy, User policy)**
+
+4. **Token name**: type `mausam-build`. The button at the bottom stays greyed out until this is filled.
+5. Click the **Account policy** row (it says "Workers KV Storage Write, Workers Scripts Write, Account Settings Read +7 more"). Look for **D1** in its list. If it isn't there, add a permission: **D1** → **Write**. Check the policy applies to your account.
+6. Click the **Zone policy** row (Workers Routes Write) and set it to **All zones** of your account, even if you don't own a domain.
+7. Leave the **User policy** as it is. Click **Continue to summary**.
+
+**Layout B: "Permissions" rows with "Account Resources" and "Zone Resources" below**
+
+4. Under **Permissions**, click **+ Add more**. In the new row, pick **Account**, then **D1**, then **Edit**.
+5. Under **Account Resources**: **Include** → your account.
+6. Under **Zone Resources**: **Include** → **All zones from an account** → your account, even if you don't own a domain.
+7. Leave everything else as it is. Click **Continue to summary**.
+
+**If Continue to summary is greyed out** and only **Cancel** works, something is still empty: the token name, or a drop-down in a policy or resource box. A half-filled permission row also greys it out; finish it or remove it.
+
+8. The summary lists what the token can do. Check that **D1** (Edit or Write) is in it, then click **Create Token**.
+
+**You should see:** a message that the token was created, with a long code. You don't need to copy it. You'll pick it by name in step 4. Leave the page.
 
 ### Step 3. Connect the GitHub repo
 
@@ -66,7 +80,7 @@ Then click **Advanced settings** to open more boxes:
 
 | Box | What to put |
 | --- | --- |
-| **API token** | pick the token from step 2 (named *Edit Cloudflare Workers*). Don't choose "Create new token": that one can't make the database. |
+| **API token** | pick the token from step 2 (`mausam-build`, or *Edit Cloudflare Workers* if you kept the default name). Don't choose "Create new token": that one can't make the database. |
 | **Non-production branch deploy command**, or a tick box about **builds for non-production branches** | if there's a tick box, untick it. If there's only a command box, leave it; you'll turn preview builds off in step 6. |
 | **Build variables** | nothing needed |
 
