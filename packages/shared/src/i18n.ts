@@ -281,7 +281,7 @@ const en = {
   "users.active": "Can log in",
   "role.owner": "Owner",
   "role.manager": "Manager",
-  "role.staff": "Staff",
+  "role.staff": "Employee",
 
   "staff.add": "Add staff member",
   "staff.name": "Name",
@@ -813,7 +813,7 @@ const hi: Dict = {
   "users.active": "लॉग इन कर सकता है",
   "role.owner": "मालिक",
   "role.manager": "मैनेजर",
-  "role.staff": "स्टाफ़",
+  "role.staff": "कर्मचारी",
 
   "staff.add": "स्टाफ़ जोड़ें",
   "staff.name": "नाम",
@@ -1340,7 +1340,7 @@ const kn: Dict = {
   "users.active": "ಲಾಗ್ ಇನ್ ಮಾಡಬಹುದು",
   "role.owner": "ಮಾಲೀಕರು",
   "role.manager": "ಮ್ಯಾನೇಜರ್",
-  "role.staff": "ಸ್ಟಾಫ್",
+  "role.staff": "ಉದ್ಯೋಗಿ",
 
   "staff.add": "ಸ್ಟಾಫ್ ಸೇರಿಸಿ",
   "staff.name": "ಹೆಸರು",

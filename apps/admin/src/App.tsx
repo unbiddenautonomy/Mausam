@@ -55,14 +55,19 @@ export function App() {
           <Route path="entries/close" element={<CloseDay />} />
           <Route path="entries/close/:date" element={<CloseDay />} />
           <Route path="entries/history" element={<History />} />
-          <Route path="people" element={<PeopleHub />} />
-          <Route path="people/attendance" element={<Attendance />} />
-          <Route path="people/advances" element={<Advances />} />
-          <Route path="vendors" element={<VendorList />} />
-          <Route path="vendors/:id" element={<VendorDetail />} />
-          <Route path="alerts" element={<Alerts />} />
           <Route path="more" element={<More />} />
-          {(owner || user.role === "manager") && <Route path="bills" element={<BillsPage />} />}
+          {/* Employees (the "staff" role) only make and review entries; managers and the owner see the rest. */}
+          {(owner || user.role === "manager") && (
+            <>
+              <Route path="people" element={<PeopleHub />} />
+              <Route path="people/attendance" element={<Attendance />} />
+              <Route path="people/advances" element={<Advances />} />
+              <Route path="vendors" element={<VendorList />} />
+              <Route path="vendors/:id" element={<VendorDetail />} />
+              <Route path="alerts" element={<Alerts />} />
+              <Route path="bills" element={<BillsPage />} />
+            </>
+          )}
           {owner && (
             <>
               <Route path="reports" element={<ReportsHub />} />

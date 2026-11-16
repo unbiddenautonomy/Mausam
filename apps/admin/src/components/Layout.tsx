@@ -21,7 +21,9 @@ export function Layout() {
   const [queued, setQueued] = useState(queueSize());
   useEffect(() => { const off = onQueueChange(setQueued); return () => void off(); }, []);
   // Re-check alerts on every page change so the bell stays current.
-  const alerts = useApi<{ alerts: { seen_at: string | null }[] }>(`/alerts?p=${encodeURIComponent(location.pathname)}`);
+  // Employees (the "staff" role) only make entries and bill, so they have no alerts.
+  const isStaff = user?.role === "staff";
+  const alerts = useApi<{ alerts: { seen_at: string | null }[] }>(isStaff ? null : `/alerts?p=${encodeURIComponent(location.pathname)}`);
   const unseen = alerts.data?.alerts.filter((a) => !a.seen_at).length ?? 0;
 
   useEffect(() => {
@@ -34,15 +36,19 @@ export function Layout() {
   const work: NavItem[] = [
     { to: "/", icon: "today", label: t("nav.today"), end: true },
     { to: "/entries", icon: "entries", label: t("nav.entries") },
-    { to: "/people", icon: "users", label: t("nav.people") },
-    { to: "/vendors", icon: "truck", label: t("nav.vendors") },
+    ...(isStaff ? [] : [
+      { to: "/people", icon: "users", label: t("nav.people") } as NavItem,
+      { to: "/vendors", icon: "truck", label: t("nav.vendors") } as NavItem,
+    ]),
   ];
   const insight: NavItem[] = isOwner ? [{ to: "/reports", icon: "reports", label: t("nav.reports") }, { to: "/month", icon: "calendar", label: t("nav.month") }] : [];
   const admin: NavItem[] = isOwner ? [{ to: "/manage", icon: "manage", label: t("nav.manage") }] : [];
 
   const tabs: NavItem[] = isOwner
     ? [...work.slice(0, 2), insight[0], { to: "/more", icon: "more", label: t("nav.more") }]
-    : [...work.slice(0, 2), { to: "/alerts", icon: "bell", label: t("nav.alerts") }, { to: "/more", icon: "more", label: t("nav.more") }];
+    : isStaff
+      ? [...work.slice(0, 2), { to: "/more", icon: "more", label: t("nav.more") }]
+      : [...work.slice(0, 2), { to: "/alerts", icon: "bell", label: t("nav.alerts") }, { to: "/more", icon: "more", label: t("nav.more") }];
 
   const link = (n: NavItem, extra?: React.ReactNode) => (
     <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `side-link${isActive ? " active" : ""}`}>
@@ -61,7 +67,7 @@ export function Layout() {
         {work.map((n) => link(n))}
         {insight.length > 0 && <div className="side-group">{t("nav.reports")}</div>}
         {insight.map((n) => link(n))}
-        {link({ to: "/alerts", icon: "bell", label: t("nav.alerts") }, unseen > 0 ? <span className="count">{unseen}</span> : null)}
+        {!isStaff && link({ to: "/alerts", icon: "bell", label: t("nav.alerts") }, unseen > 0 ? <span className="count">{unseen}</span> : null)}
         {admin.length > 0 && <div className="side-group">{t("nav.manage")}</div>}
         {admin.map((n) => link(n))}
         <div className="side-foot">
@@ -85,10 +91,12 @@ export function Layout() {
           <span className="brand">
             <Logo /> {t("app.name")}
           </span>
-          <NavLink to="/alerts" className="bell" aria-label={t("nav.alerts")}>
-            <Icon name="bell" />
-            {unseen > 0 && <span className="count">{unseen}</span>}
-          </NavLink>
+          {!isStaff && (
+            <NavLink to="/alerts" className="bell" aria-label={t("nav.alerts")}>
+              <Icon name="bell" />
+              {unseen > 0 && <span className="count">{unseen}</span>}
+            </NavLink>
+          )}
         </header>
         <main className="main">
           {!online && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.banner")}</div>}

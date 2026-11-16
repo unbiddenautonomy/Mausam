@@ -142,7 +142,10 @@ Do this straight after step 8.
 
 ### Step 10. Add managers and staff
 
-1. **Manage → App users**: add each manager with their phone number, a 4-digit PIN and their language. Tell each one their PIN.
+1. **Manage → App users**: add each person who uses the app, with their phone number, a 4-digit PIN and their language, and tell each one their PIN. Everyone uses the same address, and what they see depends on their role:
+   - **Owner**: everything, including reports, pay and settings.
+   - **Manager**: entries, attendance and advances, vendors, alerts and bills, but no reports, pay or settings.
+   - **Employee**: makes and reviews entries (shopping, expenses, closing the day) and bills at the counter, and sees nothing else.
 2. **Manage → Staff**: add your staff. Leave pay blank if you don't know it yet.
 
 ### Step 11. Set up each manager's phone
@@ -159,8 +162,8 @@ On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the ap
 ### Step 12. Set up the billing counter (POS)
 
 1. In the admin app, **Manage → Menu**: add categories and items with prices. Under **Bills and GST**, set your GSTIN, GST rate, and whether prices include GST.
-2. **Manage → Tables**: add your tables (for example area "Garden", first table "C1", 15 tables).
-3. **Manage → App users**: add a user for the counter with the **staff** role. A cashier can bill, but can't see reports or change settings.
+2. **Manage → Tables**: tables T1 to T22 are already there. Rename, add or remove them to match your floor.
+3. **Manage → App users**: add a user for the counter with the **Employee** role. They can bill and make entries, but can't see reports or change settings.
 4. On the counter PC, open `https://<your address>/pos/` in Chrome, log in as that user, and pick counter **A**.
 5. To print without a pop-up each time: make the receipt printer the Windows default printer. Then right-click the desktop → **New → Shortcut**, and use this as the location:
    ```

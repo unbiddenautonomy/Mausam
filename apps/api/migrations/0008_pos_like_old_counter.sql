@@ -1,5 +1,5 @@
 -- Make the POS work like the counter's old POS: variations and add-ons on items, the menu names from
--- the English menu card, the old POS's extra items, the Garden and Rooftop tables, and a printed bill
+-- the English menu card, the old POS's extra items, one floor of tables, and a printed bill
 -- for every order on the receipt printer.
 
 -- Variations: pick one, each with its own price, e.g. [{"name":"Regular","price":12000},{"name":"Jain","price":12000}].
@@ -77,13 +77,11 @@ WHERE variations IS NULL AND name = 'Manchurian';
 -- Favourites, starred as on the old POS.
 UPDATE menu_items SET favourite = 1 WHERE name IN ('Pav Bhaji', 'Jain Bhaji', '1 Pav (Oil) (1 pc)', '1 Pav (Amul Butter) (1 pc)');
 
--- ---- Tables: Garden C1–C15 and Rooftop D1–D7, only if none are set up yet ----
-WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 15)
+-- ---- Tables: one floor, T1–T22, only if none are set up yet (renamed or removed in Manage → Tables) ----
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 22)
 INSERT INTO dining_tables (area, name, seats, sort)
-SELECT * FROM (
-  SELECT 'Garden', 'C' || i, 6, i FROM n
-  UNION ALL SELECT 'Rooftop', 'D' || i, 4, 100 + i FROM n WHERE i <= 7
-) WHERE NOT EXISTS (SELECT 1 FROM dining_tables);
+SELECT 'Restaurant', 'T' || i, 4, i FROM n
+WHERE NOT EXISTS (SELECT 1 FROM dining_tables);
 
 -- ---- Printer and table map on; the bill heading and footer as on the old receipt (unless the owner already changed them) ----
 INSERT INTO settings (key, value) VALUES ('pos_printing', '1'), ('pos_use_tables', '1')

@@ -11,7 +11,7 @@ const TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png",
 export const photos = new Hono<AppEnv>();
 
 /** Upload one photo (the app shrinks it on the phone first). Returns the key to attach to an entry. */
-photos.post("/", requireRole("owner", "manager"), async (c) => {
+photos.post("/", requireRole("owner", "manager", "staff"), async (c) => {
   const type = (c.req.header("Content-Type") ?? "").split(";")[0].trim();
   const ext = TYPES[type];
   if (!ext) throw new HttpError(422, "invalid", { field: "content_type" });
@@ -24,7 +24,7 @@ photos.post("/", requireRole("owner", "manager"), async (c) => {
   return c.json({ key }, 201);
 });
 
-photos.get("/*", requireRole("owner", "manager"), async (c) => {
+photos.get("/*", requireRole("owner", "manager", "staff"), async (c) => {
   const key = c.req.path.replace(/^\/api\/photos\//, "");
   if (!/^\d{4}-\d{2}-\d{2}\/[a-z_]+-[0-9a-f]{16}\.(jpg|png|webp)$/.test(key)) throw new HttpError(404, "not_found");
   const obj = await getFile(c.env, key);
