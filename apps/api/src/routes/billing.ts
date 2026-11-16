@@ -60,6 +60,37 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
 const int = (v: unknown, min: number, max: number): number | null =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null;
 
+/** A variation or add-on on a menu item: its name and price in paise (an add-on's price is added to the item's). */
+export interface ItemOption { name: string; price: number }
+
+/** Reads the JSON stored in menu_items.variations / addons. Anything malformed is treated as none. */
+function parseOptions(raw: unknown): ItemOption[] | null {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) && v.length ? v.filter((o) => o && typeof o.name === "string" && Number.isInteger(o.price)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Checks variations or add-ons sent by the owner and returns the JSON to store (null = none). */
+function optionsField(v: unknown, field: string): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (!Array.isArray(v) || v.length > 20) throw new HttpError(422, "invalid", { field });
+  const out: ItemOption[] = [];
+  for (const o of v as { name?: unknown; price?: unknown }[]) {
+    const name = typeof o?.name === "string" ? o.name.trim().slice(0, 40) : "";
+    const price = int(o?.price, 0, 1e8);
+    if (!name || price === null) throw new HttpError(422, "invalid", { field });
+    out.push({ name, price });
+  }
+  return out.length ? JSON.stringify(out) : null;
+}
+
+const withOptions = <T extends Record<string, unknown>>(rows: T[]) =>
+  rows.map((r) => ({ ...r, variations: parseOptions(r.variations), addons: parseOptions(r.addons) }));
+
 /* ---------------- For the counter (owner, manager, staff) ---------------- */
 
 /** Everything the counter needs to bill offline. */
@@ -67,14 +98,14 @@ billing.get("/config", async (c) => {
   const db = c.env.DB;
   const [cats, items, tables, waiters, settings] = await Promise.all([
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
-    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort FROM menu_items WHERE active = 1 ORDER BY sort, name").all(),
+    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort, variations, addons FROM menu_items WHERE active = 1 ORDER BY sort, name").all<Record<string, unknown>>(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
     db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
   ]);
   return c.json({
     categories: cats.results,
-    items: items.results,
+    items: withOptions(items.results),
     tables: tables.results,
     waiters: waiters.results,
     settings,
@@ -83,7 +114,7 @@ billing.get("/config", async (c) => {
   });
 });
 
-interface LineIn { item_id?: unknown; name?: unknown; category?: unknown; qty?: unknown; price?: unknown; tax_rate?: unknown; note?: unknown }
+interface LineIn { item_id?: unknown; name?: unknown; category?: unknown; qty?: unknown; price?: unknown; tax_rate?: unknown; note?: unknown; variation?: unknown; modifier?: unknown }
 interface BillIn {
   client_id?: unknown; bill_no?: unknown; counter?: unknown; business_date?: unknown; order_type?: unknown;
   table_id?: unknown; table_name?: unknown; token?: unknown; waiter_staff_id?: unknown; guests?: unknown;
@@ -129,7 +160,7 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
   const include = b.prices_include_tax === undefined ? true : bool(b.prices_include_tax);
 
   if (!Array.isArray(b.lines) || b.lines.length === 0 || b.lines.length > 200) return { error: "lines" };
-  const lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null }[] = [];
+  const lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null; variation: string | null; modifier: string | null }[] = [];
   for (const l of b.lines as LineIn[]) {
     const qty = int(l?.qty, 1, 999);
     const price = int(l?.price, 0, 1e8);
@@ -141,6 +172,8 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
       category: typeof l.category === "string" ? l.category.slice(0, 80) : null,
       qty, price, tax_rate: rate,
       note: typeof l.note === "string" && l.note.trim() ? l.note.trim().slice(0, 200) : null,
+      variation: typeof l.variation === "string" && l.variation.trim() ? l.variation.trim().slice(0, 40) : null,
+      modifier: typeof l.modifier === "string" && l.modifier.trim() ? l.modifier.trim().slice(0, 40) : null,
     });
   }
   const totals = billTotals(lines, discount, include);
@@ -176,9 +209,9 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
     ),
     ...lines.map((l) =>
       db.prepare(
-        `INSERT INTO pos_bill_items (bill_id, item_id, name, category, qty, price, tax_rate, amount, note)
-         VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(b.client_id, l.item_id, l.name, l.category, l.qty, l.price, l.tax_rate, l.price * l.qty, l.note),
+        `INSERT INTO pos_bill_items (bill_id, item_id, name, category, qty, price, tax_rate, amount, note, variation, modifier)
+         VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(b.client_id, l.item_id, l.name, l.category, l.qty, l.price, l.tax_rate, l.price * l.qty, l.note, l.variation, l.modifier),
     ),
     ...payments.map((p) =>
       db.prepare("INSERT INTO pos_payments (bill_id, mode, amount) VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?)").bind(b.client_id, p.mode, p.amount),
@@ -213,10 +246,10 @@ export async function refreshPosDay(db: D1Database, date: string): Promise<void>
     db.prepare("DELETE FROM pos_items WHERE business_date = ?").bind(date),
     db.prepare(
       `INSERT INTO pos_items (business_date, item, category, qty, amount, import_id)
-       SELECT b.business_date, i.name, MAX(i.category), SUM(i.qty), SUM(i.amount), NULL
+       SELECT b.business_date, i.name || COALESCE(' [' || i.variation || ']', ''), MAX(i.category), SUM(i.qty), SUM(i.amount), NULL
        FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
        WHERE b.business_date = ? AND b.status = 'paid'
-       GROUP BY i.name`,
+       GROUP BY i.name, i.variation`,
     ).bind(date),
   ]);
 }
@@ -325,9 +358,9 @@ billing.get("/menu", async (c) => {
   const db = c.env.DB;
   const [cats, items] = await Promise.all([
     db.prepare("SELECT * FROM menu_categories ORDER BY active DESC, sort, name").all(),
-    db.prepare("SELECT * FROM menu_items ORDER BY active DESC, sort, name").all(),
+    db.prepare("SELECT * FROM menu_items ORDER BY active DESC, sort, name").all<Record<string, unknown>>(),
   ]);
-  return c.json({ categories: cats.results, items: items.results });
+  return c.json({ categories: cats.results, items: withOptions(items.results) });
 });
 
 function categoryFields(b: Record<string, unknown>) {
@@ -373,6 +406,8 @@ function itemFields(b: Record<string, unknown>) {
     name_hi: optionalText(b.name_hi, 120),
     name_kn: optionalText(b.name_kn, 120),
     short_name: optionalText(b.short_name, 40),
+    variations: typeof b.variations === "string" ? optionsField(parseOptions(b.variations), "variations") : optionsField(b.variations, "variations"),
+    addons: typeof b.addons === "string" ? optionsField(parseOptions(b.addons), "addons") : optionsField(b.addons, "addons"),
     price,
     tax_rate: rate,
     hsn: optionalText(b.hsn, 12),
@@ -386,8 +421,8 @@ function itemFields(b: Record<string, unknown>) {
 billing.post("/menu/items", async (c) => {
   const f = itemFields(await c.req.json());
   const res = await c.env.DB.prepare(
-    "INSERT INTO menu_items (category_id, name, name_hi, name_kn, short_name, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
+    "INSERT INTO menu_items (category_id, name, name_hi, name_kn, short_name, variations, addons, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.variations, f.addons, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
   const id = Number(res.meta.last_row_id);
   await audit(c.env.DB, "menu_items", id, "create", null, f, c.get("user").id);
   return c.json({ id }, 201);
@@ -399,9 +434,9 @@ billing.patch("/menu/items/:id", async (c) => {
   if (!before) throw new HttpError(404, "not_found");
   const f = itemFields({ ...before, ...(await c.req.json<Record<string, unknown>>()) });
   await c.env.DB.prepare(
-    `UPDATE menu_items SET category_id = ?, name = ?, name_hi = ?, name_kn = ?, short_name = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
+    `UPDATE menu_items SET category_id = ?, name = ?, name_hi = ?, name_kn = ?, short_name = ?, variations = ?, addons = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
        updated_at = datetime('now') WHERE id = ?`,
-  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.variations, f.addons, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
   await audit(c.env.DB, "menu_items", id, "update", before, f, c.get("user").id);
   return c.json({ ok: true });
 });

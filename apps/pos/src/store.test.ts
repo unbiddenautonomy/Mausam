@@ -11,7 +11,7 @@ const mem = new Map<string, string>();
   length: 0,
 };
 
-const { addItem, byWaiter, changeQty, needsWaiter, newOrder, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, byWaiter, changeQty, hasChoices, lineTag, needsWaiter, newOrder, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -107,5 +107,27 @@ describe("waiters, tables and GST options", () => {
       { id: 7, name: "Rohit", bills: 1, total: 22000 },
       { id: null, name: "", bills: 1, total: 500 },
     ]);
+  });
+
+  it("adds variations and add-ons as their own lines, at the variation's price", () => {
+    const manchurian = { ...bhaji, id: 20, name: "Manchurian", variations: [{ name: "Full", price: 22000 }, { name: "Half", price: 15000 }] };
+    const paper = { ...bhaji, id: 21, name: "Paper (Oil)", price: 9000, variations: [{ name: "Regular", price: 9000 }, { name: "Jain", price: 9000 }], addons: [{ name: "Kadak", price: 0 }, { name: "Extra cheese", price: 3000 }] };
+    expect(hasChoices(manchurian)).toBe(true);
+    expect(hasChoices(bhaji)).toBe(false);
+    let o = newOrder("parcel", null, 3);
+    o = addItem(o, manchurian, cats, settings, { variation: manchurian.variations[1] });
+    o = addItem(o, manchurian, cats, settings, { variation: manchurian.variations[1] }, 2);
+    o = addItem(o, manchurian, cats, settings, { variation: manchurian.variations[0] });
+    o = addItem(o, paper, cats, settings, { variation: paper.variations[1], addon: paper.addons[1] });
+    expect(o.lines.map((l) => [l.name, l.variation, l.modifier, l.qty, l.price])).toEqual([
+      ["Manchurian", "Half", null, 3, 15000],
+      ["Manchurian", "Full", null, 1, 22000],
+      ["Paper (Oil)", "Jain", "Extra cheese", 1, 12000],
+    ]);
+    expect(lineTag(o.lines[2])).toBe("[Jain · Extra cheese]");
+    expect(lineTag(addItem(newOrder("parcel", null, 4), bhaji, cats, settings).lines[0])).toBe("");
+    const bill = toBill(o, settings, "paid", [{ mode: "cash", amount: 79000 }], null);
+    expect(bill.lines[0]).toMatchObject({ variation: "Half", modifier: null });
+    expect(bill.total).toBe(79000);
   });
 });

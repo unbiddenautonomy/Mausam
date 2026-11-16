@@ -2,7 +2,15 @@
 import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
 
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
-export interface Item { id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
+/** A variation (pick one; its price is the item's price) or an add-on (pick at most one; its price is added). Paise. */
+export interface ItemOption { name: string; price: number }
+export interface Item {
+  id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null;
+  price: number; tax_rate: number | null; veg: number; favourite: number; sort: number;
+  variations?: ItemOption[] | null; addons?: ItemOption[] | null;
+}
+/** Does tapping this item ask which variation or add-on, before it goes on the order? */
+export const hasChoices = (i: Item) => !!(i.variations?.length || i.addons?.length);
 export interface Table { id: number; area: string; name: string; seats: number; sort: number }
 export interface Waiter { id: number; name: string; name_local: string | null; waiter_code?: string | null }
 export interface PosSettings {
@@ -19,7 +27,11 @@ export interface PosSettings {
 }
 export interface Config { categories: Category[]; items: Item[]; tables: Table[]; waiters: Waiter[]; settings: PosSettings; fetched_at: string }
 
-export interface Line { key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null }
+export interface Line {
+  key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null;
+  /** The variation picked (e.g. "Jain", "Half") and the add-on (e.g. "Kadak"), shown as [Jain · Kadak] on the bill. */
+  variation?: string | null; modifier?: string | null;
+}
 export interface Order {
   id: string; // becomes the bill's client_id
   type: "dine_in" | "parcel";
@@ -40,7 +52,7 @@ export interface Bill {
   table_id: number | null; table_name: string | null; token: number | null; waiter_staff_id: number | null; guests: number | null;
   discount: number; prices_include_tax: boolean; total: number; status: "paid" | "cancelled"; cancel_reason: string | null;
   opened_at: string; closed_at: string;
-  lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null }[];
+  lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null; variation?: string | null; modifier?: string | null }[];
   payments: Payment[];
   synced?: boolean;
   rejected?: string;
@@ -99,16 +111,31 @@ export function rateFor(item: Item, s: PosSettings): number {
   return item.tax_rate ?? s.gst_rate;
 }
 
-export function addItem(order: Order, item: Item, cats: Category[], s: PosSettings): Order {
-  // Add to the last line of the same item if it has no note and hasn't been fully sent, else a new line.
+export interface Choice { variation?: ItemOption | null; addon?: ItemOption | null }
+
+/** The [Jain · Kadak] tag for a line, or "" when nothing was picked. */
+export function lineTag(l: { variation?: string | null; modifier?: string | null }): string {
+  const parts = [l.variation, l.modifier].filter(Boolean);
+  return parts.length ? `[${parts.join(" · ")}]` : "";
+}
+
+export function addItem(order: Order, item: Item, cats: Category[], s: PosSettings, pick: Choice = {}, qty = 1): Order {
+  // The variation's price replaces the item's; an add-on's price is added on top.
+  const price = (pick.variation?.price ?? item.price) + (pick.addon?.price ?? 0);
+  const variation = pick.variation?.name ?? null;
+  const modifier = pick.addon?.name ?? null;
+  // Add to the last line of the same item with the same choices and no note, else start a new line.
   const lines = [...order.lines];
   let idx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].item_id === item.id && !lines[i].note) { idx = i; break; }
-  if (idx >= 0) lines[idx] = { ...lines[idx], qty: lines[idx].qty + 1 };
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (l.item_id === item.id && !l.note && (l.variation ?? null) === variation && (l.modifier ?? null) === modifier && l.price === price) { idx = i; break; }
+  }
+  if (idx >= 0) lines[idx] = { ...lines[idx], qty: lines[idx].qty + qty };
   else
     lines.push({
       key: uid(), item_id: item.id, name: item.name, category: cats.find((c) => c.id === item.category_id)?.name ?? null,
-      price: item.price, tax_rate: rateFor(item, s), qty: 1, sent: 0, note: null,
+      price, tax_rate: rateFor(item, s), qty, sent: 0, note: null, variation, modifier,
     });
   return { ...order, lines };
 }
@@ -161,7 +188,10 @@ export function toBill(order: Order, s: PosSettings, status: Bill["status"], pay
     order_type: order.type, table_id: order.table_id, table_name: order.table_name, token: order.token,
     waiter_staff_id: order.waiter_staff_id, guests: order.guests, discount: t.discount, prices_include_tax: s.prices_include_tax,
     total: t.total, status, cancel_reason: reason, opened_at: order.opened_at, closed_at: new Date().toISOString(),
-    lines: order.lines.map((l) => ({ item_id: l.item_id, name: l.name, category: l.category, qty: l.qty, price: l.price, tax_rate: l.tax_rate, note: l.note })),
+    lines: order.lines.map((l) => ({
+      item_id: l.item_id, name: l.name, category: l.category, qty: l.qty, price: l.price, tax_rate: l.tax_rate, note: l.note,
+      variation: l.variation ?? null, modifier: l.modifier ?? null,
+    })),
     payments,
   };
 }

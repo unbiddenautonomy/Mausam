@@ -4,14 +4,15 @@ import { businessDate, changeDue, formatINR, LANGUAGES, rupeesToPaise, validCoun
 import { api, ApiError, fetchConfig, syncBills } from "./api";
 import { translate, type Key } from "./i18n";
 import {
-  addItem, byWaiter, changeQty, needsWaiter, newOrder, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
-  type Bill, type Config, type Item, type Order, type Payment, type Table,
+  addItem, byWaiter, changeQty, hasChoices, lineTag, needsWaiter, newOrder, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
 type T = (key: Key, params?: Record<string, string | number>) => string;
+/** "Original" when the bill is printed as the order is saved or paid; "Duplicate" for a reprint. */
+type Copy = "Original" | "Duplicate";
 type PrintJob =
-  | { kind: "kot"; order: Order; lines: Order["lines"] }
-  | { kind: "bill"; bill: Bill }
+  | { kind: "bill"; bill: Bill; copy: Copy }
   | { kind: "summary"; date: string; bills: Bill[] };
 
 const SYNC_EVERY_MS = 20_000;
@@ -132,7 +133,6 @@ function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
 
 /** What's shown on screen in place of a printout (when no printer is connected), or after payment. */
 type View =
-  | { kind: "kot"; order: Order; lines: Order["lines"] }
   | { kind: "bill"; bill: Bill }
   | { kind: "paid"; bill: Bill; change: number };
 
@@ -229,15 +229,15 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     if (existing) return (setActiveId(existing.id), setScreen("order"));
     // Ask who is serving first; with no waiters set up, go straight in.
     if (config!.waiters.length) setStarting({ table });
-    else open(newOrder("dine_in", table, null));
+    else open(newOrder("dine_in", table, takeToken()));
   }
   function newTableOrder() {
     setStarting({ table: null });
   }
   function startOrder(table: Table | null, waiter: number | null, tableName: string | null) {
     setStarting(null);
-    // Without the table map, every order gets a number for the day so it can be found again.
-    open(newOrder("dine_in", table, table ? null : takeToken(), { waiter, tableName }));
+    // Every order gets a token number for the day, printed at the top of the bill.
+    open(newOrder("dine_in", table, takeToken(), { waiter, tableName }));
   }
   function newParcel() {
     open(newOrder("parcel", null, takeToken()));
@@ -252,23 +252,34 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     setActiveId(null);
     setScreen("tables");
   }
-  function sendKot() {
-    if (!active) return;
-    const lines = unsent(active);
-    if (!lines.length) return;
-    update((o) => ({ ...o, lines: o.lines.map((l) => ({ ...l, sent: l.qty })) }));
-    if (printing) setPrint({ kind: "kot", order: active, lines });
-    else setView({ kind: "kot", order: active, lines });
-    setToast(t("kot_sent"));
-  }
   /** Gives the order its bill number (once) and returns the bill as it stands, to print or show. */
-  function billNow(): Bill | null {
+  function billNow(copy: Copy = "Original"): Bill | null {
     if (!active || !active.lines.length) return null;
     const withNo = active.bill_no ? active : { ...active, bill_no: takeBillNo() };
     update(() => withNo);
     const bill = toBill(withNo, s, "paid", [], null);
-    if (printing) setPrint({ kind: "bill", bill });
+    if (printing) setPrint({ kind: "bill", bill, copy });
     return bill;
+  }
+  /** Save & Print: the order is saved (everything on it counts as sent to the kitchen) and its bill prints. */
+  function saveAndPrint() {
+    if (!active || !active.lines.length) return;
+    const withNo = { ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) };
+    setOrders((os) => os.map((o) => (o.id === active.id ? withNo : o)));
+    const bill = toBill(withNo, s, "paid", [], null);
+    if (printing) {
+      setPrint({ kind: "bill", bill, copy: "Original" });
+      setToast(t("bill_printed"));
+    } else setView({ kind: "bill", bill });
+    setActiveId(null);
+    setScreen("tables");
+  }
+  function hold() {
+    setToast(t("held"));
+    leaveOrder();
+  }
+  function setType(type: Order["type"]) {
+    update((o) => ({ ...o, type, token: o.token ?? takeToken(), ...(type === "parcel" ? { table_id: null, table_name: null } : {}) }));
   }
   function finish(order: Order, status: Bill["status"], payments: Payment[], reason: string | null) {
     const bill = toBill(order, s, status, payments, reason);
@@ -280,7 +291,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     void sync();
     return bill;
   }
-  const showBill = (b: Bill) => (printing ? setPrint({ kind: "bill", bill: b }) : setView({ kind: "bill", bill: b }));
+  const showBill = (b: Bill) => (printing ? setPrint({ kind: "bill", bill: b, copy: "Duplicate" }) : setView({ kind: "bill", bill: b }));
 
   const user = storage.user();
   return (
@@ -301,19 +312,19 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
       {rejected > 0 && <div className="banner bad">{t("rejected", { n: rejected })}</div>}
 
       {screen === "tables" && (tablesOn ? (
-        <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable} onParcel={newParcel} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
+        <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable} onParcel={newParcel} onNew={newTableOrder} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
       ) : (
         <OrdersScreen t={t} config={config} orders={orders} now={now} onNew={newTableOrder} onParcel={newParcel} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
       ))}
       {screen === "order" && active && (
         <OrderScreen
-          t={t} lang={lang} config={config} order={active} update={update} onBack={leaveOrder}
-          onKot={sendKot} onBill={billNow}
+          t={t} lang={lang} config={config} order={active} update={update} onHold={hold} held={orders.length - 1}
+          onSavePrint={saveAndPrint} onBill={billNow} onType={setType}
           onPaid={(payments, change) => {
             const bill = finish(active, "paid", payments, null);
             setToast(t("paid_done", { no: bill.bill_no }));
             if (printing) {
-              if (!active.bill_no) setPrint({ kind: "bill", bill });
+              if (!active.bill_no || unsent(active).length) setPrint({ kind: "bill", bill, copy: "Original" });
             } else setView({ kind: "paid", bill, change });
           }}
           onCancel={(reason) => {
@@ -338,10 +349,9 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
         <StartDialog t={t} config={config} table={starting.table} onClose={() => setStarting(null)}
           onStart={(waiter, tableName) => startOrder(starting.table, waiter, tableName)} />
       )}
-      {view?.kind === "kot" && <KitchenDialog t={t} config={config} order={view.order} lines={view.lines} onClose={() => setView(null)} />}
       {(view?.kind === "bill" || view?.kind === "paid") && (
         <BillDialog t={t} config={config} bill={view.bill} paid={view.kind === "paid"} change={view.kind === "paid" ? view.change : 0}
-          onPrint={printing ? () => setPrint({ kind: "bill", bill: view.bill }) : undefined} onClose={() => setView(null)} />
+          onPrint={printing ? () => setPrint({ kind: "bill", bill: view.bill, copy: "Duplicate" }) : undefined} onClose={() => setView(null)} />
       )}
       {askLogout && (
         <div className="overlay" role="dialog" aria-modal="true">
@@ -372,52 +382,66 @@ const waiterName = (config: Config, id: number | null) => {
   return w ? `${w.waiter_code ? `${w.waiter_code} · ` : ""}${w.name}` : "";
 };
 
-function TablesScreen({ t, config, orders, now, onTable, onParcel, onOrder }: {
-  t: T; config: Config; orders: Order[]; now: number; onTable: (t: Table) => void; onParcel: () => void; onOrder: (o: Order) => void;
+/** Running: ordering, or items added since the bill printed. Billed: the bill is printed and nothing new since. */
+function orderState(o: Order): "running" | "billed" {
+  return o.bill_no && unsent(o).length === 0 ? "billed" : "running";
+}
+
+function TablesScreen({ t, config, orders, now, onTable, onParcel, onNew, onOrder }: {
+  t: T; config: Config; orders: Order[]; now: number; onTable: (t: Table) => void; onParcel: () => void; onNew: () => void; onOrder: (o: Order) => void;
 }) {
   const areas = [...new Set(config.tables.map((x) => x.area))];
-  const [area, setArea] = useState(areas[0] ?? "");
-  const parcels = orders.filter((o) => o.type === "parcel");
+  // Parcels and orders without a table are listed below the tables.
+  const loose = orders.filter((o) => o.table_id === null).sort((a, b) => a.opened_at.localeCompare(b.opened_at));
   const s = config.settings;
   return (
     <main className="tables-screen">
       <div className="area-tabs">
-        {areas.map((a) => (
-          <button key={a} className={`chip big${a === area ? " on" : ""}`} onClick={() => setArea(a)}>
-            {a || t("tables")} <span className="count">{orders.filter((o) => config.tables.find((x) => x.id === o.table_id)?.area === a).length || ""}</span>
-          </button>
-        ))}
+        <button className="btn primary" onClick={onParcel}>＋ {t("new_parcel")}</button>
+        <button className="btn" onClick={onNew}>＋ {t("new_counter_order")}</button>
         <span className="grow" />
-        <span className="legend"><i className="free" /> {t("free")} <i className="ordering" /> {t("ordering")} <i className="billed" /> {t("billed")}</span>
+        <span className="legend">
+          <b className="state running">{t("running")}</b><b className="state billed">{t("billed")}</b><b className="state vacant">{t("vacant")}</b>
+        </span>
       </div>
-      <div className="table-grid">
-        {config.tables.filter((x) => x.area === area).map((table) => {
-          const o = orders.find((x) => x.table_id === table.id);
-          const state = !o ? "free" : o.bill_no ? "billed" : "ordering";
-          return (
-            <button key={table.id} className={`table-card ${state}`} onClick={() => onTable(table)}>
-              <span className="name">{table.name}</span>
-              {o ? (
-                <>
-                  <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
-                  <span className="meta">{t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
-                </>
-              ) : (
-                <span className="meta">{t("free")}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div className="parcel-row">
-        <button className="btn primary big" onClick={onParcel}>＋ {t("new_parcel")}</button>
-        {parcels.map((o) => (
-          <button key={o.id} className={`table-card small ${o.bill_no ? "billed" : "ordering"}`} onClick={() => onOrder(o)}>
-            <span className="name">{t("token", { n: o.token ?? "" })}</span>
-            <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
-          </button>
-        ))}
-      </div>
+      {loose.length > 0 && (
+        <div className="table-grid">
+          {loose.map((o) => {
+            const st = orderState(o);
+            return (
+              <button key={o.id} className={`table-card ${st}`} onClick={() => onOrder(o)}>
+                <span className="tc-top"><span className="name">{o.type === "parcel" ? t("parcel") : o.table_name ? `${t("table")} ${o.table_name}` : t("dine_in")}</span><b className={`state ${st}`}>{t(st)}</b></span>
+                <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
+                <span className="meta">{t("token", { n: o.token ?? "" })} · {t("min", { n: minutesSince(o.opened_at, now) })}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {areas.map((area) => (
+        <section key={area} className="area">
+          <h2 className="area-name">{area || t("tables")}</h2>
+          <div className="table-grid">
+            {config.tables.filter((x) => x.area === area).map((table) => {
+              const o = orders.find((x) => x.table_id === table.id);
+              const st = o ? orderState(o) : "vacant";
+              return (
+                <button key={table.id} className={`table-card ${st}`} onClick={() => onTable(table)}>
+                  <span className="tc-top"><span className="name">{table.name}</span><b className={`state ${st}`}>{t(st)}</b></span>
+                  {o ? (
+                    <>
+                      <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
+                      <span className="meta">{t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
+                    </>
+                  ) : (
+                    <span className="meta">👥 {t("seats", { n: table.seats })}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </main>
   );
 }
@@ -439,14 +463,14 @@ function OrdersScreen({ t, config, orders, now, onNew, onParcel, onOrder }: {
       <div className="area-tabs">
         <h2>{t("open_orders")} {list.length > 0 && <span className="pill">{list.length}</span>}</h2>
         <span className="grow" />
-        <span className="legend"><i className="ordering" /> {t("ordering")} <i className="billed" /> {t("billed")}</span>
+        <span className="legend"><b className="state running">{t("running")}</b><b className="state billed">{t("billed")}</b></span>
       </div>
       {list.length === 0 ? (
         <p className="muted center empty-note">{t("no_open_orders")}</p>
       ) : (
         <div className="order-grid">
           {list.map((o) => (
-            <button key={o.id} className={`table-card order-card ${o.bill_no ? "billed" : "ordering"}`} onClick={() => onOrder(o)}>
+            <button key={o.id} className={`table-card order-card ${orderState(o)}`} onClick={() => onOrder(o)}>
               <span className="name">{o.type === "parcel" ? `${t("parcel")} #${o.token ?? ""}` : o.table_name ? `${t("table")} ${o.table_name}` : t("order_no", { n: o.token ?? "" })}</span>
               {o.type === "dine_in" && o.table_name && o.token && <span className="meta">{t("order_no", { n: o.token })}</span>}
               <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
@@ -464,29 +488,29 @@ function OrdersScreen({ t, config, orders, now, onNew, onParcel, onOrder }: {
 
 /* ---------------- Order ---------------- */
 
-function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, onPaid, onCancel }: {
-  t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; onBack: () => void;
-  onKot: () => void; onBill: () => Bill | null; onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void;
+function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint, onBill, onType, onPaid, onCancel }: {
+  t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: number; onHold: () => void;
+  onSavePrint: () => void; onBill: (copy?: Copy) => Bill | null; onType: (type: Order["type"]) => void;
+  onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void;
 }) {
   const s = config.settings;
   const printing = !!s.printing;
   const favourites = config.items.filter((i) => i.favourite);
-  const [cat, setCat] = useState<number | "fav">(favourites.length ? "fav" : config.categories[0]?.id ?? 0);
+  const [cat, setCat] = useState<number | "fav">(config.categories[0]?.id ?? "fav");
   const [query, setQuery] = useState("");
   const [dialog, setDialog] = useState<"pay" | "cancel" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | null>(null);
+  const [choosing, setChoosing] = useState<Item | null>(null);
   const [billPreview, setBillPreview] = useState<Bill | null>(null);
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const totals = totalsOf(order, s);
-  const pending = unsent(order).reduce((n, l) => n + l.qty, 0);
+  const totalQty = order.lines.reduce((n, l) => n + l.qty, 0);
   const listRef = useRef<HTMLDivElement>(null);
   const catName = (c: Config["categories"][number]) => (lang === "hi" && c.name_hi) || (lang === "kn" && c.name_kn) || c.name;
   // Item names follow the counter's language when the owner has filled them in; bills and the kitchen keep the English name.
   const localName = (i: Item | undefined) => (i && ((lang === "hi" && i.name_hi) || (lang === "kn" && i.name_kn))) || null;
   const itemById = useMemo(() => new Map(config.items.map((i) => [i.id, i])), [config.items]);
   const missingWaiter = needsWaiter(order, config);
-  const where = order.type === "parcel"
-    ? `${t("parcel")} · ${t("token", { n: order.token ?? "" })}`
-    : order.table_name ? `${t("table")} ${order.table_name}` : t("order_no", { n: order.token ?? "" });
+  const today = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, "-");
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -494,12 +518,16 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
     return cat === "fav" ? favourites : config.items.filter((i) => i.category_id === cat);
   }, [query, cat, config.items, favourites]);
 
-  function add(item: Item) {
-    update((o) => addItem(o, item, config.categories, s));
+  function add(item: Item, pick: Choice = {}, qty = 1) {
+    update((o) => addItem(o, item, config.categories, s, pick, qty));
     window.setTimeout(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }), 0);
   }
+  function tap(item: Item) {
+    if (hasChoices(item)) setChoosing(item);
+    else add(item);
+  }
   function bill() {
-    const b = onBill();
+    const b = onBill("Duplicate");
     if (b && !printing) (setBillPreview(b), setDialog("bill"));
   }
   const pay = () => setDialog(missingWaiter ? "waiter_then_pay" : "pay");
@@ -507,10 +535,10 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
   return (
     <main className="order-screen">
       <nav className="cats" aria-label="Categories">
-        {favourites.length > 0 && <button className={`cat${cat === "fav" && !query ? " on" : ""}`} onClick={() => (setCat("fav"), setQuery(""))}>★ {t("favourites")}</button>}
         {config.categories.map((c) => (
           <button key={c.id} className={`cat${cat === c.id && !query ? " on" : ""}`} onClick={() => (setCat(c.id), setQuery(""))}>{catName(c)}</button>
         ))}
+        {favourites.length > 0 && <button className={`cat fav${cat === "fav" && !query ? " on" : ""}`} onClick={() => (setCat("fav"), setQuery(""))}>{t("favourites")}</button>}
       </nav>
 
       <section className="items">
@@ -522,10 +550,13 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
           {items.map((i) => {
             const inOrder = order.lines.filter((l) => l.item_id === i.id).reduce((n, l) => n + l.qty, 0);
             return (
-              <button key={i.id} className={`item${inOrder ? " in" : ""}`} onClick={() => add(i)}>
-                <span className={`veg ${i.veg ? "v" : "nv"}`} />
+              <button key={i.id} className={`item${inOrder ? " in" : ""}`} onClick={() => tap(i)}>
                 <span className="iname">{localName(i) || i.short_name || i.name}</span>
-                <span className="price num">{formatINR(i.price)}</span>
+                <span className="ifoot">
+                  {i.favourite ? <span className="star" aria-label={t("favourites")}>★</span> : null}
+                  <span className="price num">{formatINR(i.price)}</span>
+                  {hasChoices(i) && <span className="more" aria-hidden="true">⋯</span>}
+                </span>
                 {inOrder > 0 && <span className="badge">{inOrder}</span>}
               </button>
             );
@@ -534,38 +565,43 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
       </section>
 
       <aside className="ticket">
-        <div className="ticket-head">
-          <button className="btn" onClick={onBack}>‹ {usesTables(config) ? t("back") : t("orders")}</button>
-          <strong className="where">{where}</strong>
-          {order.bill_no && <span className="pill">{order.bill_no}</span>}
+        <div className="ticket-top">
+          <div className="type-toggle" role="group">
+            <button className={order.type === "dine_in" ? "on" : ""} onClick={() => order.type !== "dine_in" && onType("dine_in")}><span aria-hidden="true">🍴</span>{t("dine_in")}</button>
+            <button className={order.type === "parcel" ? "on" : ""} onClick={() => order.type !== "parcel" && onType("parcel")}><span aria-hidden="true">🛍</span>{t("parcel")}</button>
+          </div>
+          <span className="date num">{today}</span>
+          <button className="btn hold-btn" onClick={onHold}>{t("hold_count", { n: held })}</button>
         </div>
-        <div className="ticket-opts">
-          <button className={`opt${missingWaiter ? " need" : ""}`} onClick={() => setDialog("waiter")} disabled={!config.waiters.length}>
+        <div className="ticket-fields">
+          <div className="field"><span className="muted small">{t("token_no")}</span><strong className="num">{order.token ?? "—"}</strong></div>
+          {order.type === "dine_in" && (
+            <button className="field" onClick={() => order.table_id === null && setDialog("table")} disabled={order.table_id !== null}>
+              <span className="muted small">{t("table")}</span><strong>{order.table_name ?? "—"}</strong>
+            </button>
+          )}
+          <button className={`field grow${missingWaiter ? " need" : ""}`} onClick={() => setDialog("waiter")} disabled={!config.waiters.length}>
             <span className="muted small">{t("waiter_short")}</span>
             <strong>{order.waiter_staff_id ? waiterName(config, order.waiter_staff_id) : config.waiters.length ? (missingWaiter ? `⚠ ${t("waiter_needed")}` : t("no_waiter")) : "—"}</strong>
           </button>
-          {order.type === "dine_in" && order.table_id === null && (
-            <button className="opt" onClick={() => setDialog("table")}>
-              <span className="muted small">{t("set_table")}</span>
-              <strong>{order.table_name ?? "—"}</strong>
-            </button>
-          )}
         </div>
+        <div className="grid-head"><span>{t("item_name")} · {t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
         <div className="lines" ref={listRef}>
           {order.lines.length === 0 && <p className="muted center">{t("order_empty")}</p>}
           {order.lines.map((l) => (
             <div key={l.key} className={`line${l.sent >= l.qty ? " sent" : ""}`}>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
                 <span>{(l.item_id !== null && localName(itemById.get(l.item_id))) || l.name}</span>
+                {lineTag(l) && <span className="tag">{lineTag(l)}</span>}
                 {l.note && <span className="note">✎ {l.note}</span>}
-                <span className="muted small num">{formatINR(l.price)}{l.sent > 0 ? ` · ${t("kot_sent")} ${l.sent}` : ""}</span>
               </div>
               <div className="stepper">
                 <button onClick={() => update((o) => changeQty(o, l.key, -1))} aria-label="−">−</button>
                 <span className="num">{l.qty}</span>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
-              <span className="lamt num">{formatINR(l.price * l.qty)}</span>
+              <span className="lprice num">{formatINR(l.price, { symbol: false })}</span>
+              <span className="lamt num">{formatINR(l.price * l.qty, { symbol: false })}</span>
               {noteFor === l.key && (
                 <input className="note-input" autoFocus placeholder={t("note")} defaultValue={l.note ?? ""}
                   onBlur={(e) => (update((o) => ({ ...o, lines: o.lines.map((x) => (x.key === l.key ? { ...x, note: e.target.value.trim() || null } : x)) })), setNoteFor(null))}
@@ -575,20 +611,34 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
           ))}
         </div>
         <div className="sums">
-          {totals.discount > 0 && <Row label={t("discount")} value={`−${formatINR(totals.discount)}`} />}
-          {totals.tax > 0 && <Row label={`${t("gst")}${s.prices_include_tax ? " (incl.)" : ""}`} value={formatINR(totals.tax)} />}
-          {totals.round_off !== 0 && <Row label={t("round_off")} value={formatINR(totals.round_off)} />}
-          <div className="grand"><span>{t("total")}</span><span className="num">{formatINR(totals.total)}</span></div>
+          {(totals.discount > 0 || totals.tax > 0 || totals.round_off !== 0) && (
+            <div className="sum-small">
+              {totals.discount > 0 && <Row label={t("discount")} value={`−${formatINR(totals.discount)}`} />}
+              {totals.tax > 0 && <Row label={`${t("gst")}${s.prices_include_tax ? " (incl.)" : ""}`} value={formatINR(totals.tax)} />}
+              {totals.round_off !== 0 && <Row label={t("round_off")} value={formatINR(totals.round_off)} />}
+            </div>
+          )}
+          <div className="grand">
+            <button className="link" disabled={!order.lines.length} onClick={() => setDialog("discount")}>{t("discount")}</button>
+            <span className="qty-total num">{totalQty}</span>
+            <span className="num">{formatINR(totals.total)}</span>
+          </div>
         </div>
         <div className="actions">
-          <button className="btn" disabled={!order.lines.length} onClick={() => setDialog("discount")}>{t("discount")}</button>
-          <button className="btn danger" onClick={() => setDialog("cancel")}>{t("cancel_order")}</button>
-          <button className="btn kot" disabled={!pending} onClick={onKot}>{printing ? t("kot") : t("send_kitchen")}{pending ? ` (${pending})` : ""}</button>
-          <button className="btn" disabled={!order.lines.length} onClick={bill}>{printing ? t("print_bill") : t("show_bill")}</button>
-          <button className="btn primary big pay" disabled={!order.lines.length || totals.total <= 0} onClick={pay}>{t("pay")} · {formatINR(totals.total)}</button>
+          <button className="btn" disabled={!order.lines.length} onClick={bill}>🧾 {t("bill")}</button>
+          <button className="btn save-print" disabled={!order.lines.length} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_show")}</button>
+          <button className="btn primary cash" disabled={!order.lines.length || totals.total <= 0} onClick={pay}>
+            <span>💵 {t("cash_pay")}</span><strong className="num">{formatINR(totals.total)}</strong>
+          </button>
+          <button className="btn hold" onClick={onHold}>{t("hold")}</button>
+          <button className="btn cancel" onClick={() => setDialog("cancel")}>✕ {t("cancel_order")}</button>
         </div>
       </aside>
 
+      {choosing && (
+        <ChoiceDialog t={t} item={choosing} name={localName(choosing) || choosing.name} onClose={() => setChoosing(null)}
+          onAdd={(pick, qty) => (setChoosing(null), add(choosing, pick, qty))} />
+      )}
       {dialog === "pay" && <PayDialog t={t} due={totals.total} onClose={() => setDialog(null)} onDone={(p, change) => (setDialog(null), onPaid(p, change))} />}
       {dialog === "cancel" && <CancelDialog t={t} onClose={() => setDialog(null)} onDone={(r) => (setDialog(null), onCancel(r))} />}
       {dialog === "discount" && (
@@ -608,6 +658,58 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
         <BillDialog t={t} config={config} bill={billPreview} onClose={() => setDialog(null)} onPay={() => setDialog(missingWaiter ? "waiter_then_pay" : "pay")} />
       )}
     </main>
+  );
+}
+
+/** Tapping an item with choices: pick the variation (one, each with its price) and an add-on (at most one), like the old POS. */
+function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; name: string; onClose: () => void; onAdd: (pick: Choice, qty: number) => void }) {
+  const variations = item.variations ?? [];
+  const addons = item.addons ?? [];
+  const [variation, setVariation] = useState<ItemOption | null>(variations[0] ?? null);
+  const [addon, setAddon] = useState<ItemOption | null>(null);
+  const [qty, setQty] = useState(1);
+  const unit = (variation?.price ?? item.price) + (addon?.price ?? 0);
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-label={name}>
+      <div className="dialog wide choice-dialog">
+        <div className="dialog-head"><h2>{name}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
+        {variations.length > 0 && (
+          <section>
+            <h3>{t("variation")} <span className="muted small">({t("pick_one")})</span></h3>
+            <div className="choice-grid">
+              {variations.map((v) => (
+                <button key={v.name} className={`choice${variation?.name === v.name ? " on" : ""}`} onClick={() => setVariation(v)}>
+                  <span>{v.name}</span><span className="num">{formatINR(v.price)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+        {addons.length > 0 && (
+          <section>
+            <h3>{t("addon")} <span className="muted small">({t("pick_one")})</span></h3>
+            <div className="choice-grid">
+              {addons.map((a) => (
+                <button key={a.name} className={`choice${addon?.name === a.name ? " on" : ""}`} onClick={() => setAddon(addon?.name === a.name ? null : a)}>
+                  <span>{a.name}</span><span className="num">{a.price ? `+${formatINR(a.price)}` : formatINR(0)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+        <div className="choice-foot">
+          <div className="stepper big">
+            <button onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="−">−</button>
+            <span className="num">{qty}</span>
+            <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="+">+</button>
+          </div>
+          <button className="btn big" onClick={onClose}>{t("close")}</button>
+          <button className="btn big primary grow" disabled={variations.length > 0 && !variation} onClick={() => onAdd({ variation, addon }, qty)}>
+            {t("add")} · {formatINR(unit * qty)}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -704,30 +806,6 @@ function TableNoDialog({ t, current, onClose, onDone }: { t: T; current: string 
   );
 }
 
-/** With no kitchen printer: the new items in big text, to read out or show. */
-function KitchenDialog({ t, config, order, lines, onClose }: { t: T; config: Config; order: Order; lines: Order["lines"]; onClose: () => void }) {
-  return (
-    <div className="overlay" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="dialog kitchen" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-head">
-          <h2>{t("kitchen_title")} · {order.type === "parcel" ? `${t("parcel")} #${order.token ?? ""}` : order.table_name ? `${t("table")} ${order.table_name}` : t("order_no", { n: order.token ?? "" })}</h2>
-        </div>
-        {order.waiter_staff_id && <p className="muted">{t("waiter_short")}: {waiterName(config, order.waiter_staff_id)}</p>}
-        <div className="kitchen-lines">
-          {lines.map((l) => (
-            <div key={l.key} className="kline">
-              <strong className="num">{l.qty} ×</strong> <span>{l.name}</span>
-              {l.note && <div className="note">→ {l.note}</div>}
-            </div>
-          ))}
-        </div>
-        <p className="muted small">{t("kitchen_help")}</p>
-        <button className="btn primary big block" onClick={onClose}>{t("done")}</button>
-      </div>
-    </div>
-  );
-}
-
 /** The bill on screen: shown to the guest before payment, and after it as the receipt. */
 function BillDialog({ t, config, bill, paid, change = 0, onClose, onPay, onPrint }: {
   t: T; config: Config; bill: Bill; paid?: boolean; change?: number; onClose: () => void; onPay?: () => void; onPrint?: () => void;
@@ -741,7 +819,7 @@ function BillDialog({ t, config, bill, paid, change = 0, onClose, onPay, onPrint
             {change > 0 && <span>{t("change_given")}: <strong className="num">{formatINR(change)}</strong></span>}
           </div>
         )}
-        <div className="receipt receipt-screen"><ReceiptBody t={t} bill={bill} settings={config.settings} config={config} /></div>
+        <div className="receipt receipt-screen"><ReceiptBody bill={bill} settings={config.settings} config={config} /></div>
         {!paid && <p className="muted small center">{t("bill_on_screen")}</p>}
         <div className="actions-row">
           {onPrint && <button className="btn big" onClick={onPrint}>{t("print")}</button>}
@@ -919,43 +997,63 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
   );
 }
 
-/* ---------------- The bill, for the screen and for an 80 mm receipt ---------------- */
+/* ---------------- The bill, for the screen and for the 80 mm receipt printer ---------------- */
 
-function ReceiptBody({ t, bill: b, settings, config }: { t: T; bill: Bill; settings: Config["settings"]; config: Config }) {
+const money = (p: number) => formatINR(p, { symbol: false });
+
+/** Laid out like the old POS's bill: token on top, the heading, date and bill number, then Item / Qty / Price / Amount. */
+function ReceiptBody({ bill: b, settings, config, copy }: { t?: T; bill: Bill; settings: Config["settings"]; config: Config; copy?: Copy }) {
   const totals = totalsOf({ lines: b.lines.map((l, i) => ({ ...l, key: String(i), sent: 0 })), discount: b.discount } as Order, { ...settings, prices_include_tax: b.prices_include_tax });
-  const when = new Date(b.closed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short" });
+  const at = new Date(b.closed_at);
+  const date = at.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, "-");
+  const time = at.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).toUpperCase();
   const showGst = settings.use_gst !== false && !!settings.gstin;
   const waiter = waiterName(config, b.waiter_staff_id);
+  const [title, ...address] = settings.bill_header.split("\n");
+  const qty = b.lines.reduce((n, l) => n + l.qty, 0);
   return (
     <>
-      {settings.bill_header.split("\n").map((line, i) => <div key={i} className={`p-center${i === 0 ? " p-big" : ""}`}>{line}</div>)}
-      {showGst && <div className="p-center">{t("gstin")}: {settings.gstin}</div>}
+      {b.token !== null && <div className="p-token">Token No. : <span>{b.token}</span></div>}
+      {copy && <div className="p-center p-small">{copy}</div>}
+      <div className="p-center p-title">{title}</div>
+      {address.map((line, i) => <div key={i} className="p-center p-small">{line}</div>)}
+      {showGst && <div className="p-center p-small">GSTIN: {settings.gstin}</div>}
       <hr />
-      <div className="p-row"><span>{t("bill_no")}: {b.bill_no}</span><span>{orderLabel({ type: b.order_type, table_name: b.table_name, token: b.token }, t)}</span></div>
-      <div className="p-row"><span>{when}</span>{waiter && <span>{t("waiter_short")}: {waiter}</span>}</div>
+      <div>Name :-</div>
       <hr />
+      <div className="p-meta">
+        <div>Date : {date}<br /><span className="p-indent">{time}</span></div>
+        <div><b>{b.order_type === "parcel" ? "PARCEL" : "DINEIN"}</b>{b.table_name ? ` · Table ${b.table_name}` : ""}<br />Bill No. : {b.bill_no}</div>
+      </div>
+      {waiter && <div className="p-small">Waiter : {waiter}</div>}
+      <hr />
+      <div className="p-items p-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>
+      <hr className="thin" />
       {b.lines.map((l, i) => (
-        <div key={i} className="p-row"><span>{l.qty} × {l.name}</span><span>{formatINR(l.qty * l.price, { symbol: false })}</span></div>
+        <div key={i} className="p-items">
+          <span className="p-name">{l.name}{lineTag(l) && <><br />{lineTag(l)}</>}{l.note && <><br />→ {l.note}</>}</span>
+          <span>{l.qty}</span><span>{money(l.price).replace(/\.00$/, "")}</span><span>{money(l.qty * l.price)}</span>
+        </div>
       ))}
       <hr />
-      <div className="p-row"><span>{t("subtotal")}</span><span>{formatINR(totals.subtotal, { symbol: false })}</span></div>
-      {totals.discount > 0 && <div className="p-row"><span>{t("discount")}</span><span>−{formatINR(totals.discount, { symbol: false })}</span></div>}
+      <div className="p-items p-total"><span>Total :</span><span>{qty}</span><span /><span>{money(totals.subtotal)}</span></div>
+      {totals.discount > 0 && <div className="p-row"><span>Discount</span><span>−{money(totals.discount)}</span></div>}
       {totals.tax > 0 && (
         <>
-          <div className="p-row"><span>{t("cgst")}{b.prices_include_tax ? " (incl.)" : ""}</span><span>{formatINR(totals.cgst, { symbol: false })}</span></div>
-          <div className="p-row"><span>{t("sgst")}{b.prices_include_tax ? " (incl.)" : ""}</span><span>{formatINR(totals.sgst, { symbol: false })}</span></div>
+          <div className="p-row"><span>CGST{b.prices_include_tax ? " (incl.)" : ""}</span><span>{money(totals.cgst)}</span></div>
+          <div className="p-row"><span>SGST{b.prices_include_tax ? " (incl.)" : ""}</span><span>{money(totals.sgst)}</span></div>
         </>
       )}
-      {totals.round_off !== 0 && <div className="p-row"><span>{t("round_off")}</span><span>{formatINR(totals.round_off, { symbol: false })}</span></div>}
-      <div className="p-row p-big"><span>{t("total")}</span><span>{formatINR(b.total)}</span></div>
-      {b.payments.length > 0 && <div className="p-row"><span>{b.payments.map((p) => `${t(p.mode as Key)} ${formatINR(p.amount)}`).join(" + ")}</span></div>}
+      {totals.round_off !== 0 && <div className="p-row"><span>Round off</span><span>{money(totals.round_off)}</span></div>}
+      <div className="p-grand">Grand Total : {money(b.total)}</div>
+      {b.payments.length > 0 && <div className="p-small p-right">{b.payments.map((p) => `${p.mode.toUpperCase()} ${money(p.amount)}`).join(" + ")}</div>}
       <hr />
       {settings.bill_footer && <div className="p-center">{settings.bill_footer}</div>}
     </>
   );
 }
 
-/* ---------------- Printing (only when a receipt printer is connected) ---------------- */
+/* ---------------- Printing (when the receipt printer is switched on) ---------------- */
 
 function PrintArea({ t, job, settings, config, onDone }: { t: T; job: PrintJob | null; settings: Config["settings"]; config: Config; onDone: () => void }) {
   useEffect(() => {
@@ -972,24 +1070,8 @@ function PrintArea({ t, job, settings, config, onDone }: { t: T; job: PrintJob |
   const when = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short" });
   let body: React.ReactNode = null;
 
-  if (job.kind === "kot") {
-    const o = job.order;
-    body = (
-      <>
-        <div className="p-center p-big">{t("kot").toUpperCase()}</div>
-        <div className="p-center p-big">{orderLabel(o, t)}</div>
-        <div className="p-row"><span>{when}</span><span>{waiterName(config, o.waiter_staff_id)}</span></div>
-        <hr />
-        {job.lines.map((l) => (
-          <div key={l.key}>
-            <div className="p-row p-big"><span>{l.qty} × {l.name}</span></div>
-            {l.note && <div>  → {l.note}</div>}
-          </div>
-        ))}
-      </>
-    );
-  } else if (job.kind === "bill") {
-    body = <ReceiptBody t={t} bill={job.bill} settings={settings} config={config} />;
+  if (job.kind === "bill") {
+    body = <ReceiptBody bill={job.bill} settings={settings} config={config} copy={job.copy} />;
   } else {
     const paid = job.bills.filter((b) => b.status === "paid");
     const mode = (m: string) => paid.reduce((s, b) => s + b.payments.filter((p) => p.mode === m).reduce((a, p) => a + p.amount, 0), 0);

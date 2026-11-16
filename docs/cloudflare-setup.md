@@ -166,7 +166,7 @@ On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the ap
    ```
    "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --kiosk-printing https://<your address>/pos/
    ```
-   Open the POS from that shortcut. Bills and kitchen tickets print straight away on 80 mm paper. Press Alt+F4 to leave.
+   Open the POS from that shortcut. Bills print straight away on 80 mm paper. Press Alt+F4 to leave. The full printer setup is in [pos-printing.md](pos-printing.md).
 
 If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
 
