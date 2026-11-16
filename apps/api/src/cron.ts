@@ -1,5 +1,5 @@
 import { attendanceMarked } from "./routes/people";
-import { addDays, businessDate, DAY_START_HOUR, istMoment, monthCloseFor, usualRange, type MessageKey } from "@mausam/shared";
+import { addDays, businessDate, DAY_START_HOUR, istMoment, monthCloseFor, parseUserList, usualRange, type MessageKey } from "@mausam/shared";
 import type { Env } from "./env";
 import { loadSettings } from "./lib/db";
 import { alertParams, notify, type Audience } from "./lib/notify";
@@ -48,16 +48,20 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
   const t = now.getTime();
 
   // ---- Reminders to managers ----
+  // Each reminder goes to the people picked in Manage → Settings (e.g. shopping to the head manager,
+  // closing to the one who closes). Nobody picked = every manager.
+  const shoppingTo = { users: parseUserList(s.remind_shopping_to) };
+  const closeTo = { users: parseUserList(s.remind_close_to) };
   const trip = await db
     .prepare("SELECT status, float_out FROM shopping_trips WHERE business_date = ? ORDER BY id DESC LIMIT 1")
     .bind(today)
     .first<{ status: string; float_out: number }>();
   if (t >= dueAt(today, s.shopping_due) && trip?.status !== "closed") {
-    await notify(env, "manager", { title: "push.shopping_title", body: trip ? "push.shopping_open_body" : "push.shopping_body" }, { url: "/entries/shopping", dedupeKey: `remind:shopping:${today}` });
+    await notify(env, shoppingTo, { title: "push.shopping_title", body: trip ? "push.shopping_open_body" : "push.shopping_body" }, { url: "/entries/shopping", dedupeKey: `remind:shopping:${today}` });
   }
   const closeToday = await db.prepare("SELECT 1 FROM day_closes WHERE business_date = ?").bind(today).first();
   if (t >= dueAt(today, s.close_due) && !closeToday) {
-    await notify(env, "manager", { title: "push.close_title", body: "push.close_body" }, { url: "/entries/close", dedupeKey: `remind:close:${today}` });
+    await notify(env, closeTo, { title: "push.close_title", body: "push.close_body" }, { url: "/entries/close", dedupeKey: `remind:close:${today}` });
   }
 
   // ---- Escalations ----

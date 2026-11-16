@@ -67,3 +67,17 @@ export function billNumber(counter: string, date: string, seq: number): string {
 export function validCounter(code: unknown): code is string {
   return typeof code === "string" && /^[A-Z0-9]{1,3}$/.test(code);
 }
+
+/** A waiter's commission on one bill: a rate in basis points (250 = 2.5%) of the amount, rounded to the paisa. */
+export function waiterCommission(amount: number, rateBp: number): number {
+  if (!(amount > 0) || !(rateBp > 0)) return 0;
+  return Math.round((amount * rateBp) / 10_000);
+}
+
+/** "2.5" → 250 basis points. Blank → null. Refuses anything outside 0–100%. */
+export function percentToBp(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined || String(v).trim() === "") return null;
+  const n = Number(String(v).replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return Math.round(n * 100);
+}

@@ -236,14 +236,14 @@ export function Advances() {
 
 interface PayRow {
   staff_id: number; name: string; role: string; pay_type: string | null; rate: number | null;
-  days_worked: number; days_absent: number; days_unmarked: number; gross: number; advances: number; adjustment: number; net: number;
+  days_worked: number; days_absent: number; days_unmarked: number; gross: number; advances: number; adjustment: number; net: number; commission?: number;
   status: "draft" | "paid"; paid_on: string | null; partial: boolean;
 }
 
 export function Payroll() {
   const { t } = useSession();
   const [month, setMonth] = useState(businessDate().slice(0, 7));
-  const res = useApi<{ rows: PayRow[]; totals: { gross: number; advances: number; net: number } }>(`/people/payroll/${month}`);
+  const res = useApi<{ rows: PayRow[]; totals: { gross: number; advances: number; net: number; commission?: number } }>(`/people/payroll/${month}`);
   const [error, setError] = useState<unknown>(null);
   const partial = res.data?.rows.some((r) => r.partial);
 
@@ -274,6 +274,7 @@ export function Payroll() {
           <div className="stats">
             <Stat hero label={t("pay.total")} value={formatINR(res.data.totals.net)} />
             <Stat label={t("pay.gross")} value={formatINR(res.data.totals.gross)} />
+            {(res.data.totals.commission ?? 0) > 0 && <Stat label={t("pay.commission")} value={formatINR(res.data.totals.commission!)} />}
             <Stat label={t("pay.advances")} value={formatINR(res.data.totals.advances)} />
           </div>
           <div className="pay-list">
@@ -293,6 +294,9 @@ function PayCard({ r, onSave }: { r: PayRow; onSave: (body: Record<string, unkno
   useEffect(() => setAdj(r.adjustment ? String(r.adjustment / 100) : ""), [r.adjustment]);
   const paid = r.status === "paid";
   const adjPaise = adj.trim() === "" ? 0 : Math.round(Number(adj.replace(/,/g, "")) * 100);
+  const commission = r.commission ?? 0;
+  // A waiter with no fixed pay still has their commission to pay out.
+  const hasPay = !!r.rate || commission > 0;
   return (
     <div className={`card pay-card${paid ? " paid" : ""}`}>
       <div className="section-head">
@@ -301,20 +305,21 @@ function PayCard({ r, onSave }: { r: PayRow; onSave: (body: Record<string, unkno
         </span>
         {paid ? <Pill tone="good" icon="check">{t("pay.paid")}</Pill> : <Pill>{t("pay.draft")}</Pill>}
       </div>
-      {!r.rate ? (
+      {!hasPay ? (
         <p className="muted small" style={{ margin: 0 }}>{t("pay.no_rate")}</p>
       ) : (
         <dl className="pay-grid">
           <dt>{t("pay.days_worked")}</dt><dd>{r.days_worked}</dd>
           <dt>{t("att.absent")}</dt><dd>{r.days_absent}</dd>
           {r.days_unmarked > 0 && (<><dt>{t("att.unmarked")}</dt><dd>{r.days_unmarked}</dd></>)}
-          <dt>{t("pay.gross")}</dt><dd>{formatINR(r.gross)}</dd>
+          <dt>{t("pay.gross")}</dt><dd>{r.rate ? formatINR(r.gross) : "—"}</dd>
+          {commission > 0 && (<><dt>{t("pay.commission")}</dt><dd>+ {formatINR(commission)}</dd></>)}
           <dt>{t("pay.advances")}</dt><dd>− {formatINR(r.advances)}</dd>
           {paid ? (r.adjustment !== 0 && (<><dt>{t("pay.adjust")}</dt><dd>{formatINR(r.adjustment)}</dd></>)) : null}
           <dt><strong>{t("pay.net")}</strong></dt><dd><strong>{formatINR(r.net)}</strong></dd>
         </dl>
       )}
-      {!paid && r.rate ? (
+      {!paid && hasPay ? (
         <div className="pay-actions">
           <input
             className="input"

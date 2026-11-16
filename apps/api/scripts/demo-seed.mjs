@@ -219,4 +219,12 @@ let tableSort = 0;
 for (let n = 1; n <= 15; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Garden', 'C${n}', 6, ${++tableSort});`);
 for (let n = 1; n <= 7; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Rooftop', 'D${n}', 4, ${++tableSort});`);
 
+// Waiters: IDs for the POS, a 2% default commission, and one waiter on 3%.
+let code = 0;
+staff.forEach((s, i) => {
+  if (s[2] === "Waiter") out.push(`UPDATE staff SET is_waiter = 1, waiter_code = '${++code}' WHERE id = ${i + 1};`);
+});
+out.push("UPDATE staff SET commission_bp = 300 WHERE id = 1;");
+out.push("INSERT INTO settings (key, value) VALUES ('pos_commission_bp', '200') ON CONFLICT (key) DO UPDATE SET value = excluded.value;");
+
 console.log(out.join("\n"));

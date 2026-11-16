@@ -50,7 +50,7 @@ export function BillsPage() {
                 <div key={b.id}>
                   <button className="row row-link as-button" onClick={() => setOpen(open === b.id ? null : b.id)} style={{ opacity: b.status === "cancelled" ? 0.7 : 1 }}>
                     <span className="grow">
-                      <strong>{b.bill_no} · {b.order_type === "parcel" ? `${t("bills.parcel")} #${b.token ?? ""}` : b.table_name}</strong>
+                      <strong>{b.bill_no} · {b.order_type === "parcel" ? `${t("bills.parcel")} #${b.token ?? ""}` : b.table_name ?? `#${b.token ?? ""}`}</strong>
                       <span className="muted small">{clock(new Date(b.closed_at).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }))} · {b.payments.map((p) => p.mode.toUpperCase()).join(" + ") || "—"}{b.waiter_name ? ` · ${b.waiter_name}` : ""}</span>
                     </span>
                     {b.status === "cancelled" && <Pill tone="bad">{t("bills.cancelled_one")}</Pill>}

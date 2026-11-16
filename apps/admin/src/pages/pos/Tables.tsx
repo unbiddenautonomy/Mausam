@@ -4,6 +4,7 @@ import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Icon } from "../../components/Icon";
 import { Field, Loading, PageHead } from "../../components/ui";
+import type { PosSettings } from "./Menu";
 
 interface DiningTable { id: number; area: string; name: string; seats: number; sort: number; active: number }
 
@@ -11,6 +12,7 @@ interface DiningTable { id: number; area: string; name: string; seats: number; s
 export function TablesPage() {
   const { t } = useSession();
   const res = useApi<{ tables: DiningTable[] }>("/billing/tables");
+  const tablesOff = useApi<{ settings: PosSettings }>("/billing/settings").data?.settings.use_tables === false;
   const [f, setF] = useState({ area: "", from: "", count: "1", seats: "4" });
   const tables = res.data?.tables ?? [];
   const areas = [...new Set(tables.map((x) => x.area))];
@@ -33,6 +35,7 @@ export function TablesPage() {
   return (
     <div className="page">
       <PageHead title={t("tables.title")} subtitle={t("tables.desc")} back="/manage" />
+      {tablesOff && <div className="check warn"><Icon name="alert" /><span className="t">{t("tables.off_note")}</span></div>}
       <div className="card form">
         <h2>{t("tables.add")}</h2>
         <div className="grid-2">

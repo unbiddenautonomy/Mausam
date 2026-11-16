@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { billTotals, businessDate, BILL_PAY_MODES, validCounter, type BillPayMode } from "@mausam/shared";
+import { billTotals, businessDate, BILL_PAY_MODES, validCounter, waiterCommission, type BillPayMode } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { audit, bool } from "../lib/db";
@@ -13,7 +13,10 @@ import { applyPosToCloses } from "./entries";
  */
 export const billing = new Hono<AppEnv>();
 
-const POS_SETTING_KEYS = ["pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer"] as const;
+const POS_SETTING_KEYS = [
+  "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
+  "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required",
+] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
 
 export interface PosSettings {
@@ -22,6 +25,16 @@ export interface PosSettings {
   gstin: string;
   bill_header: string;
   bill_footer: string;
+  /** Show the table map. Off: orders are listed by order number, with an optional table number typed in. */
+  use_tables: boolean;
+  /** Charge GST (also needs a GSTIN). Off: no tax on any bill. */
+  use_gst: boolean;
+  /** A receipt printer is connected. Off: bills and kitchen tickets are shown on screen only. */
+  printing: boolean;
+  /** Default waiter commission, basis points (250 = 2.5%). A waiter's own rate wins. */
+  commission_bp: number;
+  /** A dine-in order needs a waiter before it can be paid. */
+  waiter_required: boolean;
 }
 
 async function loadPosSettings(db: D1Database): Promise<PosSettings> {
@@ -36,6 +49,11 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     gstin: m.pos_gstin ?? "",
     bill_header: m.pos_bill_header ?? "Mausam Restaurant",
     bill_footer: m.pos_bill_footer ?? "",
+    use_tables: m.pos_use_tables === "1",
+    use_gst: m.pos_use_gst === "1",
+    printing: m.pos_printing === "1",
+    commission_bp: Number(m.pos_commission_bp ?? 0) || 0,
+    waiter_required: (m.pos_waiter_required ?? "1") === "1",
   };
 }
 
@@ -51,7 +69,7 @@ billing.get("/config", async (c) => {
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
     db.prepare("SELECT id, category_id, name, short_name, price, tax_rate, veg, favourite, sort FROM menu_items WHERE active = 1 ORDER BY sort, name").all(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
-    db.prepare("SELECT id, name, name_local FROM staff WHERE active = 1 ORDER BY name").all(),
+    db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
   ]);
   return c.json({
@@ -78,7 +96,19 @@ type Result = { client_id: string; status: "saved" | "duplicate" | "rejected"; e
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 /** Checks one bill from the counter and returns the statements that save it, or a reason it's refused. */
-function prepareBill(db: D1Database, b: BillIn, userId: number): { stmts: D1PreparedStatement[]; date: string } | { error: string } {
+interface WaiterInfo { name: string; is_waiter: number; commission_bp: number | null }
+interface BillCtx { waiters: Map<number, WaiterInfo>; defaultBp: number }
+
+/** Loads what the bill check needs about staff: names, and each waiter's commission rate. */
+async function billCtx(db: D1Database): Promise<BillCtx> {
+  const [{ results }, settings] = await Promise.all([
+    db.prepare("SELECT id, name, is_waiter, commission_bp FROM staff").all<WaiterInfo & { id: number }>(),
+    loadPosSettings(db),
+  ]);
+  return { waiters: new Map(results.map((r) => [r.id, r])), defaultBp: settings.commission_bp };
+}
+
+function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): { stmts: D1PreparedStatement[]; date: string } | { error: string } {
   if (typeof b.client_id !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(b.client_id)) return { error: "client_id" };
   if (!validCounter(b.counter)) return { error: "counter" };
   if (typeof b.bill_no !== "string" || !/^[A-Z0-9]{1,3}\d{4}-\d{5}$/.test(b.bill_no) || !b.bill_no.startsWith(b.counter)) return { error: "bill_no" };
@@ -88,7 +118,10 @@ function prepareBill(db: D1Database, b: BillIn, userId: number): { stmts: D1Prep
   if (typeof b.opened_at !== "string" || !ISO_RE.test(b.opened_at) || typeof b.closed_at !== "string" || !ISO_RE.test(b.closed_at)) return { error: "time" };
   const tableId = b.table_id == null ? null : int(b.table_id, 1, 1e9);
   if (b.table_id != null && tableId === null) return { error: "table_id" };
-  const waiter = b.waiter_staff_id == null ? null : int(b.waiter_staff_id, 1, 1e9);
+  const waiterId = b.waiter_staff_id == null ? null : int(b.waiter_staff_id, 1, 1e9);
+  // A waiter removed from staff since the bill was made is dropped rather than refusing the bill.
+  const waiterInfo = waiterId === null ? undefined : ctx.waiters.get(waiterId);
+  const waiter = waiterInfo ? waiterId : null;
   const token = b.token == null ? null : int(b.token, 1, 100000);
   const guests = b.guests == null ? null : int(b.guests, 0, 500);
   const discount = b.discount == null ? 0 : int(b.discount, 0, 1e10);
@@ -123,18 +156,23 @@ function prepareBill(db: D1Database, b: BillIn, userId: number): { stmts: D1Prep
     }
     if (payments.reduce((s, p) => s + p.amount, 0) !== totals.total) return { error: "payments_total" };
   }
+  // Waiter commission: a % of what the guest paid, before GST. Cancelled bills earn nothing.
+  const commissionBp = b.status === "paid" && waiterInfo?.is_waiter ? waiterInfo.commission_bp ?? ctx.defaultBp : null;
+  const commission = commissionBp ? waiterCommission(totals.total - totals.tax, commissionBp) : 0;
+
   const reason = optionalText(b.cancel_reason, 200);
   if (b.status === "cancelled" && !reason) return { error: "cancel_reason" };
 
   const stmts: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO pos_bills (client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
-         subtotal, discount, tax, round_off, total, prices_include_tax, status, cancel_reason, opened_at, closed_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         subtotal, discount, tax, round_off, total, prices_include_tax, status, cancel_reason, opened_at, closed_at, created_by,
+         waiter_name, commission_bp, commission)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       b.client_id, b.bill_no, b.counter, b.business_date, b.order_type, tableId, optionalText(b.table_name, 40), token, waiter, guests,
       totals.subtotal, totals.discount, totals.tax, totals.round_off, totals.total, include ? 1 : 0, b.status, b.status === "cancelled" ? reason : null,
-      b.opened_at, b.closed_at, userId,
+      b.opened_at, b.closed_at, userId, waiterInfo?.name ?? null, commissionBp, commission,
     ),
     ...lines.map((l) =>
       db.prepare(
@@ -191,6 +229,7 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
   const user = c.get("user");
   const results: Result[] = [];
   const dates = new Set<string>();
+  const ctx = await billCtx(db);
 
   for (const raw of body.bills as BillIn[]) {
     const clientId = typeof raw?.client_id === "string" ? raw.client_id : "";
@@ -201,7 +240,7 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
       results.push({ client_id: clientId, status: "duplicate", bill_no: existing.bill_no });
       continue;
     }
-    const prepared = prepareBill(db, raw ?? {}, user.id);
+    const prepared = prepareBill(db, raw ?? {}, user.id, ctx);
     if ("error" in prepared) {
       results.push({ client_id: clientId, status: "rejected", error: prepared.error });
       continue;
@@ -251,7 +290,7 @@ billing.get("/bills", requireRole("owner", "manager"), async (c) => {
   const db = c.env.DB;
   const { results: bills } = await db
     .prepare(
-      `SELECT b.*, s.name AS waiter_name, u.name AS by_name FROM pos_bills b
+      `SELECT b.*, COALESCE(b.waiter_name, s.name) AS waiter_name, s.waiter_code, u.name AS by_name FROM pos_bills b
        LEFT JOIN staff s ON s.id = b.waiter_staff_id LEFT JOIN users u ON u.id = b.created_by
        WHERE b.business_date = ? ORDER BY b.closed_at DESC`,
     )
@@ -279,6 +318,8 @@ billing.use("/menu", requireRole("owner"));
 billing.use("/tables/*", requireRole("owner"));
 billing.use("/tables", requireRole("owner"));
 billing.use("/settings", requireRole("owner"));
+billing.use("/waiters", requireRole("owner"));
+billing.use("/waiters/*", requireRole("owner"));
 
 billing.get("/menu", async (c) => {
   const db = c.env.DB;
@@ -414,8 +455,91 @@ billing.put("/settings", async (c) => {
   }
   if (b.bill_header !== undefined) updates.push(["pos_bill_header", optionalText(b.bill_header, 200) ?? ""]);
   if (b.bill_footer !== undefined) updates.push(["pos_bill_footer", optionalText(b.bill_footer, 200) ?? ""]);
+  for (const [field, key] of [["use_tables", "pos_use_tables"], ["use_gst", "pos_use_gst"], ["printing", "pos_printing"], ["waiter_required", "pos_waiter_required"]] as const) {
+    if (b[field] !== undefined) updates.push([key, b[field] ? "1" : "0"]);
+  }
+  if (b.commission_bp !== undefined) {
+    const r = int(b.commission_bp, 0, 10000);
+    if (r === null) throw new HttpError(422, "invalid", { field: "commission_bp" });
+    updates.push(["pos_commission_bp", String(r)]);
+  }
   if (updates.length) {
     await db.batch(updates.map(([k, v]) => db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(k, v)));
   }
   return c.json({ settings: await loadPosSettings(db) });
 });
+
+/* ---------------- Owner: waiters and their commission ---------------- */
+
+/** Every staff member, with their waiter details, so the owner can add someone as a waiter. */
+billing.get("/waiters", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, name, name_local, role, is_waiter, waiter_code, commission_bp, active FROM staff
+     ORDER BY is_waiter DESC, active DESC, CAST(waiter_code AS INTEGER), waiter_code, name`,
+  ).all();
+  return c.json({ staff: results, settings: await loadPosSettings(c.env.DB) });
+});
+
+async function waiterFields(db: D1Database, b: Record<string, unknown>, selfId: number | null) {
+  const code = optionalText(b.waiter_code, 6)?.toUpperCase() ?? null;
+  if (code && !/^[A-Z0-9]{1,6}$/.test(code)) throw new HttpError(422, "invalid", { field: "waiter_code" });
+  if (code) {
+    const clash = await db.prepare("SELECT id FROM staff WHERE is_waiter = 1 AND active = 1 AND upper(waiter_code) = ? AND id != ?")
+      .bind(code, selfId ?? 0).first();
+    if (clash) throw new HttpError(409, "waiter_code_taken", { field: "waiter_code" });
+  }
+  const bp = b.commission_bp === null || b.commission_bp === undefined || b.commission_bp === "" ? null : int(b.commission_bp, 0, 10000);
+  if (b.commission_bp != null && b.commission_bp !== "" && bp === null) throw new HttpError(422, "invalid", { field: "commission_bp" });
+  return { waiter_code: code, commission_bp: bp, is_waiter: b.is_waiter === false || b.is_waiter === 0 ? 0 : 1 };
+}
+
+/** Adds a new person straight in as a waiter (they appear on Staff too). */
+billing.post("/waiters", async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const name = requireText(b.name, "name", 80);
+  const f = await waiterFields(c.env.DB, b, null);
+  const res = await c.env.DB.prepare("INSERT INTO staff (name, name_local, role, is_waiter, waiter_code, commission_bp) VALUES (?, ?, 'Waiter', 1, ?, ?)")
+    .bind(name, optionalText(b.name_local, 80), f.waiter_code, f.commission_bp).run();
+  const id = Number(res.meta.last_row_id);
+  await audit(c.env.DB, "staff", id, "create", null, { name, ...f }, c.get("user").id);
+  return c.json({ id }, 201);
+});
+
+/** Makes a staff member a waiter (or not), and sets their ID and commission. */
+billing.patch("/waiters/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  const before = await c.env.DB.prepare("SELECT id, name, is_waiter, waiter_code, commission_bp FROM staff WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  if (!before) throw new HttpError(404, "not_found");
+  const f = await waiterFields(c.env.DB, { ...before, ...(await c.req.json<Record<string, unknown>>()) }, id);
+  await c.env.DB.prepare("UPDATE staff SET is_waiter = ?, waiter_code = ?, commission_bp = ? WHERE id = ?")
+    .bind(f.is_waiter, f.waiter_code, f.commission_bp, id).run();
+  await audit(c.env.DB, "staff", id, "update", before, f, c.get("user").id);
+  return c.json({ ok: true });
+});
+
+const isMonth = (v: unknown): v is string => typeof v === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);
+
+/**
+ * Waiter sales and commission for a month, one row per waiter per day (paid bills only).
+ * Bills with no waiter come back with waiter_id null so the owner can see how much went unassigned.
+ */
+billing.get("/waiters/report", async (c) => {
+  const month = c.req.query("month") ?? businessDate().slice(0, 7);
+  if (!isMonth(month)) throw new HttpError(422, "invalid", { field: "month" });
+  const { results } = await c.env.DB.prepare(
+    `SELECT b.waiter_staff_id AS waiter_id, COALESCE(s.name, MAX(b.waiter_name)) AS name, s.waiter_code, b.business_date,
+       COUNT(*) AS bills, SUM(b.total) AS sales, SUM(b.total - b.tax) AS before_tax, SUM(b.commission) AS commission
+     FROM pos_bills b LEFT JOIN staff s ON s.id = b.waiter_staff_id
+     WHERE b.status = 'paid' AND b.business_date LIKE ? || '-%'
+     GROUP BY b.waiter_staff_id, b.business_date
+     ORDER BY b.business_date`,
+  ).bind(month).all();
+  return c.json({ month, rows: results });
+});
+
+/** One waiter's commission for a month, for month-end pay. */
+export async function commissionFor(db: D1Database, staffId: number, month: string): Promise<number> {
+  const r = await db.prepare("SELECT COALESCE(SUM(commission), 0) AS t FROM pos_bills WHERE waiter_staff_id = ? AND status = 'paid' AND business_date LIKE ? || '-%'")
+    .bind(staffId, month).first<{ t: number }>();
+  return r?.t ?? 0;
+}

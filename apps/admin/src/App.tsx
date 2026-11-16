@@ -34,6 +34,9 @@ import { SettingsPage } from "./pages/manage/Settings";
 import { MenuPage } from "./pages/pos/Menu";
 import { TablesPage } from "./pages/pos/Tables";
 import { BillsPage } from "./pages/pos/Bills";
+import { WaitersPage } from "./pages/pos/Waiters";
+import { PosOptionsPage } from "./pages/pos/PosOptions";
+const WaitersReport = lazy(() => import("./pages/reports/WaitersReport").then((m) => ({ default: m.WaitersReport })));
 
 export function App() {
   const { user, ready } = useSession();
@@ -80,6 +83,9 @@ export function App() {
               <Route path="manage/settings" element={<SettingsPage />} />
               <Route path="manage/menu" element={<MenuPage />} />
               <Route path="manage/tables" element={<TablesPage />} />
+              <Route path="manage/waiters" element={<WaitersPage />} />
+              <Route path="manage/pos" element={<PosOptionsPage />} />
+              <Route path="reports/waiters" element={<Suspense fallback={<Loading />}><WaitersReport /></Suspense>} />
               <Route path="manage/import" element={<Suspense fallback={<Loading />}><PosImport /></Suspense>} />
             </>
           )}

@@ -17,6 +17,8 @@ interface S {
   pay_rate: number | null;
   joined_on: string | null;
   active: boolean;
+  is_waiter?: number;
+  waiter_code?: string | null;
 }
 
 export function StaffPage() {
@@ -39,7 +41,7 @@ export function StaffPage() {
             <button key={s.id} className="row row-link" style={{ border: 0, background: "none", textAlign: "left", width: "100%", cursor: "pointer", opacity: s.active ? 1 : 0.5, borderTop: "1px solid var(--border)" }} onClick={() => setEditing(s)}>
               <span className="grow">
                 <strong>{s.name}{s.name_local ? <span className="muted"> · {s.name_local}</span> : null}</strong>
-                <span className="muted small">{s.role || "—"}</span>
+                <span className="muted small">{s.role || "—"}{s.is_waiter ? ` · ${t("manage.waiters")}${s.waiter_code ? ` #${s.waiter_code}` : ""}` : ""}</span>
               </span>
               {s.pay_rate ? (
                 <span className="amount small">{formatINR(s.pay_rate)} <span className="faint">/ {t(`pay.${s.pay_type || "monthly"}` as "pay.monthly")}</span></span>

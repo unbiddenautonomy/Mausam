@@ -76,7 +76,14 @@ export async function wagesEarned(db: D1Database, from: string, to: string): Pro
     .prepare("SELECT id, pay_type, pay_rate, joined_on FROM staff WHERE pay_rate IS NOT NULL AND (active = 1 OR id IN (SELECT staff_id FROM attendance WHERE business_date BETWEEN ? AND ?))")
     .bind(from, to)
     .all<{ id: number; pay_type: PayType | null; pay_rate: number; joined_on: string | null }>();
-  if (staff.length === 0) return 0;
+  // Waiter commission on POS bills counts as wages too.
+  const comm = await db
+    .prepare("SELECT COALESCE(SUM(commission), 0) AS t FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?")
+    .bind(from, to)
+    .first<{ t: number }>()
+    .catch(() => null);
+  const commission = comm?.t ?? 0;
+  if (staff.length === 0) return commission;
   const { results: marks } = await db
     .prepare("SELECT staff_id, business_date, status FROM attendance WHERE business_date BETWEEN ? AND ?")
     .bind(from, to)
@@ -89,7 +96,7 @@ export async function wagesEarned(db: D1Database, from: string, to: string): Pro
       )
     : new Map<number, number>();
   const dates = dateRange(from, to);
-  let total = 0;
+  let total = commission;
   for (const s of staff) {
     if (paid.has(s.id)) {
       total += paid.get(s.id)!;
