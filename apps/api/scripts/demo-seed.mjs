@@ -193,28 +193,7 @@ for (let i = 35; i >= 1; i--) {
 }
 out.push(`INSERT INTO alerts (type, business_date, severity, params, audience) VALUES ('close_missing', ${q(addDays(today, -9))}, 'critical', ${q(JSON.stringify({ date: addDays(today, -9) }))}, 'all');`);
 
-// ---- POS: menu and tables (demo; the owner sets the real ones up under Manage → Menu and Tables) ----
-const posMenu = {
-  "Pav Bhaji": [
-    ["Bhaji", 220, 1], ["Bhaji Jain", 300], ["Bhaji Special (Oil)", 270], ["Bhaji Paneer", 320], ["Bhaji Green", 330],
-    ["Bhaji Tikka", 200], ["Bhaji Gotala (Amul Butter)", 400], ["Bhaji Butter Paneer (Amul Butter)", 370],
-    ["Cheese Paneer Butter Bhaji", 450], ["Mausam Special Bhaji", 400, 1], ["Masala Pav", 280], ["Pulav", 300], ["Mausam Special Pulav", 400],
-    ["Kora Pav", 5], ["1 Pav (Oil)", 5, 1], ["1 Pav (Amul Butter)", 10, 1],
-  ],
-  Dosa: [["Plain Dosa", 120], ["Masala Dosa", 150, 1], ["Butter Masala Dosa", 180], ["Mysore Masala Dosa", 190], ["Paneer Dosa", 220], ["Onion Uttapam", 160]],
-  Chinese: [["Veg Fried Rice", 220], ["Hakka Noodles", 230], ["Gobi Manchurian", 210], ["Paneer Chilli", 260], ["Schezwan Fried Rice", 240]],
-  "Soft Drink": [["Water Bottle", 20, 1], ["Coke", 40], ["Sprite", 40], ["Fresh Lime Soda", 70], ["Sweet Lassi", 80], ["Buttermilk", 40]],
-};
-let catId = 0;
-let itemSort = 0;
-for (const [catName, items] of Object.entries(posMenu)) {
-  catId++;
-  out.push(`INSERT INTO menu_categories (id, name, sort) VALUES (${catId}, ${q(catName)}, ${catId * 10});`);
-  for (const [name, rupees, fav] of items) {
-    itemSort++;
-    out.push(`INSERT INTO menu_items (category_id, name, price, favourite, sort) VALUES (${catId}, ${q(name)}, ${rupees * 100}, ${fav ? 1 : 0}, ${itemSort});`);
-  }
-}
+// ---- POS: tables (demo). The real Mausam menu comes from migration 0007, so it isn't seeded here. ----
 let tableSort = 0;
 for (let n = 1; n <= 15; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Garden', 'C${n}', 6, ${++tableSort});`);
 for (let n = 1; n <= 7; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Rooftop', 'D${n}', 4, ${++tableSort});`);
