@@ -19,39 +19,7 @@ If you already have a Cloudflare account, use it. Nothing else in it is touched.
 
 **You should see:** the Cloudflare dashboard, with your account name at the top left.
 
-### Step 2. Make the publishing token
-
-The token lets the build create and update the database. Cloudflare's ready-made Workers token can't touch databases, so you add that one permission.
-
-The token has to be made under your **profile**. A token made under **Manage account → Account API tokens** doesn't work for builds yet.
-
-1. Click the **person icon** at the top right → **My Profile**.
-2. In the left menu, click **API Tokens**, then **Create Token**.
-3. Find the row **Edit Cloudflare Workers** and click **Use template** on it.
-
-Cloudflare shows one of two layouts next. Follow the one you see.
-
-**Layout A: a list of "Policies" (Zone policy, Account policy, User policy)**
-
-4. **Token name**: type `mausam-build`. The button at the bottom stays greyed out until this is filled.
-5. Click the **Account policy** row (it says "Workers KV Storage Write, Workers Scripts Write, Account Settings Read +7 more"). Look for **D1** in its list. If it isn't there, add a permission: **D1** → **Write**. Check the policy applies to your account.
-6. Click the **Zone policy** row (Workers Routes Write) and set it to **All zones** of your account, even if you don't own a domain.
-7. Leave the **User policy** as it is. Click **Continue to summary**.
-
-**Layout B: "Permissions" rows with "Account Resources" and "Zone Resources" below**
-
-4. Under **Permissions**, click **+ Add more**. In the new row, pick **Account**, then **D1**, then **Edit**.
-5. Under **Account Resources**: **Include** → your account.
-6. Under **Zone Resources**: **Include** → **All zones from an account** → your account, even if you don't own a domain.
-7. Leave everything else as it is. Click **Continue to summary**.
-
-**If Continue to summary is greyed out** and only **Cancel** works, something is still empty: the token name, or a drop-down in a policy or resource box. A half-filled permission row also greys it out; finish it or remove it.
-
-8. The summary lists what the token can do. Check that **D1** (Edit or Write) is in it, then click **Create Token**.
-
-**You should see:** a message that the token was created, with a long code. You don't need to copy it. You'll pick it by name in step 4. Leave the page.
-
-### Step 3. Connect the GitHub repo
+### Step 2. Connect the GitHub repo
 
 1. Click the **Cloudflare logo** (top left) to go back to your account.
 2. In the left menu, click **Compute (Workers)** → **Workers & Pages**. (Some dashboards show **Workers & Pages** directly.)
@@ -65,7 +33,7 @@ Cloudflare shows one of two layouts next. Follow the one you see.
 
 **You should see:** a page titled something like **Set up your application**, with a project name box and build boxes.
 
-### Step 4. Fill in the build settings
+### Step 3. Fill in the build settings
 
 Type these exactly. Copy and paste is safest.
 
@@ -80,15 +48,15 @@ Then click **Advanced settings** to open more boxes:
 
 | Box | What to put |
 | --- | --- |
-| **API token** | pick the token from step 2 (`mausam-build`, or *Edit Cloudflare Workers* if you kept the default name). Don't choose "Create new token": that one can't make the database. |
-| **Non-production branch deploy command**, or a tick box about **builds for non-production branches** | if there's a tick box, untick it. If there's only a command box, leave it; you'll turn preview builds off in step 6. |
+| **API token** | choose **Create new token**. Cloudflare makes one for the build. |
+| **Non-production branch deploy command**, or a tick box about **builds for non-production branches** | if there's a tick box, untick it. If there's only a command box, leave it; you'll turn preview builds off in step 5. |
 | **Build variables** | nothing needed |
 
 Click **Deploy** (or **Save and Deploy**).
 
 **You should see:** a build log scrolling. It takes 2 to 4 minutes. Don't close the page; it's fine if you do, though, because the build keeps going.
 
-### Step 5. Check the first build
+### Step 4. Check the first build
 
 When the build finishes, it shows **Success** with a green tick, and a web address like:
 
@@ -107,9 +75,9 @@ In the log you'll see lines like these, in this order. They're normal:
 3. `Deployed mausam-admin`.
 4. Five migrations applied, `0001_init.sql` to `0005_pos_billing.sql`, each with a ✅.
 
-**If it says Failed**, look at the last red lines of the log and find them in [If something goes wrong](#if-something-goes-wrong).
+**If it says Failed** and the last red lines mention `D1` or a permission error, the token Cloudflare made can't create the database yet. Do [Adding the database permission](#adding-the-database-permission), then come back. For any other failure, look up the last red lines of the log and find them in [If something goes wrong](#if-something-goes-wrong).
 
-### Step 6. Turn off preview builds
+### Step 5. Turn off preview builds
 
 Without this, Cloudflare also tries to build every work-in-progress branch on GitHub. Those builds fail, and they put a red mark on pull requests.
 
@@ -120,7 +88,7 @@ Without this, Cloudflare also tries to build every work-in-progress branch on Gi
 
 **You should see:** Branch control showing `main` with preview builds off.
 
-### Step 7. Add the setup code (do this before anyone opens the app)
+### Step 6. Add the setup code (do this before anyone opens the app)
 
 Until the owner account exists, anyone who finds the web address could create it. The setup code stops that.
 
@@ -134,7 +102,7 @@ Until the owner account exists, anyone who finds the web address could create it
 
 Don't add anything else here. `BACKUP_DAYS`, `PHOTO_DAYS`, `MEMO_MODEL` and `ALLOWED_ORIGIN` already come from the code, and phone reminder keys are made by the app itself.
 
-### Step 8. Memo reading (optional, can be done any time)
+### Step 7. Memo reading (optional, can be done any time)
 
 The app can read the photo of the handwritten closing memo and fill in the numbers. It uses Claude, Anthropic's AI, which costs roughly ₹2 to ₹5 per memo. Skip this if you don't want it; the rest of the app works the same.
 
@@ -144,9 +112,9 @@ The app can read the photo of the handwritten closing memo and fill in the numbe
 
 **You should see:** `ANTHROPIC_API_KEY` in the list next to `SETUP_CODE`.
 
-### Step 9. Check that everything works
+### Step 8. Check that everything works
 
-Open each of these in your browser, using your address from step 5:
+Open each of these in your browser, using your address from step 4:
 
 | Open | You should see |
 | --- | --- |
@@ -162,22 +130,22 @@ Cloudflare is done.
 
 ## Part 2: Start using the app (about 10 minutes)
 
-### Step 10. Create the owner account
+### Step 9. Create the owner account
 
-Do this straight after step 9.
+Do this straight after step 8.
 
 1. On your phone, open your address.
-2. Enter your name, your phone number, a 4-digit PIN, and the setup code from step 7.
+2. Enter your name, your phone number, a 4-digit PIN, and the setup code from step 6.
 3. Tap to create the account.
 
 **You should see:** the owner's **Today** screen.
 
-### Step 11. Add managers and staff
+### Step 10. Add managers and staff
 
 1. **Manage → App users**: add each manager with their phone number, a 4-digit PIN and their language. Tell each one their PIN.
 2. **Manage → Staff**: add your staff. Leave pay blank if you don't know it yet.
 
-### Step 12. Set up each manager's phone
+### Step 11. Set up each manager's phone
 
 On each manager's phone:
 
@@ -188,7 +156,7 @@ On each manager's phone:
 
 On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the app from the home screen and turn on reminders. This needs iOS 16.4 or newer.
 
-### Step 13. Set up the billing counter (POS)
+### Step 12. Set up the billing counter (POS)
 
 1. In the admin app, **Manage → Menu**: add categories and items with prices. Under **Bills and GST**, set your GSTIN, GST rate, and whether prices include GST.
 2. **Manage → Tables**: add your tables (for example area "Garden", first table "C1", 15 tables).
@@ -202,7 +170,7 @@ On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the ap
 
 If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
 
-### Step 14. In the first week
+### Step 13. In the first week
 
 - **The morning after launch**, check the nightly backup ran: **Storage & Databases → Workers KV → mausam-admin-files → KV Pairs** should have `backups/<today's date>.json`.
 - **If something looks wrong**, **mausam-admin → Observability → Logs** shows each request and any errors.
@@ -258,18 +226,27 @@ This replaces all data with the backup, so download today's copy first in case y
 
 | What you see | What to do |
 | --- | --- |
-| The token from step 2 isn't in the **API token** list | It was made under **Manage account → Account API tokens**. Make it again under **My Profile → API Tokens** (step 2). |
-| Build log: `The name in your wrangler.jsonc file (mausam-admin) must match the name of your Worker` | The project wasn't named exactly `mausam-admin`. Delete it (**Settings → General → Delete**) and do step 3 again. |
-| Build log mentions `D1`, `Authentication error [code: 10000]` or a permission error | The token is missing **D1 Edit**, or the build used a different token. Open **mausam-admin → Settings → Build → API token**, pick the step 2 token, save, then **Deployments → ⋯ → Retry build**. |
+| Build log near the end mentions `D1`, `Authentication error [code: 10000]` or a permission error | The build's token can't create the database. See [Adding the database permission](#adding-the-database-permission) below. |
+| Build log: `The name in your wrangler.jsonc file (mausam-admin) must match the name of your Worker` | The project wasn't named exactly `mausam-admin`. Delete it (**Settings → General → Delete**) and do step 2 again. |
 | Build log: `pnpm: command not found`, a lockfile error, or a Node version error | **Settings → Build → Variables and secrets**: add `PNPM_VERSION` = `10.28.0` and `NODE_VERSION` = `22`, then retry the build. |
 | Build log: `Could not find a wrangler config file` or `Missing entry-point` | Change **Settings → Build** to: Root directory `apps/api`, Build command `cd ../.. && pnpm install --frozen-lockfile && pnpm build`, Deploy command `pnpm release`. Then retry. |
-| Red Cloudflare mark on GitHub pull requests | Preview builds are on. Do step 6. |
+| Red Cloudflare mark on GitHub pull requests | Preview builds are on. Do step 5. |
 | `/api/health` says `"ok":false`, or login says "Something went wrong" | The tables weren't added. **Deployments → ⋯ → Retry build** adds them. |
-| The first-run screen says the setup code is wrong | It must match `SETUP_CODE` exactly, including capitals. Set it again in step 7. |
-| "Read memo" says it isn't set up | Step 8. |
-| Reminders don't arrive on a phone | Step 12 again on that phone, including the battery setting. |
+| The first-run screen says the setup code is wrong | It must match `SETUP_CODE` exactly, including capitals. Set it again in step 6. |
+| "Read memo" says it isn't set up | Step 7. |
+| Reminders don't arrive on a phone | Step 11 again on that phone, including the battery setting. |
 
 To see errors as they happen, open **mausam-admin → Observability → Logs**.
+
+### Adding the database permission
+
+Only needed if the first build failed with a D1 or permission error.
+
+1. Click the **person icon** (top right) → **My Profile** → **API Tokens**.
+2. Find the token Cloudflare made for the build. Its name mentions `mausam-admin` or "build". Click **⋯ → Edit**.
+3. Add the permission **D1** with **Edit** (newer screens call it **Write**) for your account. In the newer layout, open the **Account policy** row, add D1 there, and make sure the policy has your account picked.
+4. **Continue to summary** → **Update token**.
+5. Back in **mausam-admin → Deployments**, open the failed build and click **Retry build**.
 
 ---
 
@@ -283,7 +260,7 @@ corepack enable                                   # gives you pnpm
 pnpm install
 cd apps/api && npx wrangler login && cd ../..     # signs in to Cloudflare in the browser
 pnpm ship                                         # build, create resources if needed, deploy, add tables
-cd apps/api && npx wrangler secret put SETUP_CODE # same as step 7
+cd apps/api && npx wrangler secret put SETUP_CODE # same as step 6
 ```
 
 The first time, Wrangler may write the new database and storage IDs into `apps/api/wrangler.jsonc`. You can throw that change away, because it finds them by name either way.
