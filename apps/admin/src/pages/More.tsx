@@ -7,15 +7,14 @@ import { NotifyCard } from "../components/NotifyCard";
 export function More() {
   const { t, user, lang, setLang, signOut } = useSession();
   const owner = user!.role === "owner";
-  const staff = user!.role === "staff";
   return (
     <div className="page">
       <PageHead title={t("nav.more")} subtitle={`${user!.name} · ${t(`role.${user!.role}` as const)}`} />
       <div className="grid-2">
-        {!staff && <NavCard to="/alerts" icon="bell" title={t("nav.alerts")} />}
-        {!staff && <NavCard to="/people" icon="users" title={t("people.title")} desc={t("people.payroll_desc")} />}
-        {!staff && <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />}
-        {!staff && <NavCard to="/bills" icon="receipt" title={t("bills.title")} desc={t("bills.desc")} />}
+        <NavCard to="/alerts" icon="bell" title={t("nav.alerts")} />
+        <NavCard to="/people" icon="users" title={t("people.title")} desc={t("people.payroll_desc")} />
+        <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />
+        <NavCard to="/bills" icon="receipt" title={t("bills.title")} desc={t("bills.desc")} />
         <NavCard to="/entries/history" icon="history" title={t("entries.history")} desc={t("entries.history_desc")} />
         {owner && <NavCard to="/month" icon="calendar" title={t("month.title")} desc={t("month.desc")} />}
         {owner && <NavCard to="/manage" icon="manage" title={t("nav.manage")} desc={t("manage.users_desc")} />}

@@ -38,7 +38,8 @@ owner.post("/alerts/seen", requireRole("owner", "manager"), async (c) => {
 /* ---------- Everything below is owner-only ---------- */
 
 owner.use("/summary", requireRole("owner"));
-owner.use("/reports/*", requireRole("owner"));
+// Daily sales, cash/online and expenses are the basic reports managers see too.
+owner.use("/reports/*", requireRole("owner", "manager"));
 owner.use("/users", requireRole("owner"));
 owner.use("/users/*", requireRole("owner"));
 owner.use("/staff", requireRole("owner"));

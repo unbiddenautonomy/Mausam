@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { businessDate, changeDue, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
-import { api, ApiError, fetchConfig, syncBills } from "./api";
+import { api, ApiError, fetchConfig, fetchDay, nextToken, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import {
-  addItem, byWaiter, changeQty, hasChoices, lineTag, needsWaiter, newOrder, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, byWaiter, changeQty, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -16,6 +16,8 @@ type PrintJob =
   | { kind: "summary"; date: string; bills: Bill[] };
 
 const SYNC_EVERY_MS = 20_000;
+/** How often a screen checks for the other screens' order changes. */
+const ORDERS_EVERY_MS = 4_000;
 const CONFIG_EVERY_MS = 10 * 60_000;
 
 export function App() {
@@ -151,12 +153,32 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
+  /** A change made on this screen: changed orders get a new version time, and removed ones are closed for every screen. */
   const setOrders = (fn: (o: Order[]) => Order[]) =>
     setOrdersState((prev) => {
-      const next = fn(prev);
+      const raw = fn(prev);
+      const at = new Date().toISOString();
+      const before = new Map(prev.map((o) => [o.id, o]));
+      const next = raw.map((o) => (before.get(o.id) === o ? o : { ...o, updated_at: at }));
+      const kept = new Set(next.map((o) => o.id));
+      noteClosed(prev.filter((o) => !kept.has(o.id)).map((o) => ({ id: o.id, updated_at: at })));
       storage.setOrders(next);
       return next;
     });
+  /** Sends this screen's order changes and takes in the other screens'. */
+  const shareOrders = useCallback(async () => {
+    try {
+      const remote = await syncOrders();
+      if (!remote.length) return;
+      setOrdersState((prev) => {
+        const next = mergeRemote(prev, remote);
+        if (next !== prev) storage.setOrders(next);
+        return next;
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onLogout();
+    }
+  }, [onLogout]);
   const refreshBills = () => setBillsState(storage.bills());
 
   const loadConfig = useCallback(async () => {
@@ -182,18 +204,36 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     void loadConfig();
     void sync();
     const a = window.setInterval(() => void sync(), SYNC_EVERY_MS);
+    const d = window.setInterval(() => void shareOrders(), ORDERS_EVERY_MS);
     const b = window.setInterval(() => void loadConfig(), CONFIG_EVERY_MS);
     const c = window.setInterval(() => setNow(Date.now()), 30_000);
-    const on = () => (setOnline(true), void sync());
+    const on = () => (setOnline(true), void sync(), void shareOrders());
     const off = () => setOnline(false);
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
     return () => {
-      [a, b, c].forEach(window.clearInterval);
+      [a, b, c, d].forEach(window.clearInterval);
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
     };
-  }, [loadConfig, sync]);
+  }, [loadConfig, sync, shareOrders]);
+
+  // Share a change made here with the other screens straight away (a moment later, so quick taps go together).
+  useEffect(() => {
+    const pushed = storage.pushed();
+    if (!orders.some((o) => o.updated_at && pushed[o.id] !== o.updated_at) && !storage.closed().length) return;
+    const id = window.setTimeout(() => void shareOrders(), 400);
+    return () => window.clearTimeout(id);
+  }, [orders, shareOrders]);
+
+  // The order open here was paid or cancelled on another screen.
+  useEffect(() => {
+    if (screen === "order" && activeId && !orders.some((o) => o.id === activeId)) {
+      setActiveId(null);
+      setScreen("tables");
+      setToast(t("closed_elsewhere"));
+    }
+  }, [orders, activeId, screen, t]);
 
   useEffect(() => {
     if (!toast) return;
@@ -223,13 +263,26 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     setOrders((os) => [...os, o]);
     setActiveId(o.id);
     setScreen("order");
+    void giveToken(o.id);
   }
+  /** Every order gets the next token number. It comes from the server so two screens never share one; offline, from this screen. */
+  async function giveToken(id: string) {
+    let token: number;
+    try {
+      token = await nextToken();
+    } catch {
+      token = takeToken();
+    }
+    setOrders((os) => os.map((o) => (o.id === id && o.token == null ? { ...o, token } : o)));
+  }
+  /** An order about to print must have its token; if the server hasn't answered yet, this screen gives one. */
+  const withToken = (o: Order): Order => (o.token == null ? { ...o, token: takeToken() } : o);
   function openTable(table: Table) {
     const existing = orders.find((o) => o.table_id === table.id);
     if (existing) return (setActiveId(existing.id), setScreen("order"));
     // Ask who is serving first; with no waiters set up, go straight in.
     if (config!.waiters.length) setStarting({ table });
-    else open(newOrder("dine_in", table, takeToken()));
+    else open(newOrder("dine_in", table, null));
   }
   function newTableOrder() {
     setStarting({ table: null });
@@ -237,10 +290,10 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
   function startOrder(table: Table | null, waiter: number | null, tableName: string | null) {
     setStarting(null);
     // Every order gets a token number for the day, printed at the top of the bill.
-    open(newOrder("dine_in", table, takeToken(), { waiter, tableName }));
+    open(newOrder("dine_in", table, null, { waiter, tableName }));
   }
   function newParcel() {
-    open(newOrder("parcel", null, takeToken()));
+    open(newOrder("parcel", null, null));
   }
   function update(fn: (o: Order) => Order) {
     if (!active) return;
@@ -255,7 +308,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
   /** Gives the order its bill number (once) and returns the bill as it stands, to print or show. */
   function billNow(copy: Copy = "Original"): Bill | null {
     if (!active || !active.lines.length) return null;
-    const withNo = active.bill_no ? active : { ...active, bill_no: takeBillNo() };
+    const withNo = withToken(active.bill_no ? active : { ...active, bill_no: takeBillNo() });
     update(() => withNo);
     const bill = toBill(withNo, s, "paid", [], null);
     if (printing) setPrint({ kind: "bill", bill, copy });
@@ -264,7 +317,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
   /** Save & Print: the order is saved (everything on it counts as sent to the kitchen) and its bill prints. */
   function saveAndPrint() {
     if (!active || !active.lines.length) return;
-    const withNo = { ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) };
+    const withNo = withToken({ ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) });
     setOrders((os) => os.map((o) => (o.id === active.id ? withNo : o)));
     const bill = toBill(withNo, s, "paid", [], null);
     if (printing) {
@@ -279,10 +332,10 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
     leaveOrder();
   }
   function setType(type: Order["type"]) {
-    update((o) => ({ ...o, type, token: o.token ?? takeToken(), ...(type === "parcel" ? { table_id: null, table_name: null } : {}) }));
+    update((o) => ({ ...o, type, ...(type === "parcel" ? { table_id: null, table_name: null } : {}) }));
   }
   function finish(order: Order, status: Bill["status"], payments: Payment[], reason: string | null) {
-    const bill = toBill(order, s, status, payments, reason);
+    const bill = toBill(withToken(order), s, status, payments, reason);
     storage.setBills(pruneBills([...storage.bills(), bill]));
     refreshBills();
     setOrders((os) => os.filter((o) => o.id !== order.id));
@@ -945,7 +998,22 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
   onSync: () => void; onPrint: (date: string, b: Bill[]) => void; onOpen: (b: Bill) => void; onLogout: () => void;
 }) {
   const date = businessDate();
-  const today = bills.filter((b) => b.business_date === date);
+  // Bills from the other screens come from the server; this screen's own bills are always shown, sent or not.
+  const [shared, setShared] = useState<Bill[]>([]);
+  useEffect(() => {
+    if (!online) return;
+    let live = true;
+    const load = () => fetchDay(date).then((b) => live && setShared(b)).catch(() => {});
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
+  }, [date, online]);
+  const mine = bills.filter((b) => b.business_date === date);
+  const mineIds = new Set(mine.map((b) => b.client_id));
+  const today = [...mine, ...shared.filter((b) => !mineIds.has(b.client_id))].sort((a, b) => a.closed_at.localeCompare(b.closed_at));
   const paid = today.filter((b) => b.status === "paid");
   const sum = (list: Bill[]) => list.reduce((s, b) => s + b.total, 0);
   const mode = (m: BillPayMode) => paid.reduce((s, b) => s + b.payments.filter((p) => p.mode === m).reduce((a, p) => a + p.amount, 0), 0);
@@ -1056,16 +1124,31 @@ function ReceiptBody({ bill: b, settings, config, copy }: { t?: T; bill: Bill; s
 /* ---------------- Printing (when the receipt printer is switched on) ---------------- */
 
 function PrintArea({ t, job, settings, config, onDone }: { t: T; job: PrintJob | null; settings: Config["settings"]; config: Config; onDone: () => void }) {
+  // A new bill prints `bill_copies` times, as separate print jobs one after the other, so the printer cuts
+  // after each (the second copy goes to the kitchen). Reprints and the day summary print once.
+  const copies = job?.kind === "bill" && job.copy === "Original" ? Math.min(Math.max(settings.bill_copies ?? 2, 1), 3) : 1;
+  // onDone is a new function on every render; keep the latest in a ref so a re-render never restarts printing.
+  const done = useRef(onDone);
+  done.current = onDone;
   useEffect(() => {
     if (!job) return;
-    const after = () => onDone();
-    window.addEventListener("afterprint", after, { once: true });
-    const id = window.setTimeout(() => window.print(), 50);
+    let printed = 0;
+    let id = 0;
+    const next = () => {
+      printed++;
+      window.print();
+    };
+    const after = () => {
+      if (printed < copies) id = window.setTimeout(next, 300);
+      else done.current();
+    };
+    window.addEventListener("afterprint", after);
+    id = window.setTimeout(next, 50);
     return () => {
       window.clearTimeout(id);
       window.removeEventListener("afterprint", after);
     };
-  }, [job, onDone]);
+  }, [job, copies]);
   if (!job) return null;
   const when = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short" });
   let body: React.ReactNode = null;

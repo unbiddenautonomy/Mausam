@@ -1,4 +1,4 @@
-import { storage, type Bill, type Config } from "./store";
+import { noteToken, storage, type Bill, type Config, type RemoteOrder } from "./store";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
@@ -62,4 +62,63 @@ export async function syncBills(): Promise<{ waiting: number; rejected: number }
 function count() {
   const bills = storage.bills();
   return { waiting: bills.filter((b) => !b.synced && !b.rejected).length, rejected: bills.filter((b) => b.rejected).length };
+}
+
+/* ---------------- Several screens: tokens and running orders ---------------- */
+
+/** The next token number from the server, shared by every screen. Throws when offline or slow; the caller falls back. */
+export async function nextToken(): Promise<number> {
+  const ctl = new AbortController();
+  const id = window.setTimeout(() => ctl.abort(), 3000);
+  try {
+    const r = await api<{ token: number }>("/billing/tokens/next", { method: "POST", json: { min: storage.counter()?.token ?? 0 }, signal: ctl.signal });
+    noteToken(r.token);
+    return r.token;
+  } finally {
+    window.clearTimeout(id);
+  }
+}
+
+let syncingOrders = false;
+/**
+ * Sends this screen's changed and closed orders, and returns what changed on the server since this screen last
+ * asked (the other screens' changes). The caller merges them in with mergeRemote().
+ */
+export async function syncOrders(): Promise<RemoteOrder[]> {
+  if (syncingOrders) return [];
+  syncingOrders = true;
+  try {
+    const pushed = storage.pushed();
+    const changed = storage.orders().filter((o) => o.updated_at && pushed[o.id] !== o.updated_at).slice(0, 80);
+    const closed = storage.closed().slice(0, 20);
+    const r = await api<{ cursor: number; token_last: number; orders: RemoteOrder[] }>("/billing/orders/sync", {
+      method: "POST",
+      json: {
+        counter: storage.counter()?.code,
+        since: storage.cursor(),
+        last_token: storage.counter()?.token ?? 0,
+        orders: [
+          ...changed.map((o) => ({ id: o.id, updated_at: o.updated_at, closed: false, data: o })),
+          ...closed.map((c) => ({ id: c.id, updated_at: c.updated_at, closed: true })),
+        ],
+      },
+    });
+    noteToken(r.token_last);
+    storage.setCursor(r.cursor);
+    // The server has these now.
+    const sentClosed = new Set(closed.map((c) => `${c.id}|${c.updated_at}`));
+    storage.setClosed(storage.closed().filter((c) => !sentClosed.has(`${c.id}|${c.updated_at}`)));
+    const p = storage.pushed();
+    for (const o of changed) p[o.id] = o.updated_at!;
+    storage.setPushed(p);
+    return r.orders;
+  } finally {
+    syncingOrders = false;
+  }
+}
+
+/** Every bill of the day from all screens, as saved on the server. */
+export async function fetchDay(date: string): Promise<Bill[]> {
+  const r = await api<{ bills: Omit<Bill, "synced">[] }>(`/billing/day?date=${date}`);
+  return r.bills.map((b) => ({ ...b, synced: true }));
 }

@@ -12,7 +12,7 @@ const MEDIA = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" } as con
 const MAX_READS_PER_DAY = 6;
 
 export const memo = new Hono<AppEnv>();
-memo.use("*", requireRole("owner", "manager", "staff"));
+memo.use("*", requireRole("owner", "manager"));
 
 /** Phone reads are free, but still cap them so a stuck button can't fill the table. */
 const MAX_PHONE_SAVES_PER_DAY = 30;

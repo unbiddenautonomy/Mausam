@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { Layout } from "./components/Layout";
 import { Loading } from "./components/ui";
 import { useSession } from "./lib/session";
-import { Login } from "./pages/Login";
+import { Login, PosOnly } from "./pages/Login";
 import { Today } from "./pages/Today";
 import { EntriesHub } from "./pages/EntriesHub";
 import { Shopping } from "./pages/Shopping";
@@ -42,6 +42,8 @@ export function App() {
   const { user, ready } = useSession();
   if (!ready) return <Loading />;
   if (!user) return <BrowserRouter><Login /></BrowserRouter>;
+  // Employees only bill at the counter, in the POS; this app is for the owner and managers.
+  if (user.role === "staff") return <PosOnly />;
   const owner = user.role === "owner";
   return (
     <BrowserRouter>
@@ -55,31 +57,32 @@ export function App() {
           <Route path="entries/close" element={<CloseDay />} />
           <Route path="entries/close/:date" element={<CloseDay />} />
           <Route path="entries/history" element={<History />} />
+          <Route path="people" element={<PeopleHub />} />
+          <Route path="people/attendance" element={<Attendance />} />
+          <Route path="people/advances" element={<Advances />} />
+          <Route path="vendors" element={<VendorList />} />
+          <Route path="vendors/:id" element={<VendorDetail />} />
+          <Route path="alerts" element={<Alerts />} />
           <Route path="more" element={<More />} />
-          {/* Employees (the "staff" role) only make and review entries; managers and the owner see the rest. */}
           {(owner || user.role === "manager") && (
             <>
-              <Route path="people" element={<PeopleHub />} />
-              <Route path="people/attendance" element={<Attendance />} />
-              <Route path="people/advances" element={<Advances />} />
-              <Route path="vendors" element={<VendorList />} />
-              <Route path="vendors/:id" element={<VendorDetail />} />
-              <Route path="alerts" element={<Alerts />} />
               <Route path="bills" element={<BillsPage />} />
-            </>
-          )}
-          {owner && (
-            <>
+              {/* Managers: the basic reports always; the rest show data only while the owner shares analytics for the month. */}
               <Route path="reports" element={<ReportsHub />} />
               <Route path="reports/sales" element={<Suspense fallback={<Loading />}><SalesReport /></Suspense>} />
               <Route path="reports/expenses" element={<Suspense fallback={<Loading />}><ExpenseReport /></Suspense>} />
               <Route path="reports/payments" element={<Suspense fallback={<Loading />}><PaymentsReport /></Suspense>} />
               <Route path="reports/reporting" element={<Suspense fallback={<Loading />}><ReportingReport /></Suspense>} />
-              <Route path="people/pay" element={<Payroll />} />
-              <Route path="month" element={<MonthClose />} />
               <Route path="reports/costs" element={<Suspense fallback={<Loading />}><CostsReport /></Suspense>} />
               <Route path="reports/items" element={<Suspense fallback={<Loading />}><ItemsReport /></Suspense>} />
               <Route path="reports/prices" element={<Suspense fallback={<Loading />}><PricesReport /></Suspense>} />
+              <Route path="reports/waiters" element={<Suspense fallback={<Loading />}><WaitersReport /></Suspense>} />
+            </>
+          )}
+          {owner && (
+            <>
+              <Route path="people/pay" element={<Payroll />} />
+              <Route path="month" element={<MonthClose />} />
               <Route path="manage/audit" element={<AuditPage />} />
               <Route path="manage" element={<ManageHub />} />
               <Route path="manage/users" element={<Users />} />
@@ -90,7 +93,6 @@ export function App() {
               <Route path="manage/tables" element={<TablesPage />} />
               <Route path="manage/waiters" element={<WaitersPage />} />
               <Route path="manage/pos" element={<PosOptionsPage />} />
-              <Route path="reports/waiters" element={<Suspense fallback={<Loading />}><WaitersReport /></Suspense>} />
               <Route path="manage/import" element={<Suspense fallback={<Loading />}><PosImport /></Suspense>} />
             </>
           )}

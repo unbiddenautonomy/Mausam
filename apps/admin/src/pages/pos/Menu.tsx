@@ -16,7 +16,7 @@ export interface MenuItem {
 export interface MenuOption { name: string; price: number }
 export interface PosSettings {
   gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string;
-  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean;
+  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean; bill_copies: number;
 }
 
 /** Owner: the POS menu. Categories down the side on desktop, items as a list, one form for add and edit. */

@@ -4,6 +4,7 @@ import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { audit, bool } from "../lib/db";
 import { HttpError, isDate, optionalText, requireText } from "../lib/http";
+import { managersCanSee } from "./analytics";
 import { applyPosToCloses } from "./entries";
 
 /**
@@ -15,7 +16,7 @@ export const billing = new Hono<AppEnv>();
 
 const POS_SETTING_KEYS = [
   "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
-  "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required",
+  "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required", "pos_bill_copies",
 ] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
 
@@ -35,6 +36,8 @@ export interface PosSettings {
   commission_bp: number;
   /** A dine-in order needs a waiter before it can be paid. */
   waiter_required: boolean;
+  /** How many copies of a bill print at Save & Print (the second goes to the kitchen). Reprints print one. */
+  bill_copies: number;
 }
 
 async function loadPosSettings(db: D1Database): Promise<PosSettings> {
@@ -54,6 +57,7 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     printing: m.pos_printing === "1",
     commission_bp: Number(m.pos_commission_bp ?? 0) || 0,
     waiter_required: (m.pos_waiter_required ?? "1") === "1",
+    bill_copies: Math.min(Math.max(Number(m.pos_bill_copies ?? 2) || 2, 1), 3),
   };
 }
 
@@ -153,7 +157,7 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
   // A waiter removed from staff since the bill was made is dropped rather than refusing the bill.
   const waiterInfo = waiterId === null ? undefined : ctx.waiters.get(waiterId);
   const waiter = waiterInfo ? waiterId : null;
-  const token = b.token == null ? null : int(b.token, 1, 100000);
+  const token = b.token == null ? null : int(b.token, 1, 1e9);
   const guests = b.guests == null ? null : int(b.guests, 0, 500);
   const discount = b.discount == null ? 0 : int(b.discount, 0, 1e10);
   if (discount === null) return { error: "discount" };
@@ -311,8 +315,141 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
 billing.get("/counters/:code/last", requireRole("owner", "manager", "staff"), async (c) => {
   const code = c.req.param("code");
   if (!validCounter(code)) throw new HttpError(422, "invalid", { field: "code" });
-  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE counter = ? ORDER BY bill_no DESC LIMIT 1").bind(code).first<{ bill_no: string }>();
+  // By number, not by the counter that sent it: another screen may have taken payment for this counter's bill.
+  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE bill_no LIKE ? ORDER BY bill_no DESC LIMIT 1").bind(`${code}%`).first<{ bill_no: string }>();
   return c.json({ last_bill_no: row?.bill_no ?? null });
+});
+
+/* ---------------- Several POS screens: shared running orders and one token counter ---------------- */
+
+const ORDER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+/** The routes below are for everyone who uses the POS: the owner, managers and employees. */
+const anyPosUser = requireRole("owner", "manager", "staff");
+
+async function tokenLast(db: D1Database): Promise<number> {
+  const r = await db.prepare("SELECT value FROM settings WHERE key = 'pos_token_last'").first<{ value: string }>();
+  return Number(r?.value ?? 0) || 0;
+}
+
+/**
+ * The next token number, for any screen. Tokens keep counting and never restart. `min` is the highest token the
+ * screen has seen (it may have handed some out while offline), so the count never goes backwards.
+ */
+billing.post("/tokens/next", anyPosUser, async (c) => {
+  const b = await c.req.json<{ min?: unknown }>().catch(() => ({} as { min?: unknown }));
+  const min = int(b.min ?? 0, 0, 1e9) ?? 0;
+  const row = await c.env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES ('pos_token_last', CAST(?1 + 1 AS TEXT))
+     ON CONFLICT (key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), ?1) + 1 AS TEXT)
+     RETURNING value`,
+  ).bind(min).first<{ value: string }>();
+  return c.json({ token: Number(row?.value) });
+});
+
+interface OrderIn { id?: unknown; updated_at?: unknown; closed?: unknown; data?: unknown }
+interface OrderRow { id: string; data: string; updated_at: string; closed: number; seq: number }
+
+/**
+ * A screen sends the running orders it changed (and the ones it closed), and gets back every change since `since`.
+ * The newest change to an order wins; once any screen closes an order, it stays closed.
+ */
+billing.post("/orders/sync", anyPosUser, async (c) => {
+  const body = await c.req.json<{ counter?: unknown; since?: unknown; last_token?: unknown; orders?: unknown }>();
+  const db = c.env.DB;
+  const since = int(body.since ?? 0, 0, 1e15) ?? 0;
+  const counter = validCounter(body.counter) ? body.counter : null;
+  const list = Array.isArray(body.orders) ? (body.orders as OrderIn[]) : [];
+  if (list.length > 100) throw new HttpError(422, "invalid", { field: "orders" });
+
+  const stmts: D1PreparedStatement[] = [];
+  const ids: string[] = [];
+  let maxToken = int(body.last_token ?? 0, 0, 1e9) ?? 0;
+  for (const o of list) {
+    if (typeof o?.id !== "string" || !ORDER_ID_RE.test(o.id)) throw new HttpError(422, "invalid", { field: "id" });
+    if (typeof o.updated_at !== "string" || !ISO_RE.test(o.updated_at)) throw new HttpError(422, "invalid", { field: "updated_at" });
+    const closed = o.closed === true;
+    let data = "{}";
+    if (!closed) {
+      if (!o.data || typeof o.data !== "object" || Array.isArray(o.data)) throw new HttpError(422, "invalid", { field: "data" });
+      data = JSON.stringify(o.data);
+      if (data.length > 64_000) throw new HttpError(422, "invalid", { field: "data" });
+      const tok = int((o.data as { token?: unknown }).token ?? 0, 0, 1e9) ?? 0;
+      if (tok > maxToken) maxToken = tok;
+    }
+    ids.push(o.id);
+    stmts.push(
+      db.prepare(
+        `INSERT INTO pos_open_orders (id, data, updated_at, closed, counter, seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(seq), 0) + 1 FROM pos_open_orders))
+         ON CONFLICT (id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, closed = excluded.closed,
+           counter = excluded.counter, seq = excluded.seq, saved_at = datetime('now')
+         WHERE pos_open_orders.closed = 0 AND (excluded.closed = 1 OR excluded.updated_at > pos_open_orders.updated_at)`,
+      ).bind(o.id, data, o.updated_at, closed ? 1 : 0, counter),
+    );
+  }
+  if (stmts.length) await db.batch(stmts);
+
+  // Keep the shared token counter at least as high as any token a screen has used (e.g. while offline).
+  let last = await tokenLast(db);
+  if (maxToken > last) {
+    await db.prepare("UPDATE settings SET value = CAST(MAX(CAST(value AS INTEGER), ?) AS TEXT) WHERE key = 'pos_token_last'").bind(maxToken).run();
+    last = maxToken;
+  }
+  // Closed orders are only needed until every screen has seen them.
+  if (Math.random() < 0.02) await db.prepare("DELETE FROM pos_open_orders WHERE closed = 1 AND saved_at < datetime('now', '-3 days')").run();
+
+  // What changed since this screen last asked (a new screen gets just the open orders), plus the current
+  // state of every order it sent, in case another screen's change was newer.
+  const { results: changed } = await db
+    .prepare("SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE seq > ?1 AND (?1 > 0 OR closed = 0) ORDER BY seq LIMIT 500")
+    .bind(since)
+    .all<OrderRow>();
+  const sent = ids.length
+    ? (await db.prepare(`SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<OrderRow>()).results
+    : [];
+  const top = since === 0 && changed.length < 500
+    ? (await db.prepare("SELECT COALESCE(MAX(seq), 0) AS m FROM pos_open_orders").first<{ m: number }>())?.m ?? 0
+    : changed.at(-1)?.seq ?? since;
+  const rows = new Map<string, OrderRow>();
+  for (const r of [...changed, ...sent]) rows.set(r.id, r);
+  return c.json({
+    cursor: Math.max(since, top),
+    token_last: last,
+    orders: [...rows.values()].map((r) => ({ id: r.id, updated_at: r.updated_at, closed: r.closed === 1, data: r.closed ? null : JSON.parse(r.data) })),
+  });
+});
+
+/** Every bill of a day from all screens, for the day summary on any screen (and reprints). */
+billing.get("/day", anyPosUser, async (c) => {
+  const date = c.req.query("date") ?? businessDate();
+  if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
+  const db = c.env.DB;
+  const { results: bills } = await db
+    .prepare(
+      `SELECT id, client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
+              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at
+       FROM pos_bills WHERE business_date = ? ORDER BY closed_at`,
+    )
+    .bind(date)
+    .all<Record<string, unknown> & { id: number }>();
+  const [items, pays] = await Promise.all([
+    db.prepare(
+      `SELECT i.bill_id, i.item_id, i.name, i.category, i.qty, i.price, i.tax_rate, i.note, i.variation, i.modifier
+       FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date = ? ORDER BY i.id`,
+    ).bind(date).all<{ bill_id: number }>(),
+    db.prepare("SELECT p.bill_id, p.mode, p.amount FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date = ? ORDER BY p.id")
+      .bind(date).all<{ bill_id: number }>(),
+  ]);
+  const strip = <R extends { bill_id: number }>(r: R) => { const { bill_id: _b, ...rest } = r; return rest; };
+  return c.json({
+    date,
+    bills: bills.map(({ id, ...b }) => ({
+      ...b,
+      prices_include_tax: bool(b.prices_include_tax),
+      lines: items.results.filter((i) => i.bill_id === id).map(strip),
+      payments: pays.results.filter((p) => p.bill_id === id).map(strip),
+    })),
+  });
 });
 
 /* ---------------- For the owner and managers: looking at bills ---------------- */
@@ -352,7 +489,13 @@ billing.use("/tables/*", requireRole("owner"));
 billing.use("/tables", requireRole("owner"));
 billing.use("/settings", requireRole("owner"));
 billing.use("/waiters", requireRole("owner"));
-billing.use("/waiters/*", requireRole("owner"));
+billing.use("/waiters/*", async (c, next) => {
+  // The waiters report is part of the analytics the owner can share with managers for the month.
+  const user = c.get("user");
+  if (user.role === "manager" && c.req.method === "GET" && c.req.path.endsWith("/waiters/report") && (await managersCanSee(c.env.DB))) return next();
+  if (user.role !== "owner") throw new HttpError(403, "not_allowed");
+  return next();
+});
 
 billing.get("/menu", async (c) => {
   const db = c.env.DB;
@@ -494,6 +637,11 @@ billing.put("/settings", async (c) => {
   if (b.bill_footer !== undefined) updates.push(["pos_bill_footer", optionalText(b.bill_footer, 200) ?? ""]);
   for (const [field, key] of [["use_tables", "pos_use_tables"], ["use_gst", "pos_use_gst"], ["printing", "pos_printing"], ["waiter_required", "pos_waiter_required"]] as const) {
     if (b[field] !== undefined) updates.push([key, b[field] ? "1" : "0"]);
+  }
+  if (b.bill_copies !== undefined) {
+    const r = int(b.bill_copies, 1, 3);
+    if (r === null) throw new HttpError(422, "invalid", { field: "bill_copies" });
+    updates.push(["pos_bill_copies", String(r)]);
   }
   if (b.commission_bp !== undefined) {
     const r = int(b.commission_bp, 0, 10000);

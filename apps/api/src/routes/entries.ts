@@ -7,7 +7,7 @@ import { alertParams, notify } from "../lib/notify";
 import { HttpError, isDate, optionalPaise, optionalText, requireDate, requirePaise } from "../lib/http";
 
 export const entries = new Hono<AppEnv>();
-entries.use("*", requireRole("owner", "manager", "staff"));
+entries.use("*", requireRole("owner", "manager"));
 
 const EXPENSE_SELECT = `
   SELECT e.id, e.business_date, e.trip_id, e.category_id, c.key AS category_key, c.name_en AS category_name,

@@ -2,7 +2,7 @@ import { useSession } from "../lib/session";
 import { NavCard, PageHead } from "../components/ui";
 
 export function EntriesHub() {
-  const { t, user } = useSession();
+  const t = useSession().t;
   return (
     <div className="page">
       <PageHead title={t("nav.entries")} />
@@ -12,11 +12,11 @@ export function EntriesHub() {
         <NavCard to="/entries/close" icon="moon" title={t("entries.close")} desc={t("entries.close_desc")} />
         <NavCard to="/entries/history" icon="history" title={t("entries.history")} desc={t("entries.history_desc")} />
       </div>
-      {user?.role !== "staff" && <div className="grid-2">
+      <div className="grid-2">
         <NavCard to="/people/attendance" icon="checklist" title={t("people.attendance")} desc={t("people.attendance_desc")} />
         <NavCard to="/people/advances" icon="wallet" title={t("people.advances")} desc={t("people.advances_desc")} />
         <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />
-      </div>}
+      </div>
     </div>
   );
 }

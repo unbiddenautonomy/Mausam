@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Order } from "./store";
 
 // A tiny in-memory localStorage, so the store can run under Node.
 const mem = new Map<string, string>();
@@ -11,7 +12,7 @@ const mem = new Map<string, string>();
   length: 0,
 };
 
-const { addItem, byWaiter, changeQty, hasChoices, lineTag, needsWaiter, newOrder, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, byWaiter, changeQty, counterOf, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -129,5 +130,43 @@ describe("waiters, tables and GST options", () => {
     const bill = toBill(o, settings, "paid", [{ mode: "cash", amount: 79000 }], null);
     expect(bill.lines[0]).toMatchObject({ variation: "Half", modifier: null });
     expect(bill.total).toBe(79000);
+  });
+});
+
+describe("two screens", () => {
+  it("tokens keep counting across days and never go below one seen elsewhere", () => {
+    expect(takeToken()).toBe(1);
+    storage.setCounter({ ...storage.counter()!, tokenDate: "1999-01-01" });
+    expect(takeToken()).toBe(2);
+    noteToken(40);
+    noteToken(12);
+    expect(takeToken()).toBe(41);
+  });
+
+  it("a bill paid on another screen keeps its own counter", () => {
+    expect(counterOf("B2627-00012")).toBe("B");
+    const o = { ...addItem(newOrder("parcel", null, 5), pav, cats, settings), bill_no: "B2627-00012" };
+    const bill = toBill(o, settings, "paid", [{ mode: "cash", amount: 500 }], null);
+    expect(bill.counter).toBe("B");
+  });
+
+  it("takes in newer orders from the other screen, keeps its own newer ones, and drops closed ones", () => {
+    const mine = { ...newOrder("parcel", null, 1), id: "order-aaaa-1", updated_at: "2026-11-16T10:00:05.000Z" };
+    const other = { ...newOrder("parcel", null, 2), id: "order-bbbb-2", updated_at: "2026-11-16T10:00:00.000Z" };
+    let orders: Order[] = [mine, other];
+    // Same object back when nothing changed.
+    expect(mergeRemote(orders, [{ id: mine.id, updated_at: "2026-11-16T10:00:01.000Z", closed: false, data: { ...mine, token: 99 } }])).toBe(orders);
+    orders = mergeRemote(orders, [
+      { id: other.id, updated_at: "2026-11-16T10:00:09.000Z", closed: false, data: { ...other, discount: 1000 } },
+      { id: "order-cccc-3", updated_at: "2026-11-16T10:00:09.000Z", closed: false, data: { ...newOrder("dine_in", null, 3), id: "order-cccc-3" } },
+    ]);
+    expect(orders.map((o) => o.id)).toEqual([mine.id, other.id, "order-cccc-3"]);
+    expect(orders[1].discount).toBe(1000);
+    orders = mergeRemote(orders, [{ id: mine.id, updated_at: "2026-11-16T10:00:10.000Z", closed: true, data: null }]);
+    expect(orders.map((o) => o.id)).toEqual([other.id, "order-cccc-3"]);
+    // Closed here but not yet sent: an older open copy from the server doesn't bring it back.
+    noteClosed([{ id: other.id, updated_at: "2026-11-16T10:00:11.000Z" }]);
+    orders = mergeRemote(orders.filter((o) => o.id !== other.id), [{ id: other.id, updated_at: "2026-11-16T10:00:09.000Z", closed: false, data: other }]);
+    expect(orders.map((o) => o.id)).toEqual(["order-cccc-3"]);
   });
 });

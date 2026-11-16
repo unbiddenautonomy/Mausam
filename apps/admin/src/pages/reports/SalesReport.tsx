@@ -27,6 +27,7 @@ export function SalesReport() {
         <>
           <SalesBody days={days} />
           <Weekdays days={days} />
+          <BusyHours days={days} />
         </>
       )}
     </ReportFrame>
@@ -127,6 +128,51 @@ function Weekdays({ days }: { days: Range }) {
             <thead><tr><th></th><th className="r">{avgName}</th><th className="r">{t("reports.days_counted")}</th></tr></thead>
             <tbody>
               {rows.map((r) => <tr key={r.weekday}><td>{r.label}</td><td className="r">{formatINR(r.avg)}</td><td className="r">{r.n}</td></tr>)}
+            </tbody>
+          </table>
+        </details>
+      </div>
+    </section>
+  );
+}
+
+/** Busy hours: average sales in each hour the restaurant is open, from POS bills. */
+function BusyHours({ days }: { days: Range }) {
+  const t = useSession().t;
+  const res = useApi<{ days_with_bills: number; hours: { hour: number; avg_sales: number; avg_bills: number }[] }>(`/analytics/hours?days=${days}`);
+  if (!res.data || res.data.days_with_bills < 1 || !res.data.hours.length) return null;
+  const label = (h: number) => `${((h + 11) % 12) + 1}${h < 12 ? "am" : "pm"}`;
+  // Every hour from the first to the last with sales, so quiet hours show as gaps rather than disappearing.
+  const first = res.data.hours[0].hour;
+  const last = res.data.hours.at(-1)!.hour;
+  const byHour = new Map(res.data.hours.map((h) => [h.hour, h]));
+  const rows = Array.from({ length: last - first + 1 }, (_, i) => {
+    const h = first + i;
+    return { label: label(h), avg_sales: byHour.get(h)?.avg_sales ?? 0, avg_bills: byHour.get(h)?.avg_bills ?? 0 };
+  });
+  const avgName = t("reports.hour_avg");
+  return (
+    <section className="form">
+      <h2>{t("reports.busy_hours")}</h2>
+      <p className="muted small" style={{ margin: 0 }}>{t("reports.busy_hours_desc", { n: res.data.days_with_bills })}</p>
+      <div className="card chart-card">
+        <div className="chart" style={{ height: 220 }}>
+          <ResponsiveContainer>
+            <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="15%">
+              <CartesianGrid vertical={false} stroke="var(--series-grid)" />
+              <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis tickFormatter={formatINRShort} tick={axisTick} axisLine={false} tickLine={false} width={56} />
+              <Tooltip content={<ChartTooltip labelFmt={(l) => l} />} cursor={{ fill: "var(--surface-2)" }} />
+              <Bar dataKey="avg_sales" name={avgName} fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={32} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <details className="table-view">
+          <summary>Table</summary>
+          <table className="data">
+            <thead><tr><th></th><th className="r">{avgName}</th><th className="r">{t("reports.hour_bills")}</th></tr></thead>
+            <tbody>
+              {rows.map((r) => <tr key={r.label}><td>{r.label}</td><td className="r">{formatINR(r.avg_sales)}</td><td className="r">{r.avg_bills}</td></tr>)}
             </tbody>
           </table>
         </details>
