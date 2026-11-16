@@ -36,6 +36,8 @@ export async function getVapid(env: Env, origin?: string): Promise<VapidKeys> {
 }
 
 export type Audience = "owner" | "manager" | "all";
+/** A role group, or particular people (by user id). An empty list means every manager. */
+export type Recipients = Audience | { users: number[] };
 
 interface Target {
   user_id: number;
@@ -58,7 +60,7 @@ async function unseenFor(db: D1Database, role: string): Promise<number> {
  */
 export async function notify(
   env: Env,
-  audience: Audience,
+  audience: Recipients,
   text: { title: MessageKey; body: MessageKey; params?: Record<string, string | number> },
   opts: { url?: string; dedupeKey?: string } = {},
 ): Promise<number> {
@@ -68,14 +70,23 @@ export async function notify(
     if (!res.meta.changes) return 0;
   }
   const vapid = await getVapid(env);
-  const roles = audience === "owner" ? ["owner"] : audience === "manager" ? ["manager"] : ["owner", "manager"];
-  const { results } = await db
-    .prepare(
-      `SELECT s.user_id, u.language, u.role, s.endpoint, s.p256dh, s.auth FROM push_subscriptions s
-       JOIN users u ON u.id = s.user_id WHERE u.active = 1 AND u.role IN (${roles.map(() => "?").join(",")})`,
-    )
-    .bind(...roles)
-    .all<Target & { role: string }>();
+  const people = typeof audience === "object" && audience.users.length ? audience.users : null;
+  const group = typeof audience === "object" ? "manager" : audience;
+  const roles = group === "owner" ? ["owner"] : group === "manager" ? ["manager"] : ["owner", "manager"];
+  const { results } = await (people
+    ? db
+        .prepare(
+          `SELECT s.user_id, u.language, u.role, s.endpoint, s.p256dh, s.auth FROM push_subscriptions s
+           JOIN users u ON u.id = s.user_id WHERE u.active = 1 AND u.id IN (${people.map(() => "?").join(",")})`,
+        )
+        .bind(...people)
+    : db
+        .prepare(
+          `SELECT s.user_id, u.language, u.role, s.endpoint, s.p256dh, s.auth FROM push_subscriptions s
+           JOIN users u ON u.id = s.user_id WHERE u.active = 1 AND u.role IN (${roles.map(() => "?").join(",")})`,
+        )
+        .bind(...roles)
+  ).all<Target & { role: string }>();
   const badges = new Map<string, number>();
   let sent = 0;
   await Promise.all(

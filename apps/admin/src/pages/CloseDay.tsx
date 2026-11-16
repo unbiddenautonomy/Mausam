@@ -230,9 +230,15 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
           {complete && formulaOk && <div className="check good"><Icon name="check" /><span className="t">{t("close.formula_ok")}</span></div>}
           {flags.length > 0 && <FlagList flags={flags} />}
           {data.expenses_entered > 0 && <p className="small muted">{t("close.entered", { amount: formatINR(data.expenses_entered) })}</p>}
+          {complete && !formulaOk && (
+            <div className="check warn" role="status">
+              <Icon name="alert" />
+              <span className="t">{t("close.unbalanced_note", { amount: formatINR(Math.abs(flags.find((x) => x.code === "formula_mismatch")?.diff ?? 0)) })}</span>
+            </div>
+          )}
           <ErrorNote error={error} />
           <button className="btn primary block" disabled={!complete || busy} onClick={submit}>
-            <Icon name="check" /> {data.close ? t("close.update") : t("close.submit")}
+            <Icon name="check" /> {complete && !formulaOk ? t("close.submit_anyway") : data.close ? t("close.update") : t("close.submit")}
           </button>
         </div>
       </aside>

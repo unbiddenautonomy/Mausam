@@ -1,6 +1,6 @@
 # Mausam
 
-Admin app for Mausam Restaurant: managers log morning shopping, expenses and the nightly closing on their phones, and the owner sees the numbers, flags and reports. A touchscreen POS will be added to this same repo later.
+Admin app for Mausam Restaurant: managers log morning shopping, expenses and the nightly closing on their phones, and the owner sees the numbers, flags and reports. The touchscreen POS for the billing counter is in the same repo.
 
 ## What's in the repo
 
@@ -56,11 +56,12 @@ GitHub also checks every pull request (types, tests, build). The UI rules and ne
 - Reading the handwritten memo with AI and comparing it with what was typed (up to 6 reads a day).
 - Attendance (present, half day, absent, leave) and advances paid from the counter.
 - Vendors: agreed rates, expected deliveries, deliveries, payments and what we owe. A delivery charged above the agreed rate raises an alert.
-- Phone reminders (Web Push) and alerts:
+- Phone reminders (Web Push) and alerts. Each reminder goes to the people picked in **Manage → Settings** (for example, shopping to the head manager and closing to the assistant manager); with nobody picked, every manager gets it.
   - a closing missing by 10 am;
   - shopping still open by 1 pm;
   - attendance not marked for yesterday;
   - a closing that was flagged;
+  - a closing memo that doesn't add up (it's still accepted, and the owner and every manager get an alert);
   - an expense category far above its usual amount;
   - a vendor rate above the deal.
 - English, Hindi and Kannada.
@@ -82,14 +83,24 @@ GitHub also checks every pull request (types, tests, build). The UI rules and ne
 - Manage pages: users, staff (pay can be left blank), categories, and reminder times.
 
 **Touchscreen POS (`apps/pos`):**
-- Tables by area with Free / Ordering / Bill printed colours, and parcels with token numbers.
-- Big item buttons by category, favourites and search; + / − and kitchen notes on each line.
-- Kitchen tickets (only what's new), bills with GST (CGST/SGST), discounts, cancel with a reason.
-- Payment by cash (with change to give back), UPI, card, or split.
+- Made for a touch PC or tablet, landscape or upright. Everything is a big button: waiters, table numbers and cash use on-screen number pads, so no keyboard is needed.
+- **No table map by default:** "New table order" asks who is serving and (optionally) the table number, and open orders are listed by order number. The table map (areas, Free / Ordering / Bill given colours) can be switched on in **Manage → POS options**.
+- **A waiter on every table order:** the waiter is picked from big buttons with their ID, and payment isn't taken until one is picked (parcels don't need one).
+- **No printer needed:** the kitchen order and the bill are shown on screen, and after payment the screen shows "Paid" with the change to give back. If a receipt printer is added later, switch it on in POS options and the same buttons print.
+- **No GST by default:** GST, CGST/SGST and the GSTIN stay in the code and come back when switched on.
+- Big item buttons by category, favourites and search; + / − and kitchen notes on each line. Parcels get token numbers.
+- Discounts, cancel with a reason, and payment by cash (with change to give back), UPI, card, or split.
 - Works with no internet: bills are numbered on the counter (e.g. `A2627-00042`) and sent when online. Re-sending is harmless.
 - Synced bills fill in the day's POS figures, so the closing check and the sales and best-seller reports use them directly.
-- Admin pages: **Manage → Menu** (items, prices, GST), **Manage → Tables**, and **POS bills** (every bill by day).
+- Day summary with sales by payment mode and by waiter.
+- Admin pages: **Manage → Menu**, **Manage → Waiters** (ID and commission %), **Manage → POS options**, **Manage → Tables**, **POS bills**, and **Reports → Waiters**.
 - See [docs/pos-plan.md](docs/pos-plan.md) for the design and what's next.
+
+**Waiter commission:**
+- Each waiter gets a % of the paid bills they served, before GST. There's one default % for everyone, and a waiter can have their own.
+- The rate is saved on each bill when it reaches the server, so changing a % later doesn't change past months.
+- **Reports → Waiters** shows each waiter's bills, sales and commission for a month, with a day-by-day breakdown, or for a single day.
+- Month-end pay adds the commission on top of the waiter's pay (and works for waiters with no fixed pay).
 
 ## Optional features
 
@@ -105,4 +116,4 @@ GitHub also checks every pull request (types, tests, build). The UI rules and ne
 
 ## Database changes
 
-New tables and columns are in `apps/api/migrations` (`0001` to `0005`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer. Online, each publish applies them automatically (`pnpm release`).
+New tables and columns are in `apps/api/migrations` (`0001` to `0006`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer. Online, each publish applies them automatically (`pnpm release`).

@@ -9,7 +9,7 @@ The POS replaces the current Windows billing software on the counter touchscreen
 | Table dashboard by area (Garden C1–C15, Rooftop D1–D7) with Vacant / Running / Billed colours, amount and time open | Same: tables by area, three clear states (Free, Ordering, Bill printed), amount and minutes open |
 | Billing screen: category tabs on the left, item tiles with price, order list on the right | Same layout, bigger tiles, search box, favourites row |
 | Dine-in / Parcel, token number, waiter | Same; parcels get an automatic token number |
-| Hold, Bill, Save & Print, Cancel, Cash | Print KOT, Print bill, Take payment (Cash / UPI / Card / split), Cancel with a reason |
+| Hold, Bill, Save & Print, Cancel, Cash | Send to kitchen, Show bill, Take payment (Cash / UPI / Card / split), Cancel with a reason |
 | Item master (name, category, price, CGST/SGST, HSN) | **Menu** page in the admin app (owner): categories, items, prices, GST, favourites, hide/show |
 | Masters: waiter, table, category, payment mode | Waiters come from **Staff**; tables from a new **Tables** page in the admin app |
 | Reports: sales summary, item sales, waiter commission | Already in the admin app (sales, best sellers). POS bills feed them automatically |
@@ -35,13 +35,19 @@ The POS replaces the current Windows billing software on the counter touchscreen
 
 ## GST
 
-GST settings are in the admin app, in one place. They cover the GSTIN, the rate (default 5%: CGST 2.5% + SGST 2.5%), and whether menu prices **include** GST.
+GST is **off** (Manage → POS options). With it off, bills have no tax lines. The GST code stays: switching it on brings back the GSTIN, the rate (default 5%: CGST 2.5% + SGST 2.5%), and whether menu prices include GST.
 
-The default is that prices include GST, so the amount a guest pays is the menu price and the bill shows the tax part. If the GSTIN is blank, no tax lines are printed. *Please confirm how your current bills show GST.*
+## Tables
+
+The table map is **off**. "New table order" asks who is serving and, optionally, the table number on a number pad; open orders are listed by order number (oldest first). Switching the table map on in POS options brings back areas and table cards from Manage → Tables.
+
+## Waiters
+
+A waiter is a staff member marked as a waiter in **Manage → Waiters**, with a short ID (shown on the POS) and an optional commission %. One default % applies to waiters without their own. A dine-in order asks for the waiter when it's opened, and payment isn't taken without one (this can be switched off). The commission is a % of each paid bill before GST, saved on the bill when it syncs. It shows in **Reports → Waiters** (by day and month) and is added to month-end pay.
 
 ## Printing
 
-Bills and KOTs print through the browser on an 80 mm receipt layout. For printing without a dialog, the counter PC runs Chrome in kiosk mode with `--kiosk-printing`, using the thermal printer as the default printer. Setup steps are in the setup guide.
+There is **no printer**: the counter is a touch PC or tablet. "Send to kitchen" marks the new items as sent and shows them in big text to read out; "Show bill" shows the bill on screen for the guest; after payment the screen shows "Paid" and the change to give back. If a receipt printer is added later, switching it on in POS options makes the same buttons print through the browser on an 80 mm layout (Chrome kiosk mode with `--kiosk-printing` avoids the print dialog).
 
 ## Screens (landscape, 1366×768 and up, big touch targets)
 
@@ -58,7 +64,6 @@ Languages: English, Hindi, Kannada (interface). Menu item names are shown as ent
 - Several billing counters sharing open tables live (v1 assumes one counter; bills from several counters still sync fine).
 - Kitchen display screen, online orders (Swiggy/Zomato), inventory deduction, loyalty.
 - Moving or merging tables, and splitting one table into two bills.
-- Waiter commission report (waiter is recorded on every bill, so this is easy to add).
 
 ## Build order
 

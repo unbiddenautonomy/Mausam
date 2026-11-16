@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { addDays, DEFAULT_LANG, businessDate, DEFAULT_SETTINGS, type CloseFlag } from "@mausam/shared";
+import { addDays, DEFAULT_LANG, businessDate, DEFAULT_SETTINGS, parseUserList, type CloseFlag } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { hashPin, normalisePhone, requireRole, validPin } from "../lib/auth";
 import { audit, bool, loadSettings } from "../lib/db";
@@ -284,7 +284,10 @@ owner.put("/settings", async (c) => {
   for (const [key, def] of Object.entries(DEFAULT_SETTINGS)) {
     if (b[key] === undefined) continue;
     let value: string;
-    if (typeof def === "number") {
+    if (key === "remind_shopping_to" || key === "remind_close_to") {
+      const raw = Array.isArray(b[key]) ? (b[key] as unknown[]).join(",") : String(b[key] ?? "");
+      value = parseUserList(raw).join(",");
+    } else if (typeof def === "number") {
       const n = Number(b[key]);
       if (!Number.isFinite(n) || n < 0) throw new HttpError(422, "invalid", { field: key });
       value = String(Math.round(n));

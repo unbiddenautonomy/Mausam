@@ -190,7 +190,7 @@ export function Loading() {
 export function ErrorNote({ error }: { error: unknown }) {
   const t = useT();
   if (!error) return null;
-  const known: Record<string, MessageKey> = { day_locked: "common.locked", month_closed: "error.month_closed" };
+  const known: Record<string, MessageKey> = { day_locked: "common.locked", month_closed: "error.month_closed", waiter_code_taken: "error.waiter_code_taken" };
   const msg = error instanceof ApiError && known[error.code] ? t(known[error.code]) : t("common.error");
   return <div className="check bad"><Icon name="alert" /><span className="t">{msg}</span></div>;
 }

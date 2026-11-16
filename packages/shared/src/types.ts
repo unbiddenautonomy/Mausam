@@ -105,6 +105,7 @@ export interface CloseFlag {
 export type AlertType =
   | "close_missing"
   | "close_flag"
+  | "close_unbalanced"
   | "shopping_open"
   | "expense_high"
   | "month_close";
@@ -127,6 +128,10 @@ export interface Settings {
   lock_hour: number; // 11
   cash_tolerance: Paise; // 20000 = ₹200
   shopping_tolerance: Paise; // 5000 = ₹50
+  /** Who gets the shopping reminder: comma-separated user ids. Empty = every manager. */
+  remind_shopping_to: string;
+  /** Who gets the closing reminder: comma-separated user ids. Empty = every manager. */
+  remind_close_to: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -137,7 +142,14 @@ export const DEFAULT_SETTINGS: Settings = {
   lock_hour: 11,
   cash_tolerance: 20_000,
   shopping_tolerance: 5_000,
+  remind_shopping_to: "",
+  remind_close_to: "",
 };
+
+/** "3,5" → [3, 5]. Anything that isn't a positive whole number is dropped. */
+export function parseUserList(v: string | null | undefined): number[] {
+  return [...new Set(String(v ?? "").split(",").map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n > 0))];
+}
 
 export interface TodayStatus {
   business_date: string;
