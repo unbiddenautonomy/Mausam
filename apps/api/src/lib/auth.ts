@@ -3,7 +3,11 @@ import type { Role } from "@mausam/shared";
 import type { AppEnv, AuthUser } from "../env";
 import { HttpError } from "./http";
 
-const ITERATIONS = 100_000;
+// PIN hashing cost. A 4-digit PIN is protected by the account lock and login rate limit, not by hashing cost,
+// so this is kept light enough for the free Workers plan's 10 ms CPU limit per request (100,000 took ~15 ms).
+// New hashes are stored as "<iterations>$<hex>"; older plain-hex hashes were made with 100,000.
+const ITERATIONS = 20_000;
+const LEGACY_ITERATIONS = 100_000;
 const SESSION_DAYS = 60;
 
 function toHex(buf: ArrayBuffer | Uint8Array): string {
@@ -20,19 +24,27 @@ export function randomHex(bytes: number): string {
   return toHex(crypto.getRandomValues(new Uint8Array(bytes)));
 }
 
-export async function hashPin(pin: string, saltHex?: string): Promise<{ hash: string; salt: string }> {
-  const salt = saltHex ?? randomHex(16);
+async function derive(pin: string, saltHex: string, iterations: number): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: fromHex(salt), iterations: ITERATIONS },
+    { name: "PBKDF2", hash: "SHA-256", salt: fromHex(saltHex), iterations },
     key,
     256,
   );
-  return { hash: toHex(bits), salt };
+  return toHex(bits);
 }
 
-export async function verifyPin(pin: string, hash: string, salt: string): Promise<boolean> {
-  const { hash: candidate } = await hashPin(pin, salt);
+export async function hashPin(pin: string, saltHex?: string): Promise<{ hash: string; salt: string }> {
+  const salt = saltHex ?? randomHex(16);
+  return { hash: `${ITERATIONS}$${await derive(pin, salt, ITERATIONS)}`, salt };
+}
+
+export async function verifyPin(pin: string, stored: string, salt: string): Promise<boolean> {
+  const sep = stored.indexOf("$");
+  const iterations = sep === -1 ? LEGACY_ITERATIONS : Number(stored.slice(0, sep));
+  const hash = sep === -1 ? stored : stored.slice(sep + 1);
+  if (!Number.isInteger(iterations) || iterations < 1000 || iterations > LEGACY_ITERATIONS) return false;
+  const candidate = await derive(pin, salt, iterations);
   if (candidate.length !== hash.length) return false;
   let diff = 0;
   for (let i = 0; i < hash.length; i++) diff |= candidate.charCodeAt(i) ^ hash.charCodeAt(i);
