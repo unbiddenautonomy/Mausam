@@ -2,7 +2,7 @@
 import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
 
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
-export interface Item { id: number; category_id: number; name: string; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
+export interface Item { id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
 export interface Table { id: number; area: string; name: string; seats: number; sort: number }
 export interface Waiter { id: number; name: string; name_local: string | null; waiter_code?: string | null }
 export interface PosSettings {

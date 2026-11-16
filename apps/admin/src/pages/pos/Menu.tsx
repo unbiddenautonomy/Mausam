@@ -8,7 +8,7 @@ import { ErrorNote, Field, Loading, MoneyInput, PageHead, Segmented, useToast } 
 
 export interface MenuCategory { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number; active: number }
 export interface MenuItem {
-  id: number; category_id: number; name: string; short_name: string | null; price: number; tax_rate: number | null;
+  id: number; category_id: number; name: string; name_hi: string | null; name_kn: string | null; short_name: string | null; price: number; tax_rate: number | null;
   hsn: string | null; veg: number; favourite: number; sort: number; active: number;
 }
 export interface PosSettings {
@@ -31,7 +31,7 @@ export function MenuPage() {
   const items = useMemo(() => {
     const all = res.data?.items ?? [];
     const q = query.trim().toLowerCase();
-    return q ? all.filter((i) => i.name.toLowerCase().includes(q)) : all.filter((i) => i.category_id === current);
+    return q ? all.filter((i) => [i.name, i.name_hi, i.name_kn].some((n) => (n ?? "").toLowerCase().includes(q))) : all.filter((i) => i.category_id === current);
   }, [res.data, current, query]);
 
   async function addCategory() {
@@ -80,7 +80,7 @@ export function MenuPage() {
                 <span className={`veg-dot ${i.veg ? "veg" : "nonveg"}`} aria-label={i.veg ? t("menu.veg") : t("menu.nonveg")} />
                 <span className="grow">
                   <strong>{i.name}{i.favourite ? " ★" : ""}</strong>
-                  <span className="muted small">{[i.short_name, i.tax_rate !== null && useGst ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
+                  <span className="muted small">{[i.name_hi, i.name_kn, i.short_name, i.tax_rate !== null && useGst ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
                 </span>
                 <span className="amount">{formatINR(i.price)}</span>
                 <Icon name="chevron" />
@@ -114,6 +114,8 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
   const toast = useToast();
   const [f, setF] = useState({
     name: initial?.name ?? "",
+    name_hi: initial?.name_hi ?? "",
+    name_kn: initial?.name_kn ?? "",
     short_name: initial?.short_name ?? "",
     category_id: initial?.category_id ?? defaultCategory ?? 0,
     price: initial ? String(initial.price / 100) : "",
@@ -129,7 +131,7 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
   async function save() {
     setError(null);
     const json = {
-      name: f.name, short_name: f.short_name || null, category_id: Number(f.category_id), price,
+      name: f.name, name_hi: f.name_hi || null, name_kn: f.name_kn || null, short_name: f.short_name || null, category_id: Number(f.category_id), price,
       tax_rate: f.tax === "" ? null : Math.round(Number(f.tax) * 100), veg: f.veg, favourite: f.favourite, active: f.active,
     };
     try {
@@ -146,6 +148,10 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
     <div className="card form">
       <h2>{initial ? initial.name : t("menu.add_item")}</h2>
       <Field label={t("menu.item_name")} htmlFor="m-name"><input id="m-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus={!initial} /></Field>
+      <div className="grid-2">
+        <Field label={`${t("cat.name_hi")} (${t("common.optional")})`} htmlFor="m-hi"><input id="m-hi" className="input" lang="hi" value={f.name_hi} onChange={(e) => setF({ ...f, name_hi: e.target.value })} /></Field>
+        <Field label={`${t("cat.name_kn")} (${t("common.optional")})`} htmlFor="m-kn"><input id="m-kn" className="input" lang="kn" value={f.name_kn} onChange={(e) => setF({ ...f, name_kn: e.target.value })} /></Field>
+      </div>
       <div className="grid-2">
         <Field label={t("menu.price")} htmlFor="m-price"><MoneyInput id="m-price" value={f.price} onChange={(v) => setF({ ...f, price: v })} /></Field>
         <Field label={t("menu.category")} htmlFor="m-cat">

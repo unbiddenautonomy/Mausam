@@ -480,6 +480,9 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
   const pending = unsent(order).reduce((n, l) => n + l.qty, 0);
   const listRef = useRef<HTMLDivElement>(null);
   const catName = (c: Config["categories"][number]) => (lang === "hi" && c.name_hi) || (lang === "kn" && c.name_kn) || c.name;
+  // Item names follow the counter's language when the owner has filled them in; bills and the kitchen keep the English name.
+  const localName = (i: Item | undefined) => (i && ((lang === "hi" && i.name_hi) || (lang === "kn" && i.name_kn))) || null;
+  const itemById = useMemo(() => new Map(config.items.map((i) => [i.id, i])), [config.items]);
   const missingWaiter = needsWaiter(order, config);
   const where = order.type === "parcel"
     ? `${t("parcel")} · ${t("token", { n: order.token ?? "" })}`
@@ -487,7 +490,7 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (q) return config.items.filter((i) => i.name.toLowerCase().includes(q) || (i.short_name ?? "").toLowerCase().includes(q));
+    if (q) return config.items.filter((i) => [i.name, i.short_name, i.name_hi, i.name_kn].some((n) => (n ?? "").toLowerCase().includes(q)));
     return cat === "fav" ? favourites : config.items.filter((i) => i.category_id === cat);
   }, [query, cat, config.items, favourites]);
 
@@ -521,7 +524,7 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
             return (
               <button key={i.id} className={`item${inOrder ? " in" : ""}`} onClick={() => add(i)}>
                 <span className={`veg ${i.veg ? "v" : "nv"}`} />
-                <span className="iname">{i.short_name || i.name}</span>
+                <span className="iname">{localName(i) || i.short_name || i.name}</span>
                 <span className="price num">{formatINR(i.price)}</span>
                 {inOrder > 0 && <span className="badge">{inOrder}</span>}
               </button>
@@ -553,7 +556,7 @@ function OrderScreen({ t, lang, config, order, update, onBack, onKot, onBill, on
           {order.lines.map((l) => (
             <div key={l.key} className={`line${l.sent >= l.qty ? " sent" : ""}`}>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
-                <span>{l.name}</span>
+                <span>{(l.item_id !== null && localName(itemById.get(l.item_id))) || l.name}</span>
                 {l.note && <span className="note">✎ {l.note}</span>}
                 <span className="muted small num">{formatINR(l.price)}{l.sent > 0 ? ` · ${t("kot_sent")} ${l.sent}` : ""}</span>
               </div>

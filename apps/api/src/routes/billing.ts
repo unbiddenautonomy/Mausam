@@ -67,7 +67,7 @@ billing.get("/config", async (c) => {
   const db = c.env.DB;
   const [cats, items, tables, waiters, settings] = await Promise.all([
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
-    db.prepare("SELECT id, category_id, name, short_name, price, tax_rate, veg, favourite, sort FROM menu_items WHERE active = 1 ORDER BY sort, name").all(),
+    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort FROM menu_items WHERE active = 1 ORDER BY sort, name").all(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
     db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
@@ -370,6 +370,8 @@ function itemFields(b: Record<string, unknown>) {
   return {
     category_id: category,
     name: requireText(b.name, "name", 120),
+    name_hi: optionalText(b.name_hi, 120),
+    name_kn: optionalText(b.name_kn, 120),
     short_name: optionalText(b.short_name, 40),
     price,
     tax_rate: rate,
@@ -384,8 +386,8 @@ function itemFields(b: Record<string, unknown>) {
 billing.post("/menu/items", async (c) => {
   const f = itemFields(await c.req.json());
   const res = await c.env.DB.prepare(
-    "INSERT INTO menu_items (category_id, name, short_name, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(f.category_id, f.name, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
+    "INSERT INTO menu_items (category_id, name, name_hi, name_kn, short_name, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
   const id = Number(res.meta.last_row_id);
   await audit(c.env.DB, "menu_items", id, "create", null, f, c.get("user").id);
   return c.json({ id }, 201);
@@ -397,9 +399,9 @@ billing.patch("/menu/items/:id", async (c) => {
   if (!before) throw new HttpError(404, "not_found");
   const f = itemFields({ ...before, ...(await c.req.json<Record<string, unknown>>()) });
   await c.env.DB.prepare(
-    `UPDATE menu_items SET category_id = ?, name = ?, short_name = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
+    `UPDATE menu_items SET category_id = ?, name = ?, name_hi = ?, name_kn = ?, short_name = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
        updated_at = datetime('now') WHERE id = ?`,
-  ).bind(f.category_id, f.name, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
   await audit(c.env.DB, "menu_items", id, "update", before, f, c.get("user").id);
   return c.json({ ok: true });
 });
