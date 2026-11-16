@@ -49,11 +49,5 @@ export function Icon({ name, className }: { name: IconName; className?: string }
 }
 
 export function Logo() {
-  return (
-    <svg className="logo" viewBox="0 0 512 512" aria-hidden="true">
-      <rect width="512" height="512" rx="112" fill="#14532d" />
-      <circle cx="256" cy="214" r="86" fill="#f5c542" />
-      <path d="M128 360c40-34 88-34 128 0s88 34 128 0" stroke="#fff" strokeWidth="28" fill="none" strokeLinecap="round" />
-    </svg>
-  );
+  return <img className="logo" src="/icon.svg" alt="" width={32} height={32} />;
 }
