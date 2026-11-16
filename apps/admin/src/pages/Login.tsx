@@ -14,14 +14,16 @@ export function Login() {
   const [pin2, setPin2] = useState("");
   const [code, setCode] = useState("");
   const [codeRequired, setCodeRequired] = useState(false);
+  const [codeMissing, setCodeMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ needs_setup: boolean; code_required?: boolean }>("/auth/setup")
+    api<{ needs_setup: boolean; code_required?: boolean; code_missing?: boolean }>("/auth/setup")
       .then((r) => {
         setNeedsSetup(r.needs_setup);
         setCodeRequired(!!r.code_required);
+        setCodeMissing(!!r.code_missing);
       })
       .catch(() => setNeedsSetup(false));
   }, []);
@@ -42,6 +44,7 @@ export function Login() {
         code === "wrong_login" ? t("login.wrong")
         : code === "too_many_tries" ? t("login.too_many")
         : code === "wrong_setup_code" ? t("setup.wrong_code")
+        : code === "setup_code_missing" ? t("setup.code_missing")
         : t("common.error"),
       );
     } finally {
@@ -80,8 +83,9 @@ export function Login() {
               <input id="setup-code" className="input" required autoComplete="off" autoCapitalize="off" value={code} onChange={(e) => setCode(e.target.value)} />
             </Field>
           )}
+          {needsSetup && codeMissing && !error && <div className="check bad" role="alert"><span className="t">{t("setup.code_missing")}</span></div>}
           {error && <div className="check bad" role="alert"><span className="t">{error}</span></div>}
-          <button className="btn primary block" disabled={busy || needsSetup === null}>
+          <button className="btn primary block" disabled={busy || needsSetup === null || (!!needsSetup && codeMissing)}>
             {needsSetup ? t("setup.submit") : t("login.submit")}
           </button>
         </div>

@@ -90,7 +90,7 @@ Without this, Cloudflare also tries to build every work-in-progress branch on Gi
 
 ### Step 6. Add the setup code (do this before anyone opens the app)
 
-Until the owner account exists, anyone who finds the web address could create it. The setup code stops that.
+Until the owner account exists, anyone who finds the web address could create it. The setup code stops that. The app won't let anyone create the owner account online until this secret exists.
 
 1. Still in **mausam-admin → Settings**, find **Variables and Secrets** and click **+ Add**.
 2. **Type**: choose **Secret**, not Text.
@@ -232,6 +232,7 @@ This replaces all data with the backup, so download today's copy first in case y
 | Build log: `Could not find a wrangler config file` or `Missing entry-point` | Change **Settings → Build** to: Root directory `apps/api`, Build command `cd ../.. && pnpm install --frozen-lockfile && pnpm build`, Deploy command `pnpm release`. Then retry. |
 | Red Cloudflare mark on GitHub pull requests | Preview builds are on. Do step 5. |
 | `/api/health` says `"ok":false`, or login says "Something went wrong" | The tables weren't added. **Deployments → ⋯ → Retry build** adds them. |
+| The first-run screen says to add a SETUP_CODE first | Do step 6, wait a minute, and reload the page. |
 | The first-run screen says the setup code is wrong | It must match `SETUP_CODE` exactly, including capitals. Set it again in step 6. |
 | "Read memo" says it isn't set up | Step 7. |
 | Reminders don't arrive on a phone | Step 11 again on that phone, including the battery setting. |
