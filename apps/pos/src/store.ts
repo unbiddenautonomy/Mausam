@@ -1,5 +1,5 @@
 // Everything the counter keeps on the device, so billing carries on with no internet and survives a reload.
-import { billNumber, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
+import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
 
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
 export interface Item { id: number; category_id: number; name: string; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
@@ -68,7 +68,7 @@ export const storage = {
   setToken: (t: string | null) => write(K.token, t),
   user: () => read<{ id: number; name: string; role: string } | null>(K.user, null),
   setUser: (u: { id: number; name: string; role: string } | null) => write(K.user, u),
-  lang: () => read<Lang>(K.lang, "en"),
+  lang: () => read<Lang>(K.lang, DEFAULT_LANG),
   setLang: (l: Lang) => write(K.lang, l),
   config: () => read<Config | null>(K.config, null),
   setConfig: (c: Config) => write(K.config, c),

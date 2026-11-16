@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import { createSession, hashPin, normalisePhone, requireAuth, validPin, verifyPin } from "../lib/auth";
 import { HttpError, requireText } from "../lib/http";
+import { DEFAULT_LANG } from "@mausam/shared";
 
 const MAX_FAILS = 5;
 const LOCK_MINUTES = 15;
@@ -49,7 +50,7 @@ auth.post("/setup", async (c) => {
   const phone = normalisePhone(body.phone);
   if (!phone) throw new HttpError(422, "invalid", { field: "phone" });
   if (!validPin(body.pin)) throw new HttpError(422, "invalid", { field: "pin" });
-  const language = LANGS.includes(String(body.language)) ? String(body.language) : "en";
+  const language = LANGS.includes(String(body.language)) ? String(body.language) : DEFAULT_LANG;
   const { hash, salt } = await hashPin(body.pin);
   const res = await c.env.DB.prepare(
     "INSERT INTO users (name, phone, role, pin_hash, pin_salt, language) VALUES (?, ?, 'owner', ?, ?, ?)",

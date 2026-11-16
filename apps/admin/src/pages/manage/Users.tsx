@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LANGUAGES, type Lang, type Role } from "@mausam/shared";
+import { DEFAULT_LANG, LANGUAGES, type Lang, type Role } from "@mausam/shared";
 import { api, ApiError } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
@@ -67,7 +67,7 @@ export function Users() {
 
 function AddUser({ onDone }: { onDone: () => void }) {
   const t = useSession().t;
-  const [f, setF] = useState({ name: "", phone: "", pin: "", role: "manager" as Role, language: "en" as Lang });
+  const [f, setF] = useState({ name: "", phone: "", pin: "", role: "manager" as Role, language: DEFAULT_LANG as Lang });
   const [error, setError] = useState<unknown>(null);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   async function save() {

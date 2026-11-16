@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { translate, type Lang, type MessageKey, type User } from "@mausam/shared";
+import { DEFAULT_LANG, translate, type Lang, type MessageKey, type User } from "@mausam/shared";
 import { api, flushQueue, getToken, setToken, setUnauthorisedHandler } from "./api";
 
 type T = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -24,7 +24,7 @@ function storedLang(): Lang {
   } catch {
     /* ignore */
   }
-  return "en";
+  return DEFAULT_LANG;
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
