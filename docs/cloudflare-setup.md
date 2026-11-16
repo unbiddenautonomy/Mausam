@@ -104,7 +104,7 @@ Don't add anything else here. `BACKUP_DAYS`, `PHOTO_DAYS`, `MEMO_MODEL` and `ALL
 
 ### Step 7. Memo reading (optional, can be done any time)
 
-The app can read the photo of the handwritten closing memo and fill in the numbers. It uses Claude, Anthropic's AI, which costs roughly ₹2 to ₹5 per memo. Skip this if you don't want it; the rest of the app works the same.
+The app reads the photo of the handwritten closing memo and suggests the numbers, with nothing to set up: the manager's phone reads it with free OCR. That's free but often misreads handwriting. This step switches memo reading to Claude, Anthropic's AI, which reads handwriting much better and costs roughly ₹2 to ₹5 per memo. Skip it if you don't want it; the free reader keeps working.
 
 1. At https://console.anthropic.com, make an account and add a little credit under **Billing**.
 2. Under **API keys**, click **Create key** and copy it.
@@ -234,7 +234,7 @@ This replaces all data with the backup, so download today's copy first in case y
 | `/api/health` says `"ok":false`, or login says "Something went wrong" | The tables weren't added. **Deployments → ⋯ → Retry build** adds them. |
 | The first-run screen says to add a SETUP_CODE first | Do step 6, wait a minute, and reload the page. |
 | The first-run screen says the setup code is wrong | It must match `SETUP_CODE` exactly, including capitals. Set it again in step 6. |
-| "Read memo" says it isn't set up | Step 7. |
+| The free memo reader gets numbers wrong | Expected with handwriting. Retake the photo flat and in good light, check each number, or add Claude in step 7. |
 | Reminders don't arrive on a phone | Step 11 again on that phone, including the battery setting. |
 
 To see errors as they happen, open **mausam-admin → Observability → Logs**.
