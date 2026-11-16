@@ -36,7 +36,7 @@ Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
 
 Cloudflare connects to this GitHub repo and publishes the app every time code is pushed to `main`, so no particular computer is needed. Set it up once from a browser by following [docs/cloudflare-setup.md](docs/cloudflare-setup.md). Database changes in `apps/api/migrations` are applied automatically as part of each publish.
 
-The steps in order, with checks, are in [docs/go-live-checklist.md](docs/go-live-checklist.md). GitHub also checks every pull request (types, tests, build). The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
+GitHub also checks every pull request (types, tests, build). The UI rules and next improvements are in [docs/ui-plan.md](docs/ui-plan.md).
 
 ## How the money works
 
