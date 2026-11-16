@@ -1,184 +1,267 @@
 # Putting Mausam online with Cloudflare
 
-> Doing this for the first time? [go-live-checklist.md](go-live-checklist.md) puts these steps in order with a tick box for each.
+This is the whole setup, start to finish, in one list. Do the steps in order. After each step, **You should see** tells you what's on screen when it worked. If it doesn't match, look in [If something goes wrong](#if-something-goes-wrong) at the end.
 
-Mausam runs as one **Cloudflare Worker** called `mausam-admin`. You don't create the Worker by hand: you connect Cloudflare to the GitHub repo once, and Cloudflare builds and publishes the app itself, now and every time new code reaches the `main` branch. The same build also creates everything the app stores data in:
+Everything happens in a web browser. A laptop is easier than a phone for the Cloudflare part. Plan about 30 minutes. It's free, and no card is needed.
 
-| What | Cloudflare product | Name it gets | Created by |
-| --- | --- | --- | --- |
-| The app, its API and the POS | Worker | `mausam-admin` | the first build |
-| All the restaurant's data | D1 database | `mausam` | the first build |
-| Tables inside the database | D1 migrations (`apps/api/migrations`) | — | every build |
-| Photos and nightly backups | Workers KV namespace | `mausam-admin-files` | the first build |
-| Login and API speed limits | Rate limiting | — | the first build |
-| Overdue checks and backups | Cron trigger, every 15 minutes | — | the first build |
+**How it works, in one paragraph.** Mausam runs on Cloudflare as one "Worker" called `mausam-admin`. You don't build it by hand. You connect Cloudflare to the `mausam` repo on GitHub, and Cloudflare builds the app and publishes it. That first build also creates the database (`mausam`), the storage for photos and backups (`mausam-admin-files`), and all the tables. There are no IDs to copy anywhere. Every later change merged into `main` on GitHub is published the same way, automatically.
 
-So there are **no database IDs to copy** into any file. `apps/api/wrangler.jsonc` leaves them out on purpose, and Wrangler (Cloudflare's deploy tool) creates the resources by name the first time and finds them by name after that.
+---
 
-Everything below is done in a web browser. You don't need to install anything. A laptop screen is easier for the Cloudflare dashboard, but a phone works. Plan about 30 minutes the first time. It's free: no card is needed.
+## Part 1: Cloudflare (about 20 minutes)
 
-**Who does what.** Every step in sections 1 to 7 needs your own Cloudflare, GitHub or Anthropic account, so only you can do them. The code side is finished and tested.
+### Step 1. Make a Cloudflare account
 
-## 1. What you need
+1. Go to https://dash.cloudflare.com/sign-up and sign up with your email.
+2. Open the email Cloudflare sends and click the link to confirm it.
 
-- A Cloudflare account. Sign up free at https://dash.cloudflare.com/sign-up and confirm your email. An account you already use for other things is fine, because everything here is new and named "mausam".
-- The GitHub account that owns the `mausam` repo (`unbiddenautonomy`).
-- Optional: an Anthropic account, only if you want the app to read photos of the handwritten closing memo.
+If you already have a Cloudflare account, use it. Nothing else in it is touched.
 
-## 2. Make a publishing token (5 minutes)
+**You should see:** the Cloudflare dashboard, with your account name at the top left.
 
-The build needs permission to create the database and update it. Cloudflare's ready-made Workers token doesn't include the database, so you add that one line.
+### Step 2. Connect the GitHub repo
 
-1. Log in at https://dash.cloudflare.com.
-2. Click your profile icon (top right) → **Profile** → **API Tokens** → **Create Token**. (If your dashboard shows **Manage account → Account API tokens** in the left menu instead, that works the same.)
-3. Find **Edit Cloudflare Workers** and click **Use template**.
-4. Under **Permissions**, click **+ Add more**, and in the three new boxes pick **Account** → **D1** → **Edit**.
-5. Under **Account Resources**, choose **Include** → your account.
-6. Under **Zone Resources**, choose **Include** → **All zones from an account** → your account. (This box must be filled even if you don't own a domain yet.)
-7. Click **Continue to summary** → **Create Token**.
+1. Click the **Cloudflare logo** (top left) to go back to your account.
+2. In the left menu, click **Compute (Workers)** → **Workers & Pages**. (Some dashboards show **Workers & Pages** directly.)
+3. Click **Create application** (or **Create**).
+4. Click **Import a repository**, or **Continue with GitHub** if that's what you see.
+5. If GitHub isn't connected yet, click **Connect GitHub**. A GitHub page opens:
+   - Choose the account `unbiddenautonomy`.
+   - Choose **Only select repositories**, pick `mausam`, and click **Install & Authorize** (or **Save**).
+   - You're sent back to Cloudflare.
+6. Click `mausam` in the list of repos, then **Next** (or **Begin setup**).
 
-You don't need to copy the token. You'll pick it by name from a list in the next step. If you ever do copy it, keep it secret like a password.
+**You should see:** a page titled something like **Set up your application**, with a project name box and build boxes.
 
-## 3. Create the Worker from GitHub (10 minutes)
+### Step 3. Fill in the build settings
 
-1. In the left menu, click **Compute (Workers)** → **Workers & Pages** (on some dashboards it's just **Workers & Pages**), then **Create application** (or **Create**).
-2. Choose **Import a repository** (on some screens: **Continue with GitHub**).
-3. Click **Connect GitHub**. A GitHub page opens: allow the **Cloudflare Workers and Pages** app to access the `mausam` repo ("Only select repositories" is fine). You're sent back.
-4. Pick the `mausam` repo and fill in these fields exactly:
+Type these exactly. Copy and paste is safest.
 
-| Field | Value |
+| Box | What to put |
 | --- | --- |
-| Project name | `mausam-admin` (must be exactly this) |
-| Production branch | `main` |
-| Build command | `pnpm install --frozen-lockfile && pnpm build` |
-| Deploy command | `pnpm release` |
-| Root directory / Path | leave empty (or `/`) |
+| **Project name** | `mausam-admin` |
+| **Build command** | `pnpm install --frozen-lockfile && pnpm build` |
+| **Deploy command** | `pnpm release` |
+| **Root directory** (or **Path**) | leave it as it is (empty or `/`) |
 
-5. Open **Advanced settings** and set:
+Then click **Advanced settings** to open more boxes:
 
-| Field | Value |
+| Box | What to put |
 | --- | --- |
-| API token | the token from step 2 |
-| Builds for non-production branches | **off** (untick). The app is only published from `main`; GitHub already checks every pull request. |
-| Build variables | add `NODE_VERSION` = `22` and `PNPM_VERSION` = `10.28.0` |
+| **API token** | choose **Create new token**. Cloudflare makes one for the build. |
+| **Non-production branch deploy command**, or a tick box about **builds for non-production branches** | if there's a tick box, untick it. If there's only a command box, leave it; you'll turn preview builds off in step 5. |
+| **Build variables** | nothing needed |
 
-6. Click **Create and deploy** (or **Deploy**).
+Click **Deploy** (or **Save and Deploy**).
 
-The first build takes 2 to 4 minutes. In the log you'll see it create the `mausam` database, the `mausam-admin-files` storage, publish the Worker, then apply 5 migrations (the tables). A line saying the first migration attempt failed is normal on the very first build: the database doesn't exist yet at that moment, so it's created by the deploy and the tables are added straight after.
+**You should see:** a build log scrolling. It takes 2 to 4 minutes. Don't close the page; it's fine if you do, though, because the build keeps going.
 
-When it says **Success**, the page shows your web address, like `https://mausam-admin.<your-subdomain>.workers.dev`. Cloudflare may ask you to choose the `<your-subdomain>` part the first time; any name is fine.
+### Step 4. Check the first build
 
-**If the build fails**, see [If something goes wrong](#if-something-goes-wrong). The fix for almost every first-build failure is picking the token from step 2 under **mausam-admin → Settings → Build → API token**, then **Retry build** from the **Deployments** tab.
+When the build finishes, it shows **Success** with a green tick, and a web address like:
 
-## 4. Lock the first login (2 minutes, do this before opening the app)
+```
+https://mausam-admin.<something>.workers.dev
+```
 
-Until the owner account exists, anyone who opens the web address could create it. A setup code stops that.
+Write this address down. It's the app's address from now on.
 
-1. Open **Workers & Pages → mausam-admin → Settings → Variables and Secrets** → **Add**.
-2. **Type**: **Secret** (not Text). **Variable name**: `SETUP_CODE`. **Value**: a code only you know. Click **Deploy** (or **Save and deploy**).
+If Cloudflare asks you to pick a **workers.dev subdomain** first, type any short name (for example `mausam`). That becomes the `<something>` part.
 
-The first-run screen will ask for this code. Once the owner exists it's never used again. Secrets stay in place when new code is published, so you only do this once.
+In the log you'll see lines like these, in this order. They're normal:
 
-## 5. Turn on memo reading (optional)
+1. A first `migrations apply` attempt that says the database doesn't exist. This is expected on the very first build only.
+2. `Creating new D1 Database "mausam"` and `Creating new KV Namespace "mausam-admin-files"`.
+3. `Deployed mausam-admin`.
+4. Five migrations applied, `0001_init.sql` to `0005_pos_billing.sql`, each with a ✅.
 
-The app can read the handwritten closing memo photo and fill in the numbers. It uses Claude, Anthropic's AI, which charges per use (roughly ₹2 to ₹5 per memo, at most 6 reads per day's memo).
+**If it says Failed** and the last red lines mention `D1` or a permission error, the token Cloudflare made can't create the database yet. Do [Adding the database permission](#adding-the-database-permission), then come back. For any other failure, look up the last red lines of the log and find them in [If something goes wrong](#if-something-goes-wrong).
 
-1. At https://console.anthropic.com, make an account, add a little credit, and create an API key under **API keys**.
-2. In Cloudflare: **mausam-admin → Settings → Variables and Secrets → Add**, **Type** **Secret**, **Variable name** `ANTHROPIC_API_KEY`, paste the key, **Deploy**.
+### Step 5. Turn off preview builds
 
-Without it, everything else works and the "Read memo" button says it isn't set up.
+Without this, Cloudflare also tries to build every work-in-progress branch on GitHub. Those builds fail, and they put a red mark on pull requests.
 
-Nothing else needs setting. The other settings (`BACKUP_DAYS`, `PHOTO_DAYS`, `MEMO_MODEL`, `ALLOWED_ORIGIN`) come from `apps/api/wrangler.jsonc` and are applied by each build. Don't add them in the dashboard, because the next build would overwrite them. Phone reminder keys are made by the app itself.
+1. Open **Workers & Pages** → click **mausam-admin** → **Settings** tab.
+2. Find the **Build** section, then **Branch control**.
+3. Check **Production branch** is `main`.
+4. Untick **Enable Preview Builds** (it may be called **Builds for non-production branches**). Click **Save**.
 
-## 6. Check it works (3 minutes)
+**You should see:** Branch control showing `main` with preview builds off.
 
-1. Open `https://<your address>/api/health`. It should show `{"ok":true,"migrations":5}`. The number grows as future updates add tables.
-2. Open `https://<your address>/`. You should see the first-run screen asking for the setup code.
-3. Open `https://<your address>/pos/`. You should see the POS login.
-4. In Cloudflare, **Storage & Databases → D1** should list `mausam`, and **Storage & Databases → KV** should list `mausam-admin-files`.
-5. **mausam-admin → Settings → Trigger events** (or **Triggers**) should show the cron `*/15 * * * *`.
+### Step 6. Add the setup code (do this before anyone opens the app)
 
-## 7. First login and phones
+Until the owner account exists, anyone who finds the web address could create it. The setup code stops that. The app won't let anyone create the owner account online until this secret exists.
 
-1. On your phone, open the web address and create the owner account: your name, phone number, a 4-digit PIN, and the setup code.
-2. **Manage → App users**: add each manager with their phone number, a PIN and their language.
-3. **Manage → Staff**: add your staff. Leave pay blank if you don't know it yet.
-4. On each manager's phone:
-   - Open the address in Chrome, then **⋮ menu → Add to Home screen**.
-   - **More → Turn on reminders**, allow notifications, and tap **Send a test**.
-   - On Xiaomi, Oppo, Vivo and Realme phones also set **Settings → Battery → Chrome → No restrictions**, or reminders arrive late.
-   - On iPhone use Safari: **Share → Add to Home Screen** (needs iOS 16.4 or newer).
+1. Still in **mausam-admin → Settings**, find **Variables and Secrets** and click **+ Add**.
+2. **Type**: choose **Secret**, not Text.
+3. **Variable name**: `SETUP_CODE`
+4. **Value**: a code only you know, for example 6 to 10 letters and numbers. Save it in your phone's notes or password manager.
+5. Click **Deploy** (or **Save and deploy**).
 
-## 8. Set up the billing counter (POS)
+**You should see:** `SETUP_CODE` in the list, with its value hidden. Secrets stay when new code is published, so this is one-time.
 
-The POS is your address plus `/pos/`.
+Don't add anything else here. `BACKUP_DAYS`, `PHOTO_DAYS`, `MEMO_MODEL` and `ALLOWED_ORIGIN` already come from the code, and phone reminder keys are made by the app itself.
 
-1. In the admin app, **Manage → Menu**: add categories and items with prices. Set GST under **Bills and GST** (GSTIN, rate, and whether prices include GST).
+### Step 7. Memo reading (optional, can be done any time)
+
+The app can read the photo of the handwritten closing memo and fill in the numbers. It uses Claude, Anthropic's AI, which costs roughly ₹2 to ₹5 per memo. Skip this if you don't want it; the rest of the app works the same.
+
+1. At https://console.anthropic.com, make an account and add a little credit under **Billing**.
+2. Under **API keys**, click **Create key** and copy it.
+3. In Cloudflare, **mausam-admin → Settings → Variables and Secrets → + Add**. **Type** **Secret**, **Variable name** `ANTHROPIC_API_KEY`, paste the key as the value, click **Deploy**.
+
+**You should see:** `ANTHROPIC_API_KEY` in the list next to `SETUP_CODE`.
+
+### Step 8. Check that everything works
+
+Open each of these in your browser, using your address from step 4:
+
+| Open | You should see |
+| --- | --- |
+| `https://<your address>/api/health` | `{"ok":true,"migrations":5}` |
+| `https://<your address>/` | the Mausam first-run screen, asking for your name, phone, PIN and setup code |
+| `https://<your address>/pos/` | the POS login screen |
+
+In the Cloudflare dashboard you can also see what was created. Under **Storage & Databases → D1 SQL Database** there's `mausam`, and under **Storage & Databases → Workers KV** there's `mausam-admin-files`.
+
+Cloudflare is done.
+
+---
+
+## Part 2: Start using the app (about 10 minutes)
+
+### Step 9. Create the owner account
+
+Do this straight after step 8.
+
+1. On your phone, open your address.
+2. Enter your name, your phone number, a 4-digit PIN, and the setup code from step 6.
+3. Tap to create the account.
+
+**You should see:** the owner's **Today** screen.
+
+### Step 10. Add managers and staff
+
+1. **Manage → App users**: add each manager with their phone number, a 4-digit PIN and their language. Tell each one their PIN.
+2. **Manage → Staff**: add your staff. Leave pay blank if you don't know it yet.
+
+### Step 11. Set up each manager's phone
+
+On each manager's phone:
+
+1. Open your address in **Chrome** and log in with their phone number and PIN.
+2. Tap **⋮** (top right) → **Add to Home screen**.
+3. In the app, open **More → Turn on reminders** and allow notifications. Tap **Send a test**; a notification should appear.
+4. On Xiaomi, Oppo, Vivo and Realme phones, also open the phone's **Settings → Battery → Chrome → No restrictions**, or reminders arrive late.
+
+On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the app from the home screen and turn on reminders. This needs iOS 16.4 or newer.
+
+### Step 12. Set up the billing counter (POS)
+
+1. In the admin app, **Manage → Menu**: add categories and items with prices. Under **Bills and GST**, set your GSTIN, GST rate, and whether prices include GST.
 2. **Manage → Tables**: add your tables (for example area "Garden", first table "C1", 15 tables).
-3. **Manage → App users**: add a user for the counter with the **staff** role. A cashier can bill but can't see reports or change settings.
-4. On the counter PC, open `/pos/` in Chrome, log in as that user, and pick the counter letter (**A** for the first counter).
-5. **Printing without a dialog:** make the receipt printer the Windows default printer, then make a Chrome shortcut whose target ends with:
+3. **Manage → App users**: add a user for the counter with the **staff** role. A cashier can bill, but can't see reports or change settings.
+4. On the counter PC, open `https://<your address>/pos/` in Chrome, log in as that user, and pick counter **A**.
+5. To print without a pop-up each time: make the receipt printer the Windows default printer. Then right-click the desktop → **New → Shortcut**, and use this as the location:
    ```
-   --kiosk --kiosk-printing https://<your address>/pos/
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --kiosk-printing https://<your address>/pos/
    ```
-   Bills and kitchen tickets then print straight away on 80 mm paper. Alt+F4 leaves kiosk mode.
-6. If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
+   Open the POS from that shortcut. Bills and kitchen tickets print straight away on 80 mm paper. Press Alt+F4 to leave.
 
-## 9. Your own domain (optional)
+If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
 
-The `.workers.dev` address works permanently, so this is only if you want a nicer one like `admin.mausam.in`.
+### Step 13. In the first week
 
-1. Buy the domain (from Cloudflare under **Domain Registration**, or anywhere else).
-2. If you bought it elsewhere, add it to Cloudflare (**Add a domain**, Free plan) and change the nameservers at your registrar to the two Cloudflare shows. This can take a few hours to go live.
-3. **Workers & Pages → mausam-admin → Settings → Domains & Routes → Add → Custom domain**, enter `admin.mausam.in`. Cloudflare sets up the address and its certificate itself.
+- **The morning after launch**, check the nightly backup ran: **Storage & Databases → Workers KV → mausam-admin-files → KV Pairs** should have `backups/<today's date>.json`.
+- **If something looks wrong**, **mausam-admin → Observability → Logs** shows each request and any errors.
+- Ask a native Hindi speaker and a native Kannada speaker to click through the app for 15 minutes each. The translations are first drafts.
 
-**Do this before the restaurant starts using the app, if you can.** Each address is a separate site to phones and browsers. After a switch, everyone logs in again, managers turn reminders on again and re-add the home-screen icon, and the counter PC opens the new `/pos/` address. Before switching the counter, check **Day summary** on the old address shows nothing unsent.
+---
 
-## 10. Updates
+## Later
 
-Nothing to do. When code is merged to `main`, Cloudflare builds and publishes it within a few minutes and applies any new tables on the way. Watch it under **mausam-admin → Deployments**. If an update breaks something, pick the previous version there and choose **Rollback**. (A rollback doesn't undo database changes; ask before rolling back an update that added tables.)
+### Updates
 
-## Things to know
+Nothing to do. When a change is merged into `main` on GitHub, Cloudflare builds and publishes it within a few minutes, and adds any new tables on the way. You can watch it under **mausam-admin → Deployments**.
 
-- **Free plan limits.** Workers, D1 and KV free allowances cover one restaurant comfortably. The one tight limit is 10 ms of computer time per request; PIN checking was tuned to fit it. If you ever see "Worker exceeded CPU time limit" (error 1102) in the logs, the $5/month Workers Paid plan removes it. Current limits: https://developers.cloudflare.com/workers/platform/pricing/
-- **Backups, two layers:**
-  - D1 Time Travel keeps 7 days of history on the free plan (30 on paid). Restore from **D1 → mausam → Time Travel**.
-  - Every day after 4 am India time, the Worker writes a full copy as `backups/YYYY-MM-DD.json` in the `mausam-admin-files` KV storage and keeps 35 days. Login sessions aren't included, so after a restore everyone logs in again.
-- **Restoring a nightly backup** (needs a computer with the code, see the last section):
-  ```bash
-  cd apps/api
-  npx wrangler kv key get --binding FILES --remote backups/2026-11-14.json > backup.json
-  node scripts/restore-backup.mjs backup.json > restore.sql
-  npx wrangler d1 execute mausam --remote --file restore.sql
-  ```
-  This replaces all data with the backup. Download today's backup first, so you can undo.
-- **Login protection:** 5 wrong PINs lock that account for 15 minutes, and one internet address can try at most 10 logins a minute.
-- **Photos** are private and shown only to logged-in users. They live in Workers KV (free up to 1 GB, about a year of bill photos) and are deleted after 400 days so it never fills.
-- **Demo data** is only for a developer's computer and never reaches the live database.
+If an update breaks something, open **Deployments**, find the version before it, and choose **Rollback**. A rollback doesn't undo database changes, so ask first if that update added tables.
+
+### Your own domain (optional)
+
+The `.workers.dev` address works permanently. A domain is only if you want a nicer address like `admin.mausam.in`.
+
+1. Buy the domain. The easiest place is Cloudflare itself: **Domain Registration → Register Domains**. If you buy it somewhere else, add it under **Add a domain** (Free plan) and change the nameservers at the seller to the two Cloudflare shows. That can take a few hours.
+2. **mausam-admin → Settings → Domains & Routes → + Add → Custom domain**, type `admin.mausam.in`, and click **Add domain**. Cloudflare sets up the address and its certificate itself.
+
+**If you can, do this before the restaurant starts using the app.** To phones and browsers, a new address is a new site. After a switch, everyone logs in again, managers turn reminders on again and re-add the home-screen icon, and the counter PC uses the new `/pos/` address. Before switching the counter, check **Day summary** on the old address shows nothing unsent.
+
+### Backups
+
+There are two layers:
+
+- **D1 Time Travel** keeps 7 days of history on the free plan (30 days on the paid plan). Restore from **Storage & Databases → D1 → mausam → Time Travel**.
+- **A nightly copy.** Every day after 4 am India time, the app saves the whole database as `backups/YYYY-MM-DD.json` in `mausam-admin-files` and keeps 35 days. Login sessions aren't included, so after a restore everyone logs in again.
+
+Restoring a nightly copy needs a computer with the code (see the last section):
+
+```bash
+cd apps/api
+npx wrangler kv key get --binding FILES --remote backups/2026-11-14.json > backup.json
+node scripts/restore-backup.mjs backup.json > restore.sql
+npx wrangler d1 execute mausam --remote --file restore.sql
+```
+
+This replaces all data with the backup, so download today's copy first in case you want to undo.
+
+### Good to know
+
+- **Cost.** The free plan covers one restaurant. Its one tight limit is 10 ms of computer time per request, and the app is tuned to fit it. If the logs ever show "exceeded CPU time limit" (error 1102), Cloudflare's $5/month Workers Paid plan removes it. Current limits: https://developers.cloudflare.com/workers/platform/pricing/
+- **Login protection.** 5 wrong PINs lock that account for 15 minutes, and one internet connection can try at most 10 logins a minute.
+- **Photos** are private and only shown to logged-in users. They're deleted after 400 days so the free 1 GB never fills, which is about a year of bill photos.
+- **Demo data** is only for a developer's computer. It never reaches the live database.
+
+---
 
 ## If something goes wrong
 
-| Problem | Fix |
+| What you see | What to do |
 | --- | --- |
-| Build: "name in your Wrangler file must match the Worker" | The project must be called exactly `mausam-admin`. Delete it and import again with that name. |
-| Build: D1, "Authentication error" or permissions error | Step 2 token needs **D1 · Edit**. Pick it under **Settings → Build → API token**, then **Retry build**. |
-| Build: `pnpm: not found`, lockfile or Node version error | Check the build variables from step 3: `NODE_VERSION` = `22`, `PNPM_VERSION` = `10.28.0` (**Settings → Build → Variables**). |
-| Red Cloudflare check on every pull request in GitHub | Builds for non-production branches is on. Turn it off under **Settings → Build → Branch control**. |
-| `/api/health` says `"ok":false`, or login says "Something went wrong" | The tables are missing. **Retry build** on the latest deployment; it applies them. |
-| First-run screen says the setup code is wrong | It must match the `SETUP_CODE` secret exactly. Set it again under **Settings → Variables and Secrets**. |
-| You want to see errors as they happen | **mausam-admin → Observability → Logs**. |
+| Build log near the end mentions `D1`, `Authentication error [code: 10000]` or a permission error | The build's token can't create the database. See [Adding the database permission](#adding-the-database-permission) below. |
+| Build log: `The name in your wrangler.jsonc file (mausam-admin) must match the name of your Worker` | The project wasn't named exactly `mausam-admin`. Delete it (**Settings → General → Delete**) and do step 2 again. |
+| Build log: `pnpm: command not found`, a lockfile error, or a Node version error | **Settings → Build → Variables and secrets**: add `PNPM_VERSION` = `10.28.0` and `NODE_VERSION` = `22`, then retry the build. |
+| Build log: `Could not find a wrangler config file` or `Missing entry-point` | Change **Settings → Build** to: Root directory `apps/api`, Build command `cd ../.. && pnpm install --frozen-lockfile && pnpm build`, Deploy command `pnpm release`. Then retry. |
+| Red Cloudflare mark on GitHub pull requests | Preview builds are on. Do step 5. |
+| `/api/health` says `"ok":false`, or login says "Something went wrong" | The tables weren't added. **Deployments → ⋯ → Retry build** adds them. |
+| The first-run screen says to add a SETUP_CODE first | Do step 6, wait a minute, and reload the page. |
+| The first-run screen says the setup code is wrong | It must match `SETUP_CODE` exactly, including capitals. Set it again in step 6. |
+| "Read memo" says it isn't set up | Step 7. |
+| Reminders don't arrive on a phone | Step 11 again on that phone, including the battery setting. |
 
-## Publishing from a computer instead (optional, for a developer)
+To see errors as they happen, open **mausam-admin → Observability → Logs**.
 
-This does exactly what the automatic build does. It needs Node.js 22 or newer and Git.
+### Adding the database permission
+
+Only needed if the first build failed with a D1 or permission error.
+
+1. Click the **person icon** (top right) → **My Profile** → **API Tokens**.
+2. Find the token Cloudflare made for the build. Its name mentions `mausam-admin` or "build". Click **⋯ → Edit**.
+3. Add the permission **D1** with **Edit** (newer screens call it **Write**) for your account. In the newer layout, open the **Account policy** row, add D1 there, and make sure the policy has your account picked.
+4. **Continue to summary** → **Update token**.
+5. Back in **mausam-admin → Deployments**, open the failed build and click **Retry build**.
+
+---
+
+## For a developer: publishing from a computer (optional)
+
+This does the same thing as the automatic build. It needs Node.js 22 or newer and Git.
 
 ```bash
 git clone https://github.com/unbiddenautonomy/mausam && cd mausam
-corepack enable            # gives you pnpm
+corepack enable                                   # gives you pnpm
 pnpm install
-cd apps/api && npx wrangler login && cd ../..   # opens the browser to sign in to Cloudflare
-pnpm ship                  # build, create resources if needed, deploy, apply migrations
-cd apps/api && npx wrangler secret put SETUP_CODE   # instead of step 4
+cd apps/api && npx wrangler login && cd ../..     # signs in to Cloudflare in the browser
+pnpm ship                                         # build, create resources if needed, deploy, add tables
+cd apps/api && npx wrangler secret put SETUP_CODE # same as step 6
 ```
 
-On the first run from a computer, Wrangler may write the new database and storage IDs into `apps/api/wrangler.jsonc`. You can discard that change: it finds them by name either way.
+The first time, Wrangler may write the new database and storage IDs into `apps/api/wrangler.jsonc`. You can throw that change away, because it finds them by name either way.
