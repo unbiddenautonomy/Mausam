@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { addDays, businessDate, DEFAULT_SETTINGS, type CloseFlag } from "@mausam/shared";
+import { addDays, DEFAULT_LANG, businessDate, DEFAULT_SETTINGS, type CloseFlag } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { hashPin, normalisePhone, requireRole, validPin } from "../lib/auth";
 import { audit, bool, loadSettings } from "../lib/db";
@@ -153,7 +153,7 @@ owner.post("/users", async (c) => {
   if (!phone) throw new HttpError(422, "invalid", { field: "phone" });
   if (!validPin(b.pin)) throw new HttpError(422, "invalid", { field: "pin" });
   const role = ["owner", "manager", "staff"].includes(String(b.role)) ? String(b.role) : "manager";
-  const language = ["en", "hi", "kn"].includes(String(b.language)) ? String(b.language) : "en";
+  const language = ["en", "hi", "kn"].includes(String(b.language)) ? String(b.language) : DEFAULT_LANG;
   const exists = await c.env.DB.prepare("SELECT id FROM users WHERE phone = ?").bind(phone).first();
   if (exists) throw new HttpError(409, "phone_taken");
   const { hash, salt } = await hashPin(b.pin);

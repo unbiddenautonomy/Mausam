@@ -1,14 +1,14 @@
 import { Component, type ReactNode } from "react";
-import { translate, type Lang } from "@mausam/shared";
+import { DEFAULT_LANG, translate, type Lang } from "@mausam/shared";
 
 function lang(): Lang {
   try {
     const l = localStorage.getItem("mausam.lang");
-    if (l === "hi" || l === "kn") return l;
+    if (l === "en" || l === "hi" || l === "kn") return l;
   } catch {
     /* ignore */
   }
-  return "en";
+  return DEFAULT_LANG;
 }
 
 /** Shows a calm "reload" screen instead of a blank page if a screen crashes. Offline entries stay queued. */

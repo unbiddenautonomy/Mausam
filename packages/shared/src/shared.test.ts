@@ -132,3 +132,22 @@ describe("pos import", () => {
     expect(m).toMatchObject({ date: 0, bills: 1, cash: 2, online: 3, total: 4 });
   });
 });
+
+import * as fs from "node:fs";
+
+describe("Kannada", () => {
+  // Kannada is the third language: every admin and POS string has a Kannada version.
+  // Printed bill labels on the POS stay English on purpose (GST bills).
+  const keys = (src: string, name: string) => {
+    const i = src.indexOf(`const ${name}`);
+    return new Set([...src.slice(i, src.indexOf("\n};", i)).matchAll(/^\s+"([\w.]+)":/gm)].map((m) => m[1]));
+  };
+  it("covers every admin and POS string", () => {
+    const bill = ["app.name", "app.title", "bill_no", "date", "table", "qty", "rate", "amount", "gstin", "cgst", "sgst"];
+    for (const file of [new URL("./i18n.ts", import.meta.url), new URL("../../../apps/pos/src/i18n.ts", import.meta.url)]) {
+      const src = fs.readFileSync(file, "utf8");
+      const kn = keys(src, "kn");
+      expect([...keys(src, "en")].filter((k) => !kn.has(k) && !bill.includes(k))).toEqual([]);
+    }
+  });
+});
