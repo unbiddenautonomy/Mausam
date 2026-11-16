@@ -1531,6 +1531,9 @@ const kn: Dict = {
   "bills.counter_seen": "ಕೌಂಟರ್ {code} ಕೊನೆಯದಾಗಿ ಬಿಲ್ ಕಳುಹಿಸಿದ್ದು: {time}",
 };
 
+/** Kannada is the default for new users and for phones with no saved choice. Anyone can switch. */
+export const DEFAULT_LANG: Lang = "kn";
+
 export const LANGUAGES: { code: Lang; label: string }[] = [
   { code: "en", label: "English" },
   { code: "hi", label: "हिंदी" },
