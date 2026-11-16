@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatINR } from "@mausam/shared";
 import { api, ApiError } from "../lib/api";
+import { readMemoOnPhone, type OcrStage } from "../lib/ocr";
 import { useT } from "../lib/session";
 import { Icon } from "./Icon";
 import { Pill } from "./ui";
@@ -22,35 +23,71 @@ export interface Typed {
   expenses: number | null;
 }
 
-let available: Promise<boolean> | null = null;
-const memoAvailable = () => (available ??= api<{ available: boolean }>("/memo/status").then((r) => r.available, () => false));
+type Engine = "claude" | "phone";
+let status: Promise<Engine> | null = null;
+/** Claude on the server when it has an Anthropic key; otherwise free OCR on this phone. */
+const memoEngine = () =>
+  (status ??= api<{ engine?: Engine }>("/memo/status").then(
+    (r) => (r.engine === "claude" ? "claude" : "phone"),
+    () => "phone" as const,
+  ));
 
 /**
- * Reads the memo photo with AI and compares it with what was typed.
+ * Reads the memo photo (with Claude, or free OCR on the phone) and compares it with what was typed.
  * In the form, `onUse` fills the fields; on a submitted day it only shows the comparison.
  */
 export function MemoReader({ date, photoKey, typed, onUse }: { date: string; photoKey: string | null; typed: Typed; onUse?: (r: MemoResult) => void }) {
   const t = useT();
-  const [ok, setOk] = useState<boolean | null>(null);
+  const [engine, setEngine] = useState<Engine | null>(null);
   const [result, setResult] = useState<MemoResult | null>(null);
   const [readKey, setReadKey] = useState<string | null>(null);
-  const [state, setState] = useState<"idle" | "reading" | "failed" | "unavailable" | "limit">("idle");
+  const [byPhone, setByPhone] = useState(false);
+  const [seen, setSeen] = useState<string | null>(null);
+  const [state, setState] = useState<"idle" | "reading" | "failed" | "unavailable" | "limit" | "phone_failed" | "empty">("idle");
+  const [stage, setStage] = useState<{ stage: OcrStage; pct: number } | null>(null);
 
   useEffect(() => {
-    memoAvailable().then(setOk);
-    api<{ read: { photo_key: string; result: MemoResult } | null }>(`/memo/${date}`).then(
-      (r) => r.read && (setResult(r.read.result), setReadKey(r.read.photo_key)),
+    memoEngine().then(setEngine);
+    api<{ read: { photo_key: string; model: string | null; result: MemoResult } | null }>(`/memo/${date}`).then(
+      (r) => r.read && (setResult(r.read.result), setReadKey(r.read.photo_key), setByPhone(r.read.model === "phone-ocr")),
       () => {},
     );
   }, [date]);
 
+  async function readOnPhone() {
+    if (!photoKey) return;
+    setState("reading");
+    setStage({ stage: "loading", pct: 0 });
+    try {
+      const { result: r, text } = await readMemoOnPhone(photoKey, (st, p) => setStage({ stage: st, pct: Math.round(p * 100) }));
+      setSeen(text);
+      if (r.total === null && r.cash === null && r.online === null && r.expenses_total === null && r.lines.length === 0) {
+        setState("empty");
+        return;
+      }
+      setResult(r);
+      setReadKey(photoKey);
+      setByPhone(true);
+      setState("idle");
+      // Keep it on the server so the day shows it later. If that fails, the numbers are still on screen.
+      api("/memo/save", { method: "POST", json: { business_date: date, photo_key: photoKey, result: r } }).catch(() => {});
+    } catch (e) {
+      console.error("phone memo read failed", e);
+      setState("phone_failed");
+    } finally {
+      setStage(null);
+    }
+  }
+
   async function read() {
     if (!photoKey) return;
+    if (engine !== "claude") return readOnPhone();
     setState("reading");
     try {
       const r = await api<{ result: MemoResult }>("/memo/read", { method: "POST", json: { business_date: date, photo_key: photoKey } });
       setResult(r.result);
       setReadKey(photoKey);
+      setByPhone(false);
       setState("idle");
     } catch (e) {
       const code = e instanceof ApiError ? e.code : "";
@@ -60,7 +97,7 @@ export function MemoReader({ date, photoKey, typed, onUse }: { date: string; pho
 
   // Only show a read that belongs to the current photo.
   const shown = result && readKey === photoKey ? result : null;
-  if (!photoKey || (!shown && (!onUse || ok === false))) return null;
+  if (!photoKey || (!shown && (!onUse || engine === null))) return null;
 
   const fields: [keyof Typed, keyof MemoResult, string][] = [
     ["total", "total", t("close.total_counter")],
@@ -79,11 +116,26 @@ export function MemoReader({ date, photoKey, typed, onUse }: { date: string; pho
       {!shown ? (
         <>
           <button className="btn block" onClick={read} disabled={state === "reading"}>
-            <Icon name="sparkle" /> {state === "reading" ? t("memo.reading") : t("memo.read")}
+            <Icon name="sparkle" />{" "}
+            {state !== "reading"
+              ? t(engine === "claude" ? "memo.read" : "memo.read_phone")
+              : stage?.stage === "loading"
+                ? t("memo.preparing", { pct: stage.pct })
+                : stage
+                  ? t("memo.reading_pct", { pct: stage.pct })
+                  : t("memo.reading")}
           </button>
           {state === "failed" && <p className="small bad-text">{t("memo.failed")}</p>}
           {state === "unavailable" && <p className="small muted">{t("memo.unavailable")}</p>}
           {state === "limit" && <p className="small muted">{t("memo.limit")}</p>}
+          {state === "phone_failed" && <p className="small bad-text">{t("memo.phone_failed")}</p>}
+          {state === "empty" && <p className="small bad-text">{t("memo.nothing_found")}</p>}
+          {engine === "claude" && (state === "failed" || state === "unavailable" || state === "limit") && (
+            <button className="btn block" onClick={readOnPhone}>
+              {t("memo.try_phone")}
+            </button>
+          )}
+          {seen && state === "empty" && <SeenText text={seen} label={t("memo.seen_text")} />}
         </>
       ) : (
         <>
@@ -118,7 +170,9 @@ export function MemoReader({ date, photoKey, typed, onUse }: { date: string; pho
           {shown.lines.length > 0 && shown.expenses_total !== null && linesSum !== shown.expenses_total ? (
             <div className="check warn"><Icon name="alert" /><span className="t">{t("memo.lines_off", { amount: formatINR(linesSum), total: formatINR(shown.expenses_total) })}</span></div>
           ) : null}
+          {byPhone && <p className="small muted">{t("memo.phone_hint")}</p>}
           {shown.note && <p className="small muted">{shown.note}</p>}
+          {seen && byPhone && <SeenText text={seen} label={t("memo.seen_text")} />}
           {anyTyped && diffs.length === 0 && <div className="check good"><Icon name="check" /><span className="t">{t("memo.match")}</span></div>}
           {diffs.map(([tk, mk, label]) => (
             <div className="check bad" key={tk}>
@@ -134,5 +188,17 @@ export function MemoReader({ date, photoKey, typed, onUse }: { date: string; pho
         </>
       )}
     </div>
+  );
+}
+
+/** The raw text the phone read, so the manager can see what it got wrong. */
+function SeenText({ text, label }: { text: string; label: string }) {
+  return (
+    <details>
+      <summary className="small muted" style={{ cursor: "pointer" }}>
+        {label}
+      </summary>
+      <pre className="small" style={{ whiteSpace: "pre-wrap", margin: "8px 0 0" }}>{text.trim()}</pre>
+    </details>
   );
 }

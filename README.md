@@ -94,7 +94,7 @@ GitHub also checks every pull request (types, tests, build). The UI rules and ne
 ## Optional features
 
 - **Phone reminders** work with no setup. The Worker makes its own reminder (VAPID) keys the first time someone turns reminders on, and keeps them in the database. To use your own keys instead, set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` on the Worker; `node apps/api/scripts/vapid-keys.mjs` makes a pair.
-- **Memo reading** needs an Anthropic API key, added as a Worker secret named `ANTHROPIC_API_KEY` (section 5 of the setup guide). Without it, the memo button explains that it's off.
+- **Memo reading** works with no setup. Without a key, the manager's phone reads the memo photo itself with free OCR (Tesseract.js, English + Kannada), served from the app's own `/ocr/` path. It's free and works offline after the first use (about 9 MB, once), but it often misreads handwriting, so the numbers are only suggestions and the screen shows what it read. Adding an Anthropic API key as a Worker secret named `ANTHROPIC_API_KEY` (step 7 of the setup guide) switches the server to Claude, which reads handwriting far better; the phone reader stays as a backup if Claude fails.
 - **Setup code:** a `SETUP_CODE` secret protects the first-run owner screen (section 6 of the setup guide). For local secrets, copy `apps/api/.dev.vars.example` to `apps/api/.dev.vars`.
 
 ## Safety built in
