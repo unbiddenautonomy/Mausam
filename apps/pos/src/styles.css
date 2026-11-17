@@ -288,6 +288,14 @@ h3 { margin: 0; font-size: 1.05rem; }
 .paid-banner { display: grid; gap: 4px; justify-items: center; padding: 12px; border-radius: 14px; background: var(--good-soft); color: var(--good); font-size: 1.25rem; }
 .paid-banner strong { font-size: 1.4rem; }
 
+/* Day summary: item sales, folded away until tapped. */
+.item-sales summary { cursor: pointer; list-style: revert; }
+.item-sales summary h2 { display: inline; }
+.item-sales-list { display: grid; gap: 2px; background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; margin: 8px 0 16px; max-height: 360px; overflow: auto; }
+.item-sale { display: grid; grid-template-columns: 1fr 60px 110px; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.item-sale:last-child { border-bottom: 0; }
+.item-sale .num { text-align: right; }
+
 /* Only the receipt prints. Chrome on the counter prints straight to the receipt printer (see docs/pos-printing.md). */
 #print-root { display: none; }
 @media print {

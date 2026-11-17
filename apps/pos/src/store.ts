@@ -304,3 +304,23 @@ export function byWaiter(bills: Bill[], waiters: Waiter[]): { id: number | null;
   }
   return [...m.values()].sort((a, b) => (a.id === null ? 1 : b.id === null ? -1 : b.total - a.total));
 }
+
+export interface ItemSale { category: string; name: string; variation: string | null; qty: number; amount: number }
+
+/** Item sales from paid bills, like the old POS's Item Sales Summary: by category, then item and variation, biggest first. */
+export function itemSales(bills: Bill[]): ItemSale[] {
+  const m = new Map<string, ItemSale>();
+  for (const b of bills) {
+    if (b.status !== "paid") continue;
+    for (const l of b.lines) {
+      const category = l.category ?? "—";
+      const variation = l.variation ?? null;
+      const key = `${category}|${l.name}|${variation ?? ""}`;
+      const row = m.get(key) ?? { category, name: l.name, variation, qty: 0, amount: 0 };
+      row.qty += l.qty;
+      row.amount += l.qty * l.price;
+      m.set(key, row);
+    }
+  }
+  return [...m.values()].sort((a, b) => a.category.localeCompare(b.category) || b.amount - a.amount);
+}

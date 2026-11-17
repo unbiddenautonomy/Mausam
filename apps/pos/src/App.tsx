@@ -4,7 +4,7 @@ import { businessDate, changeDue, formatINR, LANGUAGES, rupeesToPaise, validCoun
 import { api, ApiError, fetchConfig, fetchDay, nextToken, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import {
-  addItem, byWaiter, changeQty, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -13,7 +13,8 @@ type T = (key: Key, params?: Record<string, string | number>) => string;
 type Copy = "Original" | "Duplicate";
 type PrintJob =
   | { kind: "bill"; bill: Bill; copy: Copy }
-  | { kind: "summary"; date: string; bills: Bill[] };
+  | { kind: "summary"; date: string; bills: Bill[] }
+  | { kind: "items"; date: string; bills: Bill[] };
 
 const SYNC_EVERY_MS = 20_000;
 /** How often a screen checks for the other screens' order changes. */
@@ -394,6 +395,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
         <Summary
           t={t} config={config} bills={bills} waiting={waiting} online={online} printing={printing}
           onSync={() => void sync()} onPrint={(date, list) => setPrint({ kind: "summary", date, bills: list })}
+          onPrintItems={(date, list) => setPrint({ kind: "items", date, bills: list })}
           onOpen={showBill}
           onLogout={() => setAskLogout(true)}
         />
@@ -993,9 +995,9 @@ function DiscountDialog({ t, subtotal, current, onClose, onDone }: { t: T; subto
 
 /* ---------------- Day summary ---------------- */
 
-function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint, onOpen, onLogout }: {
+function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint, onPrintItems, onOpen, onLogout }: {
   t: T; config: Config; bills: Bill[]; waiting: number; online: boolean; printing: boolean;
-  onSync: () => void; onPrint: (date: string, b: Bill[]) => void; onOpen: (b: Bill) => void; onLogout: () => void;
+  onSync: () => void; onPrint: (date: string, b: Bill[]) => void; onPrintItems: (date: string, b: Bill[]) => void; onOpen: (b: Bill) => void; onLogout: () => void;
 }) {
   const date = businessDate();
   // Bills from the other screens come from the server; this screen's own bills are always shown, sent or not.
@@ -1031,6 +1033,7 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
         <span className={waiting ? "warn" : "good"}>{waiting ? `${t("unsynced")}: ${waiting}` : t("all_sent")}</span>
         <button className="btn" disabled={!waiting || !online} onClick={onSync}>{t("sync_now")}</button>
         {printing && <button className="btn" onClick={() => onPrint(date, today)}>{t("print_summary")}</button>}
+        {printing && <button className="btn" onClick={() => onPrintItems(date, today)}>{t("print_items")}</button>}
         <span className="grow" />
         <button className="btn danger" onClick={onLogout}>{t("logout")}</button>
       </div>
@@ -1048,6 +1051,18 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
           </div>
         </>
       )}
+      <details className="item-sales">
+        <summary><h2>{t("item_sales")}</h2></summary>
+        <div className="item-sales-list">
+          {itemSales(today).map((r) => (
+            <div key={`${r.category}|${r.name}|${r.variation ?? ""}`} className="item-sale">
+              <span>{r.name}{r.variation ? ` [${r.variation}]` : ""}<span className="muted small"> · {r.category}</span></span>
+              <span className="num">{r.qty}</span>
+              <strong className="num">{formatINR(r.amount)}</strong>
+            </div>
+          ))}
+        </div>
+      </details>
       <h2>{t("recent")}</h2>
       <div className="bill-list">
         {[...today].reverse().map((b) => (
@@ -1155,6 +1170,34 @@ function PrintArea({ t, job, settings, config, onDone }: { t: T; job: PrintJob |
 
   if (job.kind === "bill") {
     body = <ReceiptBody bill={job.bill} settings={settings} config={config} copy={job.copy} />;
+  } else if (job.kind === "items") {
+    const rows = itemSales(job.bills);
+    const cats = [...new Set(rows.map((r) => r.category))];
+    body = (
+      <>
+        <div className="p-center p-big">Item Sales Summary</div>
+        <div className="p-center">{job.date} · {when}</div>
+        <hr />
+        <div className="p-items p-head"><span>Item</span><span>Qty</span><span /><span>Amount</span></div>
+        {cats.map((c) => {
+          const list = rows.filter((r) => r.category === c);
+          return (
+            <div key={c}>
+              <hr className="thin" />
+              <div><b>{c}</b></div>
+              {list.map((r) => (
+                <div key={`${r.name}|${r.variation ?? ""}`} className="p-items">
+                  <span className="p-name">{r.name}{r.variation && <><br />[{r.variation}]</>}</span><span>{r.qty}</span><span /><span>{money(r.amount)}</span>
+                </div>
+              ))}
+              <div className="p-items"><span>{c} total</span><span>{list.reduce((n, r) => n + r.qty, 0)}</span><span /><span>{money(list.reduce((n, r) => n + r.amount, 0))}</span></div>
+            </div>
+          );
+        })}
+        <hr />
+        <div className="p-items p-total"><span>Total :</span><span>{rows.reduce((n, r) => n + r.qty, 0)}</span><span /><span>{money(rows.reduce((n, r) => n + r.amount, 0))}</span></div>
+      </>
+    );
   } else {
     const paid = job.bills.filter((b) => b.status === "paid");
     const mode = (m: string) => paid.reduce((s, b) => s + b.payments.filter((p) => p.mode === m).reduce((a, p) => a + p.amount, 0), 0);

@@ -138,6 +138,61 @@ owner.get("/reports/expenses", async (c) => {
   return c.json({ from, to, rows: results });
 });
 
+/**
+ * Cancelled bills and discounts: where money can go missing at the counter. Daily totals, who did them, and the bills,
+ * newest first. "Who" is the person logged in on the POS device that saved the bill.
+ */
+owner.get("/reports/leaks", async (c) => {
+  const { from, to } = rangeFrom(c);
+  const db = c.env.DB;
+  const [daily, people, bills, sales] = await Promise.all([
+    db.prepare(
+      `SELECT business_date,
+              SUM(CASE WHEN status = 'cancelled' THEN total ELSE 0 END) AS cancelled,
+              SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_n,
+              SUM(CASE WHEN status = 'paid' THEN discount ELSE 0 END) AS discount,
+              SUM(CASE WHEN status = 'paid' AND discount > 0 THEN 1 ELSE 0 END) AS discount_n
+       FROM pos_bills WHERE business_date BETWEEN ? AND ? AND (status = 'cancelled' OR discount > 0)
+       GROUP BY business_date ORDER BY business_date`,
+    ).bind(from, to).all<{ business_date: string; cancelled: number; cancelled_n: number; discount: number; discount_n: number }>(),
+    db.prepare(
+      `SELECT COALESCE(u.name, '—') AS name,
+              SUM(CASE WHEN b.status = 'cancelled' THEN b.total ELSE 0 END) AS cancelled,
+              SUM(CASE WHEN b.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_n,
+              SUM(CASE WHEN b.status = 'paid' THEN b.discount ELSE 0 END) AS discount,
+              SUM(CASE WHEN b.status = 'paid' AND b.discount > 0 THEN 1 ELSE 0 END) AS discount_n
+       FROM pos_bills b LEFT JOIN users u ON u.id = b.created_by
+       WHERE b.business_date BETWEEN ? AND ? AND (b.status = 'cancelled' OR b.discount > 0)
+       GROUP BY b.created_by ORDER BY cancelled + discount DESC`,
+    ).bind(from, to).all<{ name: string; cancelled: number; cancelled_n: number; discount: number; discount_n: number }>(),
+    db.prepare(
+      `SELECT b.bill_no, b.business_date, b.closed_at, b.order_type, b.table_name, b.token, b.status, b.total, b.subtotal, b.discount,
+              b.cancel_reason, u.name AS by_name, COALESCE(b.waiter_name, s.name) AS waiter_name
+       FROM pos_bills b LEFT JOIN users u ON u.id = b.created_by LEFT JOIN staff s ON s.id = b.waiter_staff_id
+       WHERE b.business_date BETWEEN ? AND ? AND (b.status = 'cancelled' OR b.discount > 0)
+       ORDER BY b.closed_at DESC LIMIT 300`,
+    ).bind(from, to).all(),
+    db.prepare("SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS n FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?")
+      .bind(from, to).first<{ total: number; n: number }>(),
+  ]);
+  return c.json({ from, to, sales: sales?.total ?? 0, paid_bills: sales?.n ?? 0, days: daily.results, people: people.results, bills: bills.results });
+});
+
+/** Item sales for one day, like the old POS's Item Sales Summary: each item and variation, by category. Paid bills only. */
+owner.get("/reports/item-sales", async (c) => {
+  const date = c.req.query("date") ?? businessDate();
+  if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
+  const { results } = await c.env.DB.prepare(
+    `SELECT COALESCE(i.category, '—') AS category, i.name, i.variation, SUM(i.qty) AS qty, SUM(i.amount) AS amount
+     FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
+     WHERE b.business_date = ? AND b.status = 'paid'
+     GROUP BY i.category, i.name, i.variation ORDER BY category, amount DESC`,
+  )
+    .bind(date)
+    .all<{ category: string; name: string; variation: string | null; qty: number; amount: number }>();
+  return c.json({ date, items: results });
+});
+
 /* ---------- App users ---------- */
 
 owner.get("/users", async (c) => {
