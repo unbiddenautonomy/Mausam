@@ -22,16 +22,16 @@ The bill is laid out like the old POS's bill. It has the token number at the top
    Name the shortcut **Mausam POS**. From now on, open the POS from this shortcut. It opens full screen and prints to the default printer straight away. Press **Alt+F4** to close it.
 6. **Optional: start the POS when the PC starts.** Press **Win+R**, type `shell:startup` and press Enter. Copy the **Mausam POS** shortcut into that folder.
 
-## Two POS screens
+## Two POS devices
 
-Both screens open the same `/pos/` address and work as one till:
+The POS can run on two devices at once, for example the counter PC and a second touchscreen. Each device opens the same `/pos/` address and works on its own: two people can take orders, take payment or look at the day summary at the same time, each on their own screen. What they enter is shared:
 
-- **Running orders are shared.** An order taken on one screen shows on the other within a few seconds, so either screen can add items, print or take payment. When it's paid or cancelled on one screen, it disappears from the other.
-- **Token numbers are shared** and keep counting up, so the two screens never print the same token.
-- **The day summary shows both screens' bills**, so the manager can end the day from either one.
-- **Each screen has its own counter letter.** The first time you open the POS on a screen, pick **A** on one and **B** on the other. Bill numbers then start with that letter, so the two screens never print the same bill number.
+- **Orders are shared.** An order taken on one device shows on the other within a few seconds, so either device can add items, print it or take payment. When it's paid or cancelled on one device, it disappears from the other.
+- **Token numbers are shared** and keep counting up. If the two devices ever hand out the same token (for example while one was offline), the next tokens on both carry on after the highest one used, so the count corrects itself.
+- **The day summary shows both devices' bills**, so the manager can end the day from either one.
+- **Each device has its own counter letter.** The first time you open the POS on a device, pick **A** on one and **B** on the other. Bill numbers then start with that letter, so the two devices never print the same bill number.
 
-If the internet drops, each screen keeps billing on its own and catches up when it's back. Try not to change the same order on both screens at the same moment: the later change wins.
+If the internet drops, each device keeps billing on its own and catches up when it's back. Try not to change the same order on both devices at the same moment: the later change wins.
 
 ## If something goes wrong
 
