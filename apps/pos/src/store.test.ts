@@ -12,7 +12,7 @@ const mem = new Map<string, string>();
   length: 0,
 };
 
-const { addItem, byWaiter, changeQty, counterOf, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -168,5 +168,22 @@ describe("two screens", () => {
     noteClosed([{ id: other.id, updated_at: "2026-11-16T10:00:11.000Z" }]);
     orders = mergeRemote(orders.filter((o) => o.id !== other.id), [{ id: other.id, updated_at: "2026-11-16T10:00:09.000Z", closed: false, data: other }]);
     expect(orders.map((o) => o.id)).toEqual(["order-cccc-3"]);
+  });
+});
+
+describe("item sales", () => {
+  it("adds up paid bills by category, item and variation, and skips cancelled bills", () => {
+    const manch = { ...bhaji, id: 12, name: "Manchurian", variations: [{ name: "Full", price: 22000 }, { name: "Half", price: 15000 }] };
+    let o = newOrder("parcel", null, 1);
+    o = addItem(o, manch, cats, settings, { variation: manch.variations[1] }, 2);
+    o = addItem(o, pav, cats, settings, {}, 3);
+    const paid = toBill(o, settings, "paid", [{ mode: "cash", amount: 31500 }], null);
+    const again = toBill(addItem(newOrder("parcel", null, 2), manch, cats, settings, { variation: manch.variations[1] }), settings, "paid", [{ mode: "cash", amount: 15000 }], null);
+    const cancelled = { ...paid, client_id: "x-cancelled-1", status: "cancelled" as const };
+    const rows = itemSales([paid, again, cancelled]);
+    expect(rows).toEqual([
+      { category: "Pav Bhaji", name: "Manchurian", variation: "Half", qty: 3, amount: 45000 },
+      { category: "Pav Bhaji", name: "1 Pav (Oil)", variation: null, qty: 3, amount: 1500 },
+    ]);
   });
 });

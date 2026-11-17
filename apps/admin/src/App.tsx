@@ -36,6 +36,8 @@ import { TablesPage } from "./pages/pos/Tables";
 import { BillsPage } from "./pages/pos/Bills";
 import { WaitersPage } from "./pages/pos/Waiters";
 import { PosOptionsPage } from "./pages/pos/PosOptions";
+const CancellationsReport = lazy(() => import("./pages/reports/CancellationsReport").then((m) => ({ default: m.CancellationsReport })));
+const ItemSalesReport = lazy(() => import("./pages/reports/ItemSalesReport").then((m) => ({ default: m.ItemSalesReport })));
 const WaitersReport = lazy(() => import("./pages/reports/WaitersReport").then((m) => ({ default: m.WaitersReport })));
 
 export function App() {
@@ -77,6 +79,8 @@ export function App() {
               <Route path="reports/items" element={<Suspense fallback={<Loading />}><ItemsReport /></Suspense>} />
               <Route path="reports/prices" element={<Suspense fallback={<Loading />}><PricesReport /></Suspense>} />
               <Route path="reports/waiters" element={<Suspense fallback={<Loading />}><WaitersReport /></Suspense>} />
+              <Route path="reports/cancellations" element={<Suspense fallback={<Loading />}><CancellationsReport /></Suspense>} />
+              <Route path="reports/item-sales" element={<Suspense fallback={<Loading />}><ItemSalesReport /></Suspense>} />
             </>
           )}
           {owner && (
