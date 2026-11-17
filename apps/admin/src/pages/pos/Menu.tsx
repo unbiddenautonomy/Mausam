@@ -10,10 +10,13 @@ export interface MenuCategory { id: number; name: string; name_hi: string | null
 export interface MenuItem {
   id: number; category_id: number; name: string; name_hi: string | null; name_kn: string | null; short_name: string | null; price: number; tax_rate: number | null;
   hsn: string | null; veg: number; favourite: number; sort: number; active: number;
+  variations: MenuOption[] | null; addons: MenuOption[] | null;
 }
+/** A variation (its price is the item's price) or an add-on (its price is added). Paise. */
+export interface MenuOption { name: string; price: number }
 export interface PosSettings {
   gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string;
-  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean;
+  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean; bill_copies: number;
 }
 
 /** Owner: the POS menu. Categories down the side on desktop, items as a list, one form for add and edit. */
@@ -80,7 +83,9 @@ export function MenuPage() {
                 <span className={`veg-dot ${i.veg ? "veg" : "nonveg"}`} aria-label={i.veg ? t("menu.veg") : t("menu.nonveg")} />
                 <span className="grow">
                   <strong>{i.name}{i.favourite ? " ★" : ""}</strong>
-                  <span className="muted small">{[i.name_hi, i.name_kn, i.short_name, i.tax_rate !== null && useGst ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
+                  <span className="muted small">{[i.name_hi, i.name_kn, i.short_name,
+                    i.variations?.length ? i.variations.map((v) => v.name).join(" / ") : null,
+                    i.addons?.length ? i.addons.map((v) => v.name).join(" / ") : null, i.tax_rate !== null && useGst ? `GST ${i.tax_rate / 100}%` : null, i.active ? null : t("menu.hidden")].filter(Boolean).join(" · ")}</span>
                 </span>
                 <span className="amount">{formatINR(i.price)}</span>
                 <Icon name="chevron" />
@@ -124,6 +129,10 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
     favourite: initial ? !!initial.favourite : false,
     active: initial ? !!initial.active : true,
   });
+  const toRows = (o: MenuOption[] | null | undefined) => (o ?? []).map((x) => ({ name: x.name, price: String(x.price / 100) }));
+  const [variations, setVariations] = useState(toRows(initial?.variations));
+  const [addons, setAddons] = useState(toRows(initial?.addons));
+  const fromRows = (rows: OptionRow[]) => rows.filter((r) => r.name.trim()).map((r) => ({ name: r.name.trim(), price: rupeesToPaise(r.price || "0") ?? 0 }));
   const [error, setError] = useState<unknown>(null);
   const price = rupeesToPaise(f.price);
   const ready = f.name.trim() && f.category_id && price !== null;
@@ -133,6 +142,7 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
     const json = {
       name: f.name, name_hi: f.name_hi || null, name_kn: f.name_kn || null, short_name: f.short_name || null, category_id: Number(f.category_id), price,
       tax_rate: f.tax === "" ? null : Math.round(Number(f.tax) * 100), veg: f.veg, favourite: f.favourite, active: f.active,
+      variations: fromRows(variations), addons: fromRows(addons),
     };
     try {
       if (initial) await api(`/billing/menu/items/${initial.id}`, { method: "PATCH", json });
@@ -164,6 +174,8 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
         <Field label={`${t("menu.short_name")} (${t("common.optional")})`} help={t("menu.short_name_help")} htmlFor="m-short"><input id="m-short" className="input" value={f.short_name} onChange={(e) => setF({ ...f, short_name: e.target.value })} /></Field>
         {useGst && <Field label={`${t("menu.gst")} (${t("common.optional")})`} help={t("menu.gst_help")} htmlFor="m-tax"><input id="m-tax" className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} /></Field>}
       </div>
+      <OptionsEditor label={t("menu.variations")} help={t("menu.variations_help")} rows={variations} onChange={setVariations} />
+      <OptionsEditor label={t("menu.addons")} help={t("menu.addons_help")} rows={addons} onChange={setAddons} />
       <Segmented value={f.veg ? "veg" : "non"} onChange={(v) => setF({ ...f, veg: v === "veg" })} options={[{ value: "veg", label: t("menu.veg") }, { value: "non", label: t("menu.nonveg") }]} />
       <label className="check" style={{ cursor: "pointer", background: "var(--surface-2)" }}>
         <input type="checkbox" checked={f.favourite} onChange={(e) => setF({ ...f, favourite: e.target.checked })} style={{ width: 22, height: 22 }} />
@@ -181,5 +193,27 @@ function ItemForm({ initial, categories, defaultCategory, onDone }: { initial: M
         <button className="btn primary" disabled={!ready} onClick={save}><Icon name="check" /> {t("common.save")}</button>
       </div>
     </div>
+  );
+}
+
+interface OptionRow { name: string; price: string }
+
+/** Rows of name + price, for an item's variations or add-ons. */
+function OptionsEditor({ label, help, rows, onChange }: { label: string; help: string; rows: OptionRow[]; onChange: (rows: OptionRow[]) => void }) {
+  const { t } = useSession();
+  const set = (i: number, patch: Partial<OptionRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <fieldset className="field" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, display: "grid", gap: 8 }}>
+      <legend style={{ fontWeight: 700, padding: "0 6px" }}>{label}</legend>
+      <span className="muted small">{help}</span>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 120px auto", gap: 8, alignItems: "center" }}>
+          <input className="input" aria-label={t("menu.option_name")} placeholder={t("menu.option_name")} value={r.name} onChange={(e) => set(i, { name: e.target.value })} />
+          <MoneyInput value={r.price} onChange={(v) => set(i, { price: v })} />
+          <button className="btn small" aria-label={t("common.delete")} onClick={() => onChange(rows.filter((_, j) => j !== i))}><Icon name="x" /></button>
+        </div>
+      ))}
+      <button className="btn small" style={{ justifySelf: "start" }} onClick={() => onChange([...rows, { name: "", price: "0" }])}><Icon name="plus" /> {t("menu.add_option")}</button>
+    </fieldset>
   );
 }

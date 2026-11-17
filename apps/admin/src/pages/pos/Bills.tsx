@@ -9,7 +9,7 @@ import { Empty, Loading, PageHead, Pill, Stat } from "../../components/ui";
 interface Bill {
   id: number; bill_no: string; order_type: "dine_in" | "parcel"; table_name: string | null; token: number | null; waiter_name: string | null;
   by_name: string | null; total: number; discount: number; tax: number; status: "paid" | "cancelled"; cancel_reason: string | null; closed_at: string;
-  lines: { id: number; name: string; qty: number; amount: number }[];
+  lines: { id: number; name: string; qty: number; amount: number; variation?: string | null; modifier?: string | null }[];
   payments: { mode: string; amount: number }[];
 }
 interface Counter { code: string; last_seen_at: string | null; last_bill_no: string | null }
@@ -59,7 +59,7 @@ export function BillsPage() {
                   {open === b.id && (
                     <div className="row" style={{ display: "grid", gap: 4, background: "var(--surface-2)" }}>
                       {b.lines.map((l) => (
-                        <div key={l.id} className="small" style={{ display: "flex", justifyContent: "space-between" }}><span>{l.qty} × {l.name}</span><span className="num">{formatINR(l.amount)}</span></div>
+                        <div key={l.id} className="small" style={{ display: "flex", justifyContent: "space-between" }}><span>{l.qty} × {l.name}{l.variation || l.modifier ? ` [${[l.variation, l.modifier].filter(Boolean).join(" · ")}]` : ""}</span><span className="num">{formatINR(l.amount)}</span></div>
                       ))}
                       {b.discount > 0 && <div className="small muted">{t("bills.discount")}: −{formatINR(b.discount)}</div>}
                       {b.tax > 0 && <div className="small muted">GST: {formatINR(b.tax)}</div>}

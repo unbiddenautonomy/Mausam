@@ -37,12 +37,14 @@ export function Layout() {
     { to: "/people", icon: "users", label: t("nav.people") },
     { to: "/vendors", icon: "truck", label: t("nav.vendors") },
   ];
-  const insight: NavItem[] = isOwner ? [{ to: "/reports", icon: "reports", label: t("nav.reports") }, { to: "/month", icon: "calendar", label: t("nav.month") }] : [];
+  const insight: NavItem[] = isOwner
+    ? [{ to: "/reports", icon: "reports", label: t("nav.reports") }, { to: "/month", icon: "calendar", label: t("nav.month") }]
+    : [{ to: "/reports", icon: "reports", label: t("nav.reports") }];
   const admin: NavItem[] = isOwner ? [{ to: "/manage", icon: "manage", label: t("nav.manage") }] : [];
 
   const tabs: NavItem[] = isOwner
     ? [...work.slice(0, 2), insight[0], { to: "/more", icon: "more", label: t("nav.more") }]
-    : [...work.slice(0, 2), { to: "/alerts", icon: "bell", label: t("nav.alerts") }, { to: "/more", icon: "more", label: t("nav.more") }];
+    : [...work.slice(0, 2), insight[0], { to: "/more", icon: "more", label: t("nav.more") }];
 
   const link = (n: NavItem, extra?: React.ReactNode) => (
     <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `side-link${isActive ? " active" : ""}`}>

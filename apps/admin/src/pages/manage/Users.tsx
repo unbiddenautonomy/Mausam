@@ -90,7 +90,7 @@ function AddUser({ onDone }: { onDone: () => void }) {
       </Field>
       <div className="field">
         <span className="label">{t("users.role")}</span>
-        <Segmented<Role> value={f.role} onChange={(v) => set("role", v)} options={[{ value: "manager", label: t("role.manager") }, { value: "owner", label: t("role.owner") }]} />
+        <Segmented<Role> value={f.role} onChange={(v) => set("role", v)} options={[{ value: "manager", label: t("role.manager") }, { value: "staff", label: t("role.staff") }, { value: "owner", label: t("role.owner") }]} />
       </div>
       <div className="field">
         <span className="label">{t("common.language")}</span>

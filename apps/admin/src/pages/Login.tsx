@@ -93,3 +93,27 @@ export function Login() {
     </div>
   );
 }
+
+/** An employee logged in here: they use the POS at the counter, not this app. */
+export function PosOnly() {
+  const { t, user, signOut } = useSession();
+  return (
+    <div className="center-screen">
+      <div className="auth-card">
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Logo />
+          <div>
+            <h1>{t("app.name")}</h1>
+            <p className="muted small">{user?.name}</p>
+          </div>
+        </div>
+        <div className="card form">
+          <strong>{t("pos_only.title")}</strong>
+          <p className="muted">{t("pos_only.body")}</p>
+          <a className="btn primary block" href="/pos/">{t("pos_only.open")}</a>
+          <button className="btn block" onClick={signOut}>{t("common.logout")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}

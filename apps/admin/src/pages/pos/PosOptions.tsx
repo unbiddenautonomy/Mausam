@@ -43,6 +43,13 @@ export function PosOptionsPage() {
         {toggle("waiter_required", t("posset.waiter_required"), t("posset.waiter_required_help"))}
         {toggle("use_tables", t("posset.tables"), t("posset.tables_help"))}
         {toggle("printing", t("posset.printing"), t("posset.printing_help"))}
+        {s.printing && (
+          <div className="field">
+            <span className="label">{t("posset.copies")}</span>
+            <Segmented<string> value={String(s.bill_copies)} onChange={(v) => setF({ ...s, bill_copies: Number(v) })} options={["1", "2", "3"].map((n) => ({ value: n, label: n }))} />
+            <span className="muted small">{t("posset.copies_help")}</span>
+          </div>
+        )}
         {toggle("use_gst", t("posset.gst"), t("posset.gst_help"))}
         {s.use_gst && (
           <>
@@ -57,7 +64,7 @@ export function PosOptionsPage() {
             {!s.gstin && <Pill tone="warn">{t("menu.no_gstin")}</Pill>}
           </>
         )}
-        <Field label={t("menu.bill_header")} htmlFor="g-h"><input id="g-h" className="input" value={s.bill_header} onChange={(e) => setF({ ...s, bill_header: e.target.value })} /></Field>
+        <Field label={t("menu.bill_header")} htmlFor="g-h"><textarea id="g-h" className="textarea" rows={3} value={s.bill_header} onChange={(e) => setF({ ...s, bill_header: e.target.value })} /></Field>
         <Field label={t("menu.bill_footer")} htmlFor="g-f"><input id="g-f" className="input" value={s.bill_footer} onChange={(e) => setF({ ...s, bill_footer: e.target.value })} /></Field>
         <ErrorNote error={error} />
         <button className="btn primary" disabled={!f} onClick={save}><Icon name="check" /> {t("common.save")}</button>

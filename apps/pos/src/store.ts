@@ -2,7 +2,15 @@
 import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
 
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
-export interface Item { id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null; price: number; tax_rate: number | null; veg: number; favourite: number; sort: number }
+/** A variation (pick one; its price is the item's price) or an add-on (pick at most one; its price is added). Paise. */
+export interface ItemOption { name: string; price: number }
+export interface Item {
+  id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null;
+  price: number; tax_rate: number | null; veg: number; favourite: number; sort: number;
+  variations?: ItemOption[] | null; addons?: ItemOption[] | null;
+}
+/** Does tapping this item ask which variation or add-on, before it goes on the order? */
+export const hasChoices = (i: Item) => !!(i.variations?.length || i.addons?.length);
 export interface Table { id: number; area: string; name: string; seats: number; sort: number }
 export interface Waiter { id: number; name: string; name_local: string | null; waiter_code?: string | null }
 export interface PosSettings {
@@ -16,10 +24,16 @@ export interface PosSettings {
   commission_bp?: number;
   /** A dine-in order needs a waiter before payment. */
   waiter_required?: boolean;
+  /** Copies of a bill printed at Save & Print, one after the other (the second is the kitchen's). */
+  bill_copies?: number;
 }
 export interface Config { categories: Category[]; items: Item[]; tables: Table[]; waiters: Waiter[]; settings: PosSettings; fetched_at: string }
 
-export interface Line { key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null }
+export interface Line {
+  key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null;
+  /** The variation picked (e.g. "Jain", "Half") and the add-on (e.g. "Kadak"), shown as [Jain · Kadak] on the bill. */
+  variation?: string | null; modifier?: string | null;
+}
 export interface Order {
   id: string; // becomes the bill's client_id
   type: "dine_in" | "parcel";
@@ -33,6 +47,8 @@ export interface Order {
   opened_at: string;
   bill_no: string | null; // set when the bill is first printed (or paid)
   business_date: string;
+  /** When any screen last changed this order. Screens share running orders, and the newest change wins. */
+  updated_at?: string;
 }
 export interface Payment { mode: BillPayMode; amount: number }
 export interface Bill {
@@ -40,12 +56,15 @@ export interface Bill {
   table_id: number | null; table_name: string | null; token: number | null; waiter_staff_id: number | null; guests: number | null;
   discount: number; prices_include_tax: boolean; total: number; status: "paid" | "cancelled"; cancel_reason: string | null;
   opened_at: string; closed_at: string;
-  lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null }[];
+  lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null; variation?: string | null; modifier?: string | null }[];
   payments: Payment[];
   synced?: boolean;
   rejected?: string;
 }
+/** This screen's counter code and bill number sequence, and the highest token number it has seen (tokens never restart). */
 export interface Counter { code: string; seq: number; tokenDate: string; token: number }
+/** An order closed on this screen (paid, cancelled or dropped) that the other screens haven't been told about yet. */
+export interface Closed { id: string; updated_at: string }
 
 const K = {
   token: "mausam.pos.token",
@@ -55,6 +74,9 @@ const K = {
   orders: "mausam.pos.orders",
   bills: "mausam.pos.bills",
   counter: "mausam.pos.counter",
+  pushed: "mausam.pos.pushed",
+  closed: "mausam.pos.closed",
+  cursor: "mausam.pos.cursor",
 } as const;
 
 function read<T>(key: string, fallback: T): T {
@@ -89,7 +111,55 @@ export const storage = {
   setBills: (b: Bill[]) => write(K.bills, b),
   counter: () => read<Counter | null>(K.counter, null),
   setCounter: (c: Counter | null) => write(K.counter, c),
+  /** For each running order, the version (updated_at) the server already has. */
+  pushed: () => read<Record<string, string>>(K.pushed, {}),
+  setPushed: (p: Record<string, string>) => write(K.pushed, p),
+  closed: () => read<Closed[]>(K.closed, []),
+  setClosed: (c: Closed[]) => write(K.closed, c),
+  /** How far this screen has read the server's list of order changes. */
+  cursor: () => read<number>(K.cursor, 0),
+  setCursor: (n: number) => write(K.cursor, n),
 };
+
+/** A running order as the server has it: the newest version from any screen, or closed. */
+export interface RemoteOrder { id: string; updated_at: string; closed: boolean; data: Order | null }
+
+/**
+ * Takes in the server's versions of running orders: a newer version replaces this screen's, a new order is added,
+ * and an order closed on any screen is dropped. Returns `orders` itself when nothing changed.
+ */
+export function mergeRemote(orders: Order[], remote: RemoteOrder[]): Order[] {
+  const closing = new Set(storage.closed().map((c) => c.id));
+  const pushed = storage.pushed();
+  let next = orders;
+  for (const ro of remote) {
+    const mine = next.find((o) => o.id === ro.id);
+    if (ro.closed) {
+      delete pushed[ro.id];
+      if (mine) next = next.filter((o) => o.id !== ro.id);
+      continue;
+    }
+    // Closed here but the server doesn't know yet: it stays closed.
+    if (!ro.data || closing.has(ro.id)) continue;
+    if (!mine) {
+      next = [...next, { ...ro.data, updated_at: ro.updated_at }];
+      pushed[ro.id] = ro.updated_at;
+    } else if (ro.updated_at > (mine.updated_at ?? "")) {
+      next = next.map((o) => (o.id === ro.id ? { ...ro.data!, updated_at: ro.updated_at } : o));
+      pushed[ro.id] = ro.updated_at;
+    }
+  }
+  const live = new Set(next.map((o) => o.id));
+  storage.setPushed(Object.fromEntries(Object.entries(pushed).filter(([id]) => live.has(id))));
+  return next;
+}
+
+/** Remember orders closed here until the server has them, so the other screens drop them too. */
+export function noteClosed(list: Closed[]) {
+  if (!list.length) return;
+  const ids = new Set(list.map((c) => c.id));
+  storage.setClosed([...storage.closed().filter((c) => !ids.has(c.id)), ...list]);
+}
 
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
 
@@ -99,16 +169,31 @@ export function rateFor(item: Item, s: PosSettings): number {
   return item.tax_rate ?? s.gst_rate;
 }
 
-export function addItem(order: Order, item: Item, cats: Category[], s: PosSettings): Order {
-  // Add to the last line of the same item if it has no note and hasn't been fully sent, else a new line.
+export interface Choice { variation?: ItemOption | null; addon?: ItemOption | null }
+
+/** The [Jain · Kadak] tag for a line, or "" when nothing was picked. */
+export function lineTag(l: { variation?: string | null; modifier?: string | null }): string {
+  const parts = [l.variation, l.modifier].filter(Boolean);
+  return parts.length ? `[${parts.join(" · ")}]` : "";
+}
+
+export function addItem(order: Order, item: Item, cats: Category[], s: PosSettings, pick: Choice = {}, qty = 1): Order {
+  // The variation's price replaces the item's; an add-on's price is added on top.
+  const price = (pick.variation?.price ?? item.price) + (pick.addon?.price ?? 0);
+  const variation = pick.variation?.name ?? null;
+  const modifier = pick.addon?.name ?? null;
+  // Add to the last line of the same item with the same choices and no note, else start a new line.
   const lines = [...order.lines];
   let idx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].item_id === item.id && !lines[i].note) { idx = i; break; }
-  if (idx >= 0) lines[idx] = { ...lines[idx], qty: lines[idx].qty + 1 };
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (l.item_id === item.id && !l.note && (l.variation ?? null) === variation && (l.modifier ?? null) === modifier && l.price === price) { idx = i; break; }
+  }
+  if (idx >= 0) lines[idx] = { ...lines[idx], qty: lines[idx].qty + qty };
   else
     lines.push({
       key: uid(), item_id: item.id, name: item.name, category: cats.find((c) => c.id === item.category_id)?.name ?? null,
-      price: item.price, tax_rate: rateFor(item, s), qty: 1, sent: 0, note: null,
+      price, tax_rate: rateFor(item, s), qty, sent: 0, note: null, variation, modifier,
     });
   return { ...order, lines };
 }
@@ -145,23 +230,40 @@ export function takeBillNo(): string {
   return billNumber(c.code, businessDate(), next.seq);
 }
 
-/** Parcel token: starts at 1 each business day. */
+/**
+ * Token number when the server can't be reached: one more than the highest this screen has seen.
+ * Tokens keep counting and never restart. Online, tokens come from the server, so two screens never share one.
+ */
 export function takeToken(): number {
   const c = storage.counter()!;
-  const today = businessDate();
-  const token = c.tokenDate === today ? c.token + 1 : 1;
-  storage.setCounter({ ...c, tokenDate: today, token });
+  const token = c.token + 1;
+  storage.setCounter({ ...c, token });
   return token;
+}
+
+/** Remember a token number seen (from the server or another screen), so this screen never goes below it. */
+export function noteToken(n: number) {
+  const c = storage.counter();
+  if (c && n > c.token) storage.setCounter({ ...c, token: n });
+}
+
+/** The counter a bill number belongs to: "B2627-00012" → "B". Another screen may take payment for it. */
+export function counterOf(billNo: string): string {
+  return billNo.slice(0, -10);
 }
 
 export function toBill(order: Order, s: PosSettings, status: Bill["status"], payments: Payment[], reason: string | null): Bill {
   const t = totalsOf(order, s);
+  const billNo = order.bill_no ?? takeBillNo();
   return {
-    client_id: order.id, bill_no: order.bill_no ?? takeBillNo(), counter: storage.counter()!.code, business_date: order.business_date,
+    client_id: order.id, bill_no: billNo, counter: counterOf(billNo), business_date: order.business_date,
     order_type: order.type, table_id: order.table_id, table_name: order.table_name, token: order.token,
     waiter_staff_id: order.waiter_staff_id, guests: order.guests, discount: t.discount, prices_include_tax: s.prices_include_tax,
     total: t.total, status, cancel_reason: reason, opened_at: order.opened_at, closed_at: new Date().toISOString(),
-    lines: order.lines.map((l) => ({ item_id: l.item_id, name: l.name, category: l.category, qty: l.qty, price: l.price, tax_rate: l.tax_rate, note: l.note })),
+    lines: order.lines.map((l) => ({
+      item_id: l.item_id, name: l.name, category: l.category, qty: l.qty, price: l.price, tax_rate: l.tax_rate, note: l.note,
+      variation: l.variation ?? null, modifier: l.modifier ?? null,
+    })),
     payments,
   };
 }

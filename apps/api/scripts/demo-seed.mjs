@@ -193,10 +193,7 @@ for (let i = 35; i >= 1; i--) {
 }
 out.push(`INSERT INTO alerts (type, business_date, severity, params, audience) VALUES ('close_missing', ${q(addDays(today, -9))}, 'critical', ${q(JSON.stringify({ date: addDays(today, -9) }))}, 'all');`);
 
-// ---- POS: tables (demo). The real Mausam menu comes from migration 0007, so it isn't seeded here. ----
-let tableSort = 0;
-for (let n = 1; n <= 15; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Garden', 'C${n}', 6, ${++tableSort});`);
-for (let n = 1; n <= 7; n++) out.push(`INSERT INTO dining_tables (area, name, seats, sort) VALUES ('Rooftop', 'D${n}', 4, ${++tableSort});`);
+// The real menu (0007) and the Garden and Rooftop tables (0008) come from migrations, so neither is seeded here.
 
 // Waiters: IDs for the POS, a 2% default commission, and one waiter on 3%.
 let code = 0;

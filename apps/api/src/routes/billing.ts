@@ -4,6 +4,7 @@ import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { audit, bool } from "../lib/db";
 import { HttpError, isDate, optionalText, requireText } from "../lib/http";
+import { managersCanSee } from "./analytics";
 import { applyPosToCloses } from "./entries";
 
 /**
@@ -15,7 +16,7 @@ export const billing = new Hono<AppEnv>();
 
 const POS_SETTING_KEYS = [
   "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
-  "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required",
+  "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required", "pos_bill_copies",
 ] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
 
@@ -35,6 +36,8 @@ export interface PosSettings {
   commission_bp: number;
   /** A dine-in order needs a waiter before it can be paid. */
   waiter_required: boolean;
+  /** How many copies of a bill print at Save & Print (the second goes to the kitchen). Reprints print one. */
+  bill_copies: number;
 }
 
 async function loadPosSettings(db: D1Database): Promise<PosSettings> {
@@ -54,11 +57,43 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     printing: m.pos_printing === "1",
     commission_bp: Number(m.pos_commission_bp ?? 0) || 0,
     waiter_required: (m.pos_waiter_required ?? "1") === "1",
+    bill_copies: Math.min(Math.max(Number(m.pos_bill_copies ?? 2) || 2, 1), 3),
   };
 }
 
 const int = (v: unknown, min: number, max: number): number | null =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null;
+
+/** A variation or add-on on a menu item: its name and price in paise (an add-on's price is added to the item's). */
+export interface ItemOption { name: string; price: number }
+
+/** Reads the JSON stored in menu_items.variations / addons. Anything malformed is treated as none. */
+function parseOptions(raw: unknown): ItemOption[] | null {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) && v.length ? v.filter((o) => o && typeof o.name === "string" && Number.isInteger(o.price)) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Checks variations or add-ons sent by the owner and returns the JSON to store (null = none). */
+function optionsField(v: unknown, field: string): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (!Array.isArray(v) || v.length > 20) throw new HttpError(422, "invalid", { field });
+  const out: ItemOption[] = [];
+  for (const o of v as { name?: unknown; price?: unknown }[]) {
+    const name = typeof o?.name === "string" ? o.name.trim().slice(0, 40) : "";
+    const price = int(o?.price, 0, 1e8);
+    if (!name || price === null) throw new HttpError(422, "invalid", { field });
+    out.push({ name, price });
+  }
+  return out.length ? JSON.stringify(out) : null;
+}
+
+const withOptions = <T extends Record<string, unknown>>(rows: T[]) =>
+  rows.map((r) => ({ ...r, variations: parseOptions(r.variations), addons: parseOptions(r.addons) }));
 
 /* ---------------- For the counter (owner, manager, staff) ---------------- */
 
@@ -67,14 +102,14 @@ billing.get("/config", async (c) => {
   const db = c.env.DB;
   const [cats, items, tables, waiters, settings] = await Promise.all([
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
-    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort FROM menu_items WHERE active = 1 ORDER BY sort, name").all(),
+    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort, variations, addons FROM menu_items WHERE active = 1 ORDER BY sort, name").all<Record<string, unknown>>(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
     db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
   ]);
   return c.json({
     categories: cats.results,
-    items: items.results,
+    items: withOptions(items.results),
     tables: tables.results,
     waiters: waiters.results,
     settings,
@@ -83,7 +118,7 @@ billing.get("/config", async (c) => {
   });
 });
 
-interface LineIn { item_id?: unknown; name?: unknown; category?: unknown; qty?: unknown; price?: unknown; tax_rate?: unknown; note?: unknown }
+interface LineIn { item_id?: unknown; name?: unknown; category?: unknown; qty?: unknown; price?: unknown; tax_rate?: unknown; note?: unknown; variation?: unknown; modifier?: unknown }
 interface BillIn {
   client_id?: unknown; bill_no?: unknown; counter?: unknown; business_date?: unknown; order_type?: unknown;
   table_id?: unknown; table_name?: unknown; token?: unknown; waiter_staff_id?: unknown; guests?: unknown;
@@ -122,14 +157,14 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
   // A waiter removed from staff since the bill was made is dropped rather than refusing the bill.
   const waiterInfo = waiterId === null ? undefined : ctx.waiters.get(waiterId);
   const waiter = waiterInfo ? waiterId : null;
-  const token = b.token == null ? null : int(b.token, 1, 100000);
+  const token = b.token == null ? null : int(b.token, 1, 1e9);
   const guests = b.guests == null ? null : int(b.guests, 0, 500);
   const discount = b.discount == null ? 0 : int(b.discount, 0, 1e10);
   if (discount === null) return { error: "discount" };
   const include = b.prices_include_tax === undefined ? true : bool(b.prices_include_tax);
 
   if (!Array.isArray(b.lines) || b.lines.length === 0 || b.lines.length > 200) return { error: "lines" };
-  const lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null }[] = [];
+  const lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null; variation: string | null; modifier: string | null }[] = [];
   for (const l of b.lines as LineIn[]) {
     const qty = int(l?.qty, 1, 999);
     const price = int(l?.price, 0, 1e8);
@@ -141,6 +176,8 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
       category: typeof l.category === "string" ? l.category.slice(0, 80) : null,
       qty, price, tax_rate: rate,
       note: typeof l.note === "string" && l.note.trim() ? l.note.trim().slice(0, 200) : null,
+      variation: typeof l.variation === "string" && l.variation.trim() ? l.variation.trim().slice(0, 40) : null,
+      modifier: typeof l.modifier === "string" && l.modifier.trim() ? l.modifier.trim().slice(0, 40) : null,
     });
   }
   const totals = billTotals(lines, discount, include);
@@ -176,9 +213,9 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
     ),
     ...lines.map((l) =>
       db.prepare(
-        `INSERT INTO pos_bill_items (bill_id, item_id, name, category, qty, price, tax_rate, amount, note)
-         VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(b.client_id, l.item_id, l.name, l.category, l.qty, l.price, l.tax_rate, l.price * l.qty, l.note),
+        `INSERT INTO pos_bill_items (bill_id, item_id, name, category, qty, price, tax_rate, amount, note, variation, modifier)
+         VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(b.client_id, l.item_id, l.name, l.category, l.qty, l.price, l.tax_rate, l.price * l.qty, l.note, l.variation, l.modifier),
     ),
     ...payments.map((p) =>
       db.prepare("INSERT INTO pos_payments (bill_id, mode, amount) VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?)").bind(b.client_id, p.mode, p.amount),
@@ -213,10 +250,10 @@ export async function refreshPosDay(db: D1Database, date: string): Promise<void>
     db.prepare("DELETE FROM pos_items WHERE business_date = ?").bind(date),
     db.prepare(
       `INSERT INTO pos_items (business_date, item, category, qty, amount, import_id)
-       SELECT b.business_date, i.name, MAX(i.category), SUM(i.qty), SUM(i.amount), NULL
+       SELECT b.business_date, i.name || COALESCE(' [' || i.variation || ']', ''), MAX(i.category), SUM(i.qty), SUM(i.amount), NULL
        FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
        WHERE b.business_date = ? AND b.status = 'paid'
-       GROUP BY i.name`,
+       GROUP BY i.name, i.variation`,
     ).bind(date),
   ]);
 }
@@ -278,8 +315,141 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
 billing.get("/counters/:code/last", requireRole("owner", "manager", "staff"), async (c) => {
   const code = c.req.param("code");
   if (!validCounter(code)) throw new HttpError(422, "invalid", { field: "code" });
-  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE counter = ? ORDER BY bill_no DESC LIMIT 1").bind(code).first<{ bill_no: string }>();
+  // By number, not by the counter that sent it: another screen may have taken payment for this counter's bill.
+  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE bill_no LIKE ? ORDER BY bill_no DESC LIMIT 1").bind(`${code}%`).first<{ bill_no: string }>();
   return c.json({ last_bill_no: row?.bill_no ?? null });
+});
+
+/* ---------------- Several POS screens: shared running orders and one token counter ---------------- */
+
+const ORDER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+/** The routes below are for everyone who uses the POS: the owner, managers and employees. */
+const anyPosUser = requireRole("owner", "manager", "staff");
+
+async function tokenLast(db: D1Database): Promise<number> {
+  const r = await db.prepare("SELECT value FROM settings WHERE key = 'pos_token_last'").first<{ value: string }>();
+  return Number(r?.value ?? 0) || 0;
+}
+
+/**
+ * The next token number, for any screen. Tokens keep counting and never restart. `min` is the highest token the
+ * screen has seen (it may have handed some out while offline), so the count never goes backwards.
+ */
+billing.post("/tokens/next", anyPosUser, async (c) => {
+  const b = await c.req.json<{ min?: unknown }>().catch(() => ({} as { min?: unknown }));
+  const min = int(b.min ?? 0, 0, 1e9) ?? 0;
+  const row = await c.env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES ('pos_token_last', CAST(?1 + 1 AS TEXT))
+     ON CONFLICT (key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER), ?1) + 1 AS TEXT)
+     RETURNING value`,
+  ).bind(min).first<{ value: string }>();
+  return c.json({ token: Number(row?.value) });
+});
+
+interface OrderIn { id?: unknown; updated_at?: unknown; closed?: unknown; data?: unknown }
+interface OrderRow { id: string; data: string; updated_at: string; closed: number; seq: number }
+
+/**
+ * A screen sends the running orders it changed (and the ones it closed), and gets back every change since `since`.
+ * The newest change to an order wins; once any screen closes an order, it stays closed.
+ */
+billing.post("/orders/sync", anyPosUser, async (c) => {
+  const body = await c.req.json<{ counter?: unknown; since?: unknown; last_token?: unknown; orders?: unknown }>();
+  const db = c.env.DB;
+  const since = int(body.since ?? 0, 0, 1e15) ?? 0;
+  const counter = validCounter(body.counter) ? body.counter : null;
+  const list = Array.isArray(body.orders) ? (body.orders as OrderIn[]) : [];
+  if (list.length > 100) throw new HttpError(422, "invalid", { field: "orders" });
+
+  const stmts: D1PreparedStatement[] = [];
+  const ids: string[] = [];
+  let maxToken = int(body.last_token ?? 0, 0, 1e9) ?? 0;
+  for (const o of list) {
+    if (typeof o?.id !== "string" || !ORDER_ID_RE.test(o.id)) throw new HttpError(422, "invalid", { field: "id" });
+    if (typeof o.updated_at !== "string" || !ISO_RE.test(o.updated_at)) throw new HttpError(422, "invalid", { field: "updated_at" });
+    const closed = o.closed === true;
+    let data = "{}";
+    if (!closed) {
+      if (!o.data || typeof o.data !== "object" || Array.isArray(o.data)) throw new HttpError(422, "invalid", { field: "data" });
+      data = JSON.stringify(o.data);
+      if (data.length > 64_000) throw new HttpError(422, "invalid", { field: "data" });
+      const tok = int((o.data as { token?: unknown }).token ?? 0, 0, 1e9) ?? 0;
+      if (tok > maxToken) maxToken = tok;
+    }
+    ids.push(o.id);
+    stmts.push(
+      db.prepare(
+        `INSERT INTO pos_open_orders (id, data, updated_at, closed, counter, seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(seq), 0) + 1 FROM pos_open_orders))
+         ON CONFLICT (id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, closed = excluded.closed,
+           counter = excluded.counter, seq = excluded.seq, saved_at = datetime('now')
+         WHERE pos_open_orders.closed = 0 AND (excluded.closed = 1 OR excluded.updated_at > pos_open_orders.updated_at)`,
+      ).bind(o.id, data, o.updated_at, closed ? 1 : 0, counter),
+    );
+  }
+  if (stmts.length) await db.batch(stmts);
+
+  // Keep the shared token counter at least as high as any token a screen has used (e.g. while offline).
+  let last = await tokenLast(db);
+  if (maxToken > last) {
+    await db.prepare("UPDATE settings SET value = CAST(MAX(CAST(value AS INTEGER), ?) AS TEXT) WHERE key = 'pos_token_last'").bind(maxToken).run();
+    last = maxToken;
+  }
+  // Closed orders are only needed until every screen has seen them.
+  if (Math.random() < 0.02) await db.prepare("DELETE FROM pos_open_orders WHERE closed = 1 AND saved_at < datetime('now', '-3 days')").run();
+
+  // What changed since this screen last asked (a new screen gets just the open orders), plus the current
+  // state of every order it sent, in case another screen's change was newer.
+  const { results: changed } = await db
+    .prepare("SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE seq > ?1 AND (?1 > 0 OR closed = 0) ORDER BY seq LIMIT 500")
+    .bind(since)
+    .all<OrderRow>();
+  const sent = ids.length
+    ? (await db.prepare(`SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<OrderRow>()).results
+    : [];
+  const top = since === 0 && changed.length < 500
+    ? (await db.prepare("SELECT COALESCE(MAX(seq), 0) AS m FROM pos_open_orders").first<{ m: number }>())?.m ?? 0
+    : changed.at(-1)?.seq ?? since;
+  const rows = new Map<string, OrderRow>();
+  for (const r of [...changed, ...sent]) rows.set(r.id, r);
+  return c.json({
+    cursor: Math.max(since, top),
+    token_last: last,
+    orders: [...rows.values()].map((r) => ({ id: r.id, updated_at: r.updated_at, closed: r.closed === 1, data: r.closed ? null : JSON.parse(r.data) })),
+  });
+});
+
+/** Every bill of a day from all screens, for the day summary on any screen (and reprints). */
+billing.get("/day", anyPosUser, async (c) => {
+  const date = c.req.query("date") ?? businessDate();
+  if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
+  const db = c.env.DB;
+  const { results: bills } = await db
+    .prepare(
+      `SELECT id, client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
+              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at
+       FROM pos_bills WHERE business_date = ? ORDER BY closed_at`,
+    )
+    .bind(date)
+    .all<Record<string, unknown> & { id: number }>();
+  const [items, pays] = await Promise.all([
+    db.prepare(
+      `SELECT i.bill_id, i.item_id, i.name, i.category, i.qty, i.price, i.tax_rate, i.note, i.variation, i.modifier
+       FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date = ? ORDER BY i.id`,
+    ).bind(date).all<{ bill_id: number }>(),
+    db.prepare("SELECT p.bill_id, p.mode, p.amount FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date = ? ORDER BY p.id")
+      .bind(date).all<{ bill_id: number }>(),
+  ]);
+  const strip = <R extends { bill_id: number }>(r: R) => { const { bill_id: _b, ...rest } = r; return rest; };
+  return c.json({
+    date,
+    bills: bills.map(({ id, ...b }) => ({
+      ...b,
+      prices_include_tax: bool(b.prices_include_tax),
+      lines: items.results.filter((i) => i.bill_id === id).map(strip),
+      payments: pays.results.filter((p) => p.bill_id === id).map(strip),
+    })),
+  });
 });
 
 /* ---------------- For the owner and managers: looking at bills ---------------- */
@@ -319,15 +489,21 @@ billing.use("/tables/*", requireRole("owner"));
 billing.use("/tables", requireRole("owner"));
 billing.use("/settings", requireRole("owner"));
 billing.use("/waiters", requireRole("owner"));
-billing.use("/waiters/*", requireRole("owner"));
+billing.use("/waiters/*", async (c, next) => {
+  // The waiters report is part of the analytics the owner can share with managers for the month.
+  const user = c.get("user");
+  if (user.role === "manager" && c.req.method === "GET" && c.req.path.endsWith("/waiters/report") && (await managersCanSee(c.env.DB))) return next();
+  if (user.role !== "owner") throw new HttpError(403, "not_allowed");
+  return next();
+});
 
 billing.get("/menu", async (c) => {
   const db = c.env.DB;
   const [cats, items] = await Promise.all([
     db.prepare("SELECT * FROM menu_categories ORDER BY active DESC, sort, name").all(),
-    db.prepare("SELECT * FROM menu_items ORDER BY active DESC, sort, name").all(),
+    db.prepare("SELECT * FROM menu_items ORDER BY active DESC, sort, name").all<Record<string, unknown>>(),
   ]);
-  return c.json({ categories: cats.results, items: items.results });
+  return c.json({ categories: cats.results, items: withOptions(items.results) });
 });
 
 function categoryFields(b: Record<string, unknown>) {
@@ -373,6 +549,8 @@ function itemFields(b: Record<string, unknown>) {
     name_hi: optionalText(b.name_hi, 120),
     name_kn: optionalText(b.name_kn, 120),
     short_name: optionalText(b.short_name, 40),
+    variations: typeof b.variations === "string" ? optionsField(parseOptions(b.variations), "variations") : optionsField(b.variations, "variations"),
+    addons: typeof b.addons === "string" ? optionsField(parseOptions(b.addons), "addons") : optionsField(b.addons, "addons"),
     price,
     tax_rate: rate,
     hsn: optionalText(b.hsn, 12),
@@ -386,8 +564,8 @@ function itemFields(b: Record<string, unknown>) {
 billing.post("/menu/items", async (c) => {
   const f = itemFields(await c.req.json());
   const res = await c.env.DB.prepare(
-    "INSERT INTO menu_items (category_id, name, name_hi, name_kn, short_name, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
+    "INSERT INTO menu_items (category_id, name, name_hi, name_kn, short_name, variations, addons, price, tax_rate, hsn, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.variations, f.addons, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active).run();
   const id = Number(res.meta.last_row_id);
   await audit(c.env.DB, "menu_items", id, "create", null, f, c.get("user").id);
   return c.json({ id }, 201);
@@ -399,9 +577,9 @@ billing.patch("/menu/items/:id", async (c) => {
   if (!before) throw new HttpError(404, "not_found");
   const f = itemFields({ ...before, ...(await c.req.json<Record<string, unknown>>()) });
   await c.env.DB.prepare(
-    `UPDATE menu_items SET category_id = ?, name = ?, name_hi = ?, name_kn = ?, short_name = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
+    `UPDATE menu_items SET category_id = ?, name = ?, name_hi = ?, name_kn = ?, short_name = ?, variations = ?, addons = ?, price = ?, tax_rate = ?, hsn = ?, veg = ?, favourite = ?, sort = ?, active = ?,
        updated_at = datetime('now') WHERE id = ?`,
-  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
+  ).bind(f.category_id, f.name, f.name_hi, f.name_kn, f.short_name, f.variations, f.addons, f.price, f.tax_rate, f.hsn, f.veg, f.favourite, f.sort, f.active, id).run();
   await audit(c.env.DB, "menu_items", id, "update", before, f, c.get("user").id);
   return c.json({ ok: true });
 });
@@ -459,6 +637,11 @@ billing.put("/settings", async (c) => {
   if (b.bill_footer !== undefined) updates.push(["pos_bill_footer", optionalText(b.bill_footer, 200) ?? ""]);
   for (const [field, key] of [["use_tables", "pos_use_tables"], ["use_gst", "pos_use_gst"], ["printing", "pos_printing"], ["waiter_required", "pos_waiter_required"]] as const) {
     if (b[field] !== undefined) updates.push([key, b[field] ? "1" : "0"]);
+  }
+  if (b.bill_copies !== undefined) {
+    const r = int(b.bill_copies, 1, 3);
+    if (r === null) throw new HttpError(422, "invalid", { field: "bill_copies" });
+    updates.push(["pos_bill_copies", String(r)]);
   }
   if (b.commission_bp !== undefined) {
     const r = int(b.commission_bp, 0, 10000);

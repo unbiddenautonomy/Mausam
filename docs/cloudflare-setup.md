@@ -140,9 +140,12 @@ Do this straight after step 8.
 
 **You should see:** the owner's **Today** screen.
 
-### Step 10. Add managers and staff
+### Step 10. Add managers and employees
 
-1. **Manage → App users**: add each manager with their phone number, a 4-digit PIN and their language. Tell each one their PIN.
+1. **Manage → App users**: add each person who uses the app, with their phone number, a 4-digit PIN and their language, and tell each one their PIN. Everyone uses the same address, and what they see depends on their role:
+   - **Owner**: everything, including reports, pay and settings.
+   - **Manager**: entries (shopping, expenses, closing the day), attendance and advances, vendors, alerts, bills, and the basic reports (sales, cash and online, expenses). The deeper analytics only when the owner shares them for the month.
+   - **Employee**: uses only the POS at the counter. If an employee opens the admin app, it sends them to the POS.
 2. **Manage → Staff**: add your staff. Leave pay blank if you don't know it yet.
 
 ### Step 11. Set up each manager's phone
@@ -158,15 +161,15 @@ On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the ap
 
 ### Step 12. Set up the billing counter (POS)
 
-1. In the admin app, **Manage → Menu**: add categories and items with prices. Under **Bills and GST**, set your GSTIN, GST rate, and whether prices include GST.
-2. **Manage → Tables**: add your tables (for example area "Garden", first table "C1", 15 tables).
-3. **Manage → App users**: add a user for the counter with the **staff** role. A cashier can bill, but can't see reports or change settings.
+1. In the admin app, **Manage → Menu**: add categories and items with prices. In **Manage → POS options**, set the bill heading and footer, and GST if you charge it.
+2. **Manage → Tables**: tables T1 to T22 are already there. Rename, add or remove them to match your floor.
+3. **Manage → App users**: add a user for each person who bills at the counter, with the **Employee** role. Employees can only use the POS.
 4. On the counter PC, open `https://<your address>/pos/` in Chrome, log in as that user, and pick counter **A**.
 5. To print without a pop-up each time: make the receipt printer the Windows default printer. Then right-click the desktop → **New → Shortcut**, and use this as the location:
    ```
    "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --kiosk-printing https://<your address>/pos/
    ```
-   Open the POS from that shortcut. Bills and kitchen tickets print straight away on 80 mm paper. Press Alt+F4 to leave.
+   Open the POS from that shortcut. Bills print straight away on 80 mm paper. Press Alt+F4 to leave. The full printer setup is in [pos-printing.md](pos-printing.md).
 
 If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
 

@@ -2,11 +2,57 @@ import { Hono } from "hono";
 import { addDays, businessDate, dateRange } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
-import { isDate } from "../lib/http";
+import { audit } from "../lib/db";
+import { HttpError, isDate } from "../lib/http";
 import { rangeTotals } from "../lib/totals";
 
 export const analytics = new Hono<AppEnv>();
-analytics.use("*", requireRole("owner"));
+
+/** The last day (inclusive) the owner has shared the deeper analytics with managers, or null. */
+export async function sharedUntil(db: D1Database): Promise<string | null> {
+  const r = await db.prepare("SELECT value FROM settings WHERE key = 'analytics_shared_until'").first<{ value: string }>();
+  return r && isDate(r.value) ? r.value : null;
+}
+
+/** Can a manager see the deeper analytics today? Only while the owner's monthly share lasts. */
+export async function managersCanSee(db: D1Database): Promise<boolean> {
+  const until = await sharedUntil(db);
+  return !!until && until >= businessDate();
+}
+
+// Managers always see the basic sales views; the rest only while the owner shares them. The audit log stays the owner's.
+const BASIC = new Set(["/weekdays", "/hours", "/share"]);
+analytics.use("*", async (c, next) => {
+  const role = c.get("user").role;
+  if (role === "owner") return next();
+  const path = c.req.path.replace(/^\/api/, "").replace(/^\/analytics/, "");
+  if (role === "manager" && path !== "/audit" && (BASIC.has(path) || (await managersCanSee(c.env.DB)))) return next();
+  throw new HttpError(403, "not_allowed");
+});
+
+/** Whether the deeper analytics are shared with managers, and until when. */
+analytics.get("/share", async (c) => {
+  const until = await sharedUntil(c.env.DB);
+  return c.json({ until, active: !!until && until >= businessDate() });
+});
+
+/** Owner: share the deeper analytics with managers until the end of this month, or stop sharing. */
+analytics.put("/share", requireRole("owner"), async (c) => {
+  const b = await c.req.json<{ share?: unknown }>();
+  const db = c.env.DB;
+  const today = businessDate();
+  if (b.share) {
+    const [y, m] = today.split("-").map(Number);
+    const until = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of this month
+    await db.prepare("INSERT INTO settings (key, value) VALUES ('analytics_shared_until', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(until).run();
+    await audit(db, "settings", 0, "update", null, { analytics_shared_until: until }, c.get("user").id);
+  } else {
+    await db.prepare("DELETE FROM settings WHERE key = 'analytics_shared_until'").run();
+    await audit(db, "settings", 0, "update", null, { analytics_shared_until: null }, c.get("user").id);
+  }
+  const until = await sharedUntil(db);
+  return c.json({ until, active: !!until && until >= today });
+});
 
 function range(c: { req: { query: (k: string) => string | undefined } }) {
   const to = isDate(c.req.query("to")) ? c.req.query("to")! : businessDate();
@@ -91,6 +137,26 @@ analytics.get("/weekdays", async (c) => {
     sums[d].n++;
   }
   return c.json({ from, to, days: dateRange(from, to).length, weekdays: sums.map((s, i) => ({ weekday: i, avg: s.n ? Math.round(s.total / s.n) : null, n: s.n })) });
+});
+
+/** Busy hours: average sales in each hour of the day, from POS bills (India time). */
+analytics.get("/hours", async (c) => {
+  const { from, to } = range(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT CAST(strftime('%H', closed_at, '+330 minutes') AS INTEGER) AS hour, COUNT(*) AS bills, SUM(total) AS sales,
+            COUNT(DISTINCT business_date) AS days
+     FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ? GROUP BY hour ORDER BY hour`,
+  )
+    .bind(from, to)
+    .all<{ hour: number; bills: number; sales: number; days: number }>();
+  const span = await c.env.DB.prepare("SELECT COUNT(DISTINCT business_date) AS n FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?")
+    .bind(from, to)
+    .first<{ n: number }>();
+  const n = span?.n ?? 0;
+  return c.json({
+    from, to, days_with_bills: n,
+    hours: results.map((r) => ({ hour: r.hour, avg_sales: n ? Math.round(r.sales / n) : 0, avg_bills: n ? Math.round((r.bills / n) * 10) / 10 : 0 })),
+  });
 });
 
 /** Recent changes across the app, newest first. */
