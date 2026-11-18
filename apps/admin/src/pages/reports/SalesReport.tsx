@@ -3,7 +3,7 @@ import { dateRange, formatDay, formatINR, formatINRShort, type Lang } from "@mau
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, hourSpan, ReportFrame, shortDay, type Range } from "./common";
 
 export interface DailyRow {
   business_date: string;
@@ -142,12 +142,9 @@ function BusyHours({ days }: { days: Range }) {
   const res = useApi<{ days_with_bills: number; hours: { hour: number; avg_sales: number; avg_bills: number }[] }>(`/analytics/hours?days=${days}`);
   if (!res.data || res.data.days_with_bills < 1 || !res.data.hours.length) return null;
   const label = (h: number) => `${((h + 11) % 12) + 1}${h < 12 ? "am" : "pm"}`;
-  // Every hour from the first to the last with sales, so quiet hours show as gaps rather than disappearing.
-  const first = res.data.hours[0].hour;
-  const last = res.data.hours.at(-1)!.hour;
+  // Every hour from the first to the last with sales (5am to 5am), so quiet hours show as gaps rather than disappearing.
   const byHour = new Map(res.data.hours.map((h) => [h.hour, h]));
-  const rows = Array.from({ length: last - first + 1 }, (_, i) => {
-    const h = first + i;
+  const rows = hourSpan(res.data.hours.map((h) => h.hour)).map((h) => {
     return { label: label(h), avg_sales: byHour.get(h)?.avg_sales ?? 0, avg_bills: byHour.get(h)?.avg_bills ?? 0 };
   });
   const avgName = t("reports.hour_avg");

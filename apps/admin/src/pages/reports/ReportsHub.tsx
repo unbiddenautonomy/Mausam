@@ -25,6 +25,7 @@ export function ReportsHub() {
         <NavCard to="/reports/payments" icon="wallet" title={t("reports.cash")} desc={t("reports.cash_desc")} />
         <NavCard to="/reports/expenses" icon="pie" title={t("reports.expenses")} desc={t("reports.expenses_desc")} />
         <NavCard to="/reports/item-sales" icon="checklist" title={t("reports.day_items")} desc={t("reports.day_items_desc")} />
+        <NavCard to="/reports/order-types" icon="truck" title={t("reports.order_types")} desc={t("reports.order_types_desc")} />
         <NavCard to="/reports/cancellations" icon="alert" title={t("reports.leaks")} desc={t("reports.leaks_desc")} />
       </div>
       {owner && <ShareCard share={share.data} onChange={share.reload} />}

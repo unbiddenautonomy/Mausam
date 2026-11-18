@@ -48,6 +48,15 @@ export function ChartTooltip({
 export const axisTick = { fill: "var(--text-3)", fontSize: 12 };
 export const shortDay = (d: string) => formatDay(d, false);
 
+/** Hours from the first to the last with sales, in business-day order (5am to 5am), so late-night hours come after the evening. */
+export function hourSpan(hours: number[]): number[] {
+  if (!hours.length) return [];
+  const pos = (h: number) => (h - 5 + 24) % 24;
+  const first = Math.min(...hours.map(pos));
+  const last = Math.max(...hours.map(pos));
+  return Array.from({ length: last - first + 1 }, (_, i) => (first + i + 5) % 24);
+}
+
 /** Horizontal bars for a ranked list (one series, so one colour). */
 export function BarList({ rows, total }: { rows: { key: string; label: string; amount: number; sub?: string }[]; total?: number }) {
   const sum = total ?? rows.reduce((s, r) => s + r.amount, 0);

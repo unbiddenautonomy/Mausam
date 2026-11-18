@@ -193,6 +193,34 @@ owner.get("/reports/item-sales", async (c) => {
   return c.json({ date, items: results });
 });
 
+/** Dine-in against parcel: sales, bills and average bill for each, by day and by hour, and each one's top items. Paid bills only. */
+owner.get("/reports/order-types", async (c) => {
+  const { from, to } = rangeFrom(c);
+  const db = c.env.DB;
+  const [daily, hours, items] = await Promise.all([
+    db.prepare(
+      `SELECT business_date, order_type, COUNT(*) AS bills, SUM(total) AS sales
+       FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?
+       GROUP BY business_date, order_type ORDER BY business_date`,
+    ).bind(from, to).all<{ business_date: string; order_type: "dine_in" | "parcel"; bills: number; sales: number }>(),
+    db.prepare(
+      `SELECT CAST(strftime('%H', closed_at, '+330 minutes') AS INTEGER) AS hour, order_type, COUNT(*) AS bills, SUM(total) AS sales
+       FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?
+       GROUP BY hour, order_type ORDER BY hour`,
+    ).bind(from, to).all<{ hour: number; order_type: "dine_in" | "parcel"; bills: number; sales: number }>(),
+    db.prepare(
+      `SELECT order_type, name, qty, amount FROM (
+         SELECT b.order_type, i.name, SUM(i.qty) AS qty, SUM(i.amount) AS amount,
+                ROW_NUMBER() OVER (PARTITION BY b.order_type ORDER BY SUM(i.amount) DESC) AS rn
+         FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
+         WHERE b.status = 'paid' AND b.business_date BETWEEN ? AND ?
+         GROUP BY b.order_type, i.name)
+       WHERE rn <= 8 ORDER BY order_type, amount DESC`,
+    ).bind(from, to).all<{ order_type: "dine_in" | "parcel"; name: string; qty: number; amount: number }>(),
+  ]);
+  return c.json({ from, to, days: daily.results, hours: hours.results, items: items.results });
+});
+
 /* ---------- App users ---------- */
 
 owner.get("/users", async (c) => {
