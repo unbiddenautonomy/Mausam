@@ -10,7 +10,7 @@ Admin app for Mausam Restaurant: managers log morning shopping, expenses and the
 | `apps/api` | The API on a Cloudflare Worker (Hono), with the D1 database and KV storage for photos and backups. In production this same Worker also serves the admin app. |
 | `apps/pos` | The touchscreen POS for the billing counter (React + Vite), served at `/pos/`. Works offline and syncs bills. |
 | `packages/shared` | Code both apps use: money and date rules, closing checks, and the English, Hindi and Kannada text. |
-| `docs/` | Setup guide and notes. |
+| `docs/` | Setup guide and notes. Start with [docs/how-to-use.md](docs/how-to-use.md) for how to use the admin app and the POS day to day. |
 
 ## Run it on your computer
 
