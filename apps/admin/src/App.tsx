@@ -11,6 +11,7 @@ import { AddExpense } from "./pages/AddExpense";
 import { Expenses } from "./pages/Expenses";
 import { CloseDay } from "./pages/CloseDay";
 import { History } from "./pages/History";
+import { Unsent } from "./pages/Unsent";
 import { Alerts } from "./pages/Alerts";
 import { More } from "./pages/More";
 import { ReportsHub } from "./pages/reports/ReportsHub";
@@ -60,6 +61,7 @@ export function App() {
           <Route path="entries/close" element={<CloseDay />} />
           <Route path="entries/close/:date" element={<CloseDay />} />
           <Route path="entries/history" element={<History />} />
+          <Route path="entries/unsent" element={<Unsent />} />
           <Route path="people" element={<PeopleHub />} />
           <Route path="people/attendance" element={<Attendance />} />
           <Route path="people/advances" element={<Advances />} />

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { businessDate, formatDay, formatINR, monthCloseFor, monthDates, rupeesToPaise } from "@mausam/shared";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName } from "../lib/format";
@@ -37,7 +37,16 @@ export function MonthClose() {
     if (path === "close" && !window.confirm(t("month.close_confirm"))) return;
     setError(null);
     try {
-      await api(`/month/${m}/${path}`, { method: "POST" });
+      try {
+        await api(`/month/${m}/${path}`, { method: "POST" });
+      } catch (e) {
+        // Days without a closing, or pay not yet marked paid: say what's missing and ask before closing anyway.
+        if (!(e instanceof ApiError && e.code === "month_incomplete")) throw e;
+        const days = (e.detail?.missing ?? []).length as number;
+        const staff = Number(e.detail?.unpaid ?? 0);
+        if (!window.confirm(t("month.incomplete_confirm", { days, staff }))) return;
+        await api(`/month/${m}/${path}`, { method: "POST", json: { force: true } });
+      }
       res.reload();
     } catch (e) {
       setError(e);
@@ -76,11 +85,13 @@ export function MonthClose() {
             </div>
           </div>
           <ErrorNote error={error} />
-          {!closed && (
+          {!closed && (m < today.slice(0, 7) ? (
             <button className="btn primary block no-print" onClick={() => act("close")}>
               <Icon name="lock" /> {t("month.close")}
             </button>
-          )}
+          ) : (
+            <p className="muted no-print">{t("error.month_not_over")}</p>
+          ))}
         </>
       )}
     </div>

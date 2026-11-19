@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { businessDate, changeDue, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
-import { api, ApiError, fetchConfig, fetchDay, nextToken, syncBills, syncOrders } from "./api";
+import { businessDate, changeDue, financialYear, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
+import { api, ApiError, fetchConfig, fetchDay, claimCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import {
-  addItem, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
-  type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
+  addItem, billNumbersFull, clockOffMinutes, DISCOUNT_REASONS, keepStorage, onStorageChange, serverNow, storageBroken, overDiscountLimit, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  type Approver, type Bill, type Choice, type DiscountReason, type PosSettings, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
 type T = (key: Key, params?: Record<string, string | number>) => string;
+
+/** Why the server refused a bill, in words. */
+function rejectText(t: T, code: string): string {
+  const known: Record<string, Key> = {
+    duplicate_number: "bill_error.duplicate_number", total_mismatch: "bill_error.total_mismatch", payments_total: "bill_error.payments_total",
+  };
+  return known[code] ? t(known[code]) : t("bill_error.other", { code });
+}
 /** "Original" when the bill is printed as the order is saved or paid; "Duplicate" for a reprint. */
 type Copy = "Original" | "Duplicate";
 type PrintJob =
@@ -33,8 +41,11 @@ export function App() {
   const [counter, setCounter] = useState(storage.counter());
 
   if (!loggedIn) return <Login t={t} lang={lang} setLang={setLang} onDone={() => setLoggedIn(true)} />;
-  if (!counter) return <CounterSetup t={t} onDone={() => setCounter(storage.counter())} />;
-  return <Counter t={t} lang={lang} setLang={setLang} onLogout={() => (storage.setToken(null), setLoggedIn(false))} />;
+  if (!counter || counter.taken) return <CounterSetup t={t} taken={counter?.taken ? counter.code : null} onDone={() => setCounter(storage.counter())} />;
+  return (
+    <Counter t={t} lang={lang} setLang={setLang} onLogout={() => void logout().then(() => setLoggedIn(false))}
+      onCounterTaken={() => setCounter(storage.counter())} />
+  );
 }
 
 /* ---------------- Login: phone, then PIN on a big number pad ---------------- */
@@ -102,11 +113,28 @@ function Login({ t, lang, setLang, onDone }: { t: T; lang: Lang; setLang: (l: La
 
 /* ---------------- First run on a device: which counter is this? ---------------- */
 
-function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
-  const [code, setCode] = useState("A");
+/**
+ * Picks this device's counter letter. A letter another device holds is refused. With no internet the letter is taken
+ * on trust and claimed with the first bills sent; if another device holds it, this screen comes back here.
+ * `taken`: the letter this device had, which the server says another device holds.
+ */
+function CounterSetup({ t, taken, onDone }: { t: T; taken: string | null; onDone: () => void }) {
+  const [code, setCode] = useState(taken ? "" : "A");
   const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(taken);
   async function go() {
     setBusy(true);
+    try {
+      if ((await claimCounter(code)) === "taken") {
+        setRefused(code);
+        setBusy(false);
+        return;
+      }
+    } catch {
+      setBusy(false);
+      return;
+    }
+    keepStorage();
     // Carry on from the last bill this counter sent, in case the device was reset.
     let seq = 0;
     try {
@@ -115,7 +143,7 @@ function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
     } catch {
       /* offline: start from 0; the server refuses a repeated number, so nothing is lost silently */
     }
-    storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0 });
+    storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0, fy: financialYear(businessDate()) });
     onDone();
   }
   return (
@@ -123,8 +151,9 @@ function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
       <div className="login-card">
         <h1>{t("setup.title")}</h1>
         <p className="muted">{t("setup.help")}</p>
+        {refused && <p className="banner bad" role="alert">{t("counter_taken", { code: refused })}</p>}
         <div className="lang-row">
-          {["A", "B", "C", "D"].map((c) => <button key={c} className={`chip big${code === c ? " on" : ""}`} onClick={() => setCode(c)}>{c}</button>)}
+          {["A", "B", "C", "D", "E", "F"].map((c) => <button key={c} className={`chip big${code === c ? " on" : ""}`} onClick={() => setCode(c)}>{c}</button>)}
         </div>
         <button className="btn primary big block" disabled={busy || !validCounter(code)} onClick={go}>{t("setup.go")}</button>
       </div>
@@ -139,7 +168,9 @@ type View =
   | { kind: "bill"; bill: Bill }
   | { kind: "paid"; bill: Bill; change: number };
 
-function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l: Lang) => void; onLogout: () => void }) {
+function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
+  t: T; lang: Lang; setLang: (l: Lang) => void; onLogout: () => void; onCounterTaken: () => void;
+}) {
   const [config, setConfig] = useState<Config | null>(storage.config());
   const [configError, setConfigError] = useState(false);
   const [orders, setOrdersState] = useState<Order[]>(storage.orders());
@@ -153,12 +184,17 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
   const [askLogout, setAskLogout] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [cantSave, setCantSave] = useState(storageBroken());
+  useEffect(() => {
+    keepStorage();
+    return onStorageChange(setCantSave);
+  }, []);
 
   /** A change made on this screen: changed orders get a new version time, and removed ones are closed for every screen. */
   const setOrders = (fn: (o: Order[]) => Order[]) =>
     setOrdersState((prev) => {
       const raw = fn(prev);
-      const at = new Date().toISOString();
+      const at = serverNow().toISOString();
       const before = new Map(prev.map((o) => [o.id, o]));
       const next = raw.map((o) => (before.get(o.id) === o ? o : { ...o, updated_at: at }));
       const kept = new Set(next.map((o) => o.id));
@@ -199,7 +235,18 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
       if (e instanceof ApiError && e.status === 401) return onLogout();
     }
     refreshBills();
-  }, [onLogout]);
+    if (storage.counter()?.taken) onCounterTaken();
+  }, [onLogout, onCounterTaken]);
+
+  /** Sends a refused bill again, once someone has looked at why. */
+  const resend = async (clientId: string) => {
+    try {
+      await resendBill(clientId);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return onLogout();
+    }
+    refreshBills();
+  };
 
   useEffect(() => {
     void loadConfig();
@@ -364,6 +411,9 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
         <span className="who">{storage.counter()?.code} · {user?.name}</span>
       </header>
       {rejected > 0 && <div className="banner bad">{t("rejected", { n: rejected })}</div>}
+      {billNumbersFull(storage.counter()) && <div className="banner bad">{t("numbers_full")}</div>}
+      {cantSave && <div className="banner bad" role="alert">{t("storage_broken")}</div>}
+      {clockOffMinutes() > 0 && <div className="banner bad">{t("clock_off", { n: clockOffMinutes() })}</div>}
 
       {screen === "tables" && (tablesOn ? (
         <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable} onParcel={newParcel} onNew={newTableOrder} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
@@ -397,6 +447,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
           onSync={() => void sync()} onPrint={(date, list) => setPrint({ kind: "summary", date, bills: list })}
           onPrintItems={(date, list) => setPrint({ kind: "items", date, bills: list })}
           onOpen={showBill}
+          onResend={(id) => void resend(id)}
           onLogout={() => setAskLogout(true)}
         />
       )}
@@ -651,7 +702,7 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
                 {l.note && <span className="note">✎ {l.note}</span>}
               </div>
               <div className="stepper">
-                <button onClick={() => update((o) => changeQty(o, l.key, -1))} aria-label="−">−</button>
+                <button onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))} aria-label="−">−</button>
                 <span className="num">{l.qty}</span>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
@@ -697,8 +748,9 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
       {dialog === "pay" && <PayDialog t={t} due={totals.total} onClose={() => setDialog(null)} onDone={(p, change) => (setDialog(null), onPaid(p, change))} />}
       {dialog === "cancel" && <CancelDialog t={t} onClose={() => setDialog(null)} onDone={(r) => (setDialog(null), onCancel(r))} />}
       {dialog === "discount" && (
-        <DiscountDialog t={t} subtotal={totals.subtotal} current={order.discount} onClose={() => setDialog(null)}
-          onDone={(d) => (setDialog(null), update((o) => ({ ...o, discount: d })))} />
+        <DiscountDialog t={t} subtotal={totals.subtotal} current={order.discount} currentReason={order.discount_reason ?? null}
+          settings={config.settings} approvers={config.approvers ?? []} onClose={() => setDialog(null)}
+          onDone={(d, reason, by) => (setDialog(null), update((o) => ({ ...o, discount: d, discount_reason: d ? reason : null, discount_approved_by: d ? by : null })))} />
       )}
       {(dialog === "waiter" || dialog === "waiter_then_pay") && (
         <WaiterDialog t={t} config={config} current={order.waiter_staff_id} optional={order.type === "parcel" || s.waiter_required === false}
@@ -874,6 +926,7 @@ function BillDialog({ t, config, bill, paid, change = 0, onClose, onPay, onPrint
             {change > 0 && <span>{t("change_given")}: <strong className="num">{formatINR(change)}</strong></span>}
           </div>
         )}
+        {bill.rejected && <div className="bill-reject" role="alert">{rejectText(t, bill.rejected)}</div>}
         <div className="receipt receipt-screen"><ReceiptBody bill={bill} settings={config.settings} config={config} /></div>
         {!paid && <p className="muted small center">{t("bill_on_screen")}</p>}
         <div className="actions-row">
@@ -971,9 +1024,67 @@ function CancelDialog({ t, onClose, onDone }: { t: T; onClose: () => void; onDon
   );
 }
 
-function DiscountDialog({ t, subtotal, current, onClose, onDone }: { t: T; subtotal: number; current: number; onClose: () => void; onDone: (paise: number) => void }) {
+/**
+ * The discount: an amount, and why (required). Staff giving more than the owner's limit need a manager or the owner
+ * to type their PIN here. With no internet the PIN can't be checked, so the discount is allowed and the owner sees it.
+ */
+function DiscountDialog({ t, subtotal, current, currentReason, settings, approvers, onClose, onDone }: {
+  t: T; subtotal: number; current: number; currentReason: DiscountReason | null; settings: PosSettings; approvers: Approver[];
+  onClose: () => void; onDone: (paise: number, reason: DiscountReason | null, approvedBy: number | null) => void;
+}) {
   const [rupees, setRupees] = useState(current ? String(current / 100) : "");
+  const [reason, setReason] = useState<DiscountReason | null>(currentReason);
+  const [asking, setAsking] = useState(false);
+  const [approver, setApprover] = useState<number | null>(approvers.length === 1 ? approvers[0].id : null);
+  const [pin, setPin] = useState("");
+  const [problem, setProblem] = useState<"wrong" | "locked" | "offline" | null>(null);
+  const [busy, setBusy] = useState(false);
   const paise = Math.min(subtotal, rupeesToPaise(rupees) ?? 0);
+  const over = overDiscountLimit(paise, subtotal, settings, storage.user()?.role);
+
+  async function allow() {
+    if (!approver || pin.length < 4) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api("/billing/discount-approval", { method: "POST", json: { approver_id: approver, pin } });
+      onDone(paise, reason, approver);
+    } catch (e) {
+      setPin("");
+      setProblem(e instanceof ApiError ? (e.status === 429 ? "locked" : "wrong") : "offline");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (asking) {
+    const offline = problem === "offline" || !navigator.onLine || approvers.length === 0;
+    return (
+      <div className="overlay" role="dialog" aria-modal="true">
+        <div className="dialog">
+          <h2>{t("discount_needs_pin", { pct: settings.discount_limit_pct ?? 100 })}</h2>
+          {offline ? <p>{t("discount_offline")}</p> : (
+            <>
+              <p className="muted">{t("discount_who")}</p>
+              <div className="reason-grid">
+                {approvers.map((a) => <button key={a.id} className={`chip big${approver === a.id ? " on" : ""}`} onClick={() => setApprover(a.id)}>{a.name}</button>)}
+              </div>
+              <div className="display num">{"•".repeat(pin.length) || " "}</div>
+              {problem && <p className="banner bad">{t(problem === "locked" ? "login.too_many" : "wrong_pin")}</p>}
+              <Keypad onKey={(k) => setPin((v) => (k === "⌫" ? v.slice(0, -1) : (v + k).slice(0, 4)))} keys={["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]} />
+            </>
+          )}
+          <div className="actions-row">
+            <button className="btn big" onClick={() => (setAsking(false), setPin(""), setProblem(null))}>{t("close")}</button>
+            {offline
+              ? <button className="btn big primary" onClick={() => onDone(paise, reason, null)}>{t("give_anyway")}</button>
+              : <button className="btn big primary" disabled={busy || !approver || pin.length < 4} onClick={allow}>{t("allow")}</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="overlay" role="dialog" aria-modal="true">
       <div className="dialog">
@@ -983,10 +1094,17 @@ function DiscountDialog({ t, subtotal, current, onClose, onDone }: { t: T; subto
         </div>
         <div className="display num">{formatINR(paise)}</div>
         <Keypad onKey={(k) => setRupees((g) => (k === "⌫" ? g.slice(0, -1) : (g + k).replace(/^0+/, "").slice(0, 7)))} />
+        <p className="muted" style={{ margin: "8px 0 4px" }}>{t("discount_why")}</p>
+        <div className="reason-grid">
+          {DISCOUNT_REASONS.map((r) => <button key={r} className={`chip${reason === r ? " on" : ""}`} onClick={() => setReason(r)}>{t(`dr.${r}`)}</button>)}
+        </div>
+        {over && <p className="muted small">{t("discount_needs_pin", { pct: settings.discount_limit_pct ?? 100 })}</p>}
         <div className="actions-row">
-          <button className="btn big" onClick={() => onDone(0)}>{t("remove")}</button>
+          <button className="btn big" onClick={() => onDone(0, null, null)}>{t("remove")}</button>
           <button className="btn big" onClick={onClose}>{t("close")}</button>
-          <button className="btn big primary" onClick={() => onDone(paise)}>{t("apply")}</button>
+          <button className="btn big primary" disabled={paise > 0 && !reason} onClick={() => (paise > 0 && over ? setAsking(true) : onDone(paise, reason, null))}>
+            {t("apply")}
+          </button>
         </div>
       </div>
     </div>
@@ -995,9 +1113,10 @@ function DiscountDialog({ t, subtotal, current, onClose, onDone }: { t: T; subto
 
 /* ---------------- Day summary ---------------- */
 
-function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint, onPrintItems, onOpen, onLogout }: {
+function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint, onPrintItems, onOpen, onResend, onLogout }: {
   t: T; config: Config; bills: Bill[]; waiting: number; online: boolean; printing: boolean;
-  onSync: () => void; onPrint: (date: string, b: Bill[]) => void; onPrintItems: (date: string, b: Bill[]) => void; onOpen: (b: Bill) => void; onLogout: () => void;
+  onSync: () => void; onPrint: (date: string, b: Bill[]) => void; onPrintItems: (date: string, b: Bill[]) => void; onOpen: (b: Bill) => void;
+  onResend: (clientId: string) => void; onLogout: () => void;
 }) {
   const date = businessDate();
   // Bills from the other screens come from the server; this screen's own bills are always shown, sent or not.
@@ -1066,7 +1185,8 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
       <h2>{t("recent")}</h2>
       <div className="bill-list">
         {[...today].reverse().map((b) => (
-          <button key={b.client_id} className={`bill-row${b.status === "cancelled" ? " cancelled" : ""}`} onClick={() => onOpen(b)} title={printing ? t("reprint") : t("view_bill")}>
+          <Fragment key={b.client_id}>
+          <button className={`bill-row${b.status === "cancelled" ? " cancelled" : ""}`} onClick={() => onOpen(b)} title={printing ? t("reprint") : t("view_bill")}>
             <span className="num">{b.bill_no}</span>
             <span>{orderLabel({ type: b.order_type, table_name: b.table_name, token: b.token }, t)}</span>
             <span className="muted">{new Date(b.closed_at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" })}</span>
@@ -1074,6 +1194,13 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
             <strong className="num">{formatINR(b.total)}</strong>
             <span className={`sync ${b.synced ? "ok" : b.rejected ? "bad" : "wait"}`}>{b.synced ? "✓" : b.rejected ? "!" : "…"}</span>
           </button>
+          {b.rejected && (
+            <div className="bill-reject" role="alert">
+              <span>{rejectText(t, b.rejected)}</span>
+              <button className="btn" onClick={() => onResend(b.client_id)}>{t("send_again")}</button>
+            </div>
+          )}
+          </Fragment>
         ))}
       </div>
     </main>
@@ -1106,7 +1233,7 @@ function ReceiptBody({ bill: b, settings, config, copy }: { t?: T; bill: Bill; s
       <hr />
       <div className="p-meta">
         <div>Date : {date}<br /><span className="p-indent">{time}</span></div>
-        <div><b>{b.order_type === "parcel" ? "PARCEL" : "DINEIN"}</b>{b.table_name ? ` · Table ${b.table_name}` : ""}<br />Bill No. : {b.bill_no}</div>
+        <div><b>{b.order_type === "parcel" ? "PARCEL" : "DINEIN"}</b>{b.table_name ? ` · Table ${b.table_name}` : ""}<br />Bill No. : {b.bill_no}{b.printed_no ? ` (printed ${b.printed_no})` : ""}</div>
       </div>
       {waiter && <div className="p-small">Waiter : {waiter}</div>}
       <hr />

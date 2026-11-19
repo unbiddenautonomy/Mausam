@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatINR, rupeesToPaise } from "@mausam/shared";
+import { businessDate, formatINR, rupeesToPaise } from "@mausam/shared";
 import { api } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
@@ -17,6 +17,7 @@ interface S {
   pay_rate: number | null;
   joined_on: string | null;
   active: boolean;
+  left_on?: string | null;
   is_waiter?: number;
   waiter_code?: string | null;
 }
@@ -67,11 +68,12 @@ function StaffForm({ initial, onDone }: { initial: S | null; onDone: () => void 
     pay_rate: initial?.pay_rate ? String(initial.pay_rate / 100) : "",
     joined_on: initial?.joined_on ?? "",
     active: initial?.active ?? true,
+    left_on: initial?.left_on ?? "",
   });
   const [error, setError] = useState<unknown>(null);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   async function save() {
-    const body = { ...f, pay_rate: rupeesToPaise(f.pay_rate), pay_type: f.pay_rate ? f.pay_type : null };
+    const body = { ...f, pay_rate: rupeesToPaise(f.pay_rate), pay_type: f.pay_rate ? f.pay_type : null, left_on: f.active ? null : f.left_on || null };
     try {
       if (initial) await api(`/staff/${initial.id}`, { method: "PUT", json: body });
       else await api("/staff", { method: "POST", json: body });
@@ -99,9 +101,16 @@ function StaffForm({ initial, onDone }: { initial: S | null; onDone: () => void 
       </div>
       {initial && (
         <label className="check" style={{ cursor: "pointer", background: "var(--surface-2)" }}>
-          <input type="checkbox" checked={f.active} onChange={(e) => set("active", e.target.checked)} style={{ width: 22, height: 22 }} />
+          <input type="checkbox" checked={f.active}
+            onChange={(e) => setF((x) => ({ ...x, active: e.target.checked, left_on: e.target.checked ? "" : x.left_on || businessDate() }))}
+            style={{ width: 22, height: 22 }} />
           <span className="t">{t("staff.active")}</span>
         </label>
+      )}
+      {initial && !f.active && (
+        <Field label={t("staff.left_on")} help={t("staff.left_on_help")} htmlFor="s-left">
+          <input id="s-left" type="date" className="input" value={f.left_on} onChange={(e) => set("left_on", e.target.value)} />
+        </Field>
       )}
       <ErrorNote error={error} />
       <div className="btn-row">

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { businessDate, checkClose, formatDay, formatINR, rupeesToPaise, type CloseFlag } from "@mausam/shared";
-import { sendOrQueue } from "../lib/api";
+import { ApiError, sendOrQueue } from "../lib/api";
 import { useApi, useDraft } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { timeIST } from "../lib/format";
@@ -21,6 +21,9 @@ interface CloseRow {
   flags: CloseFlag[];
   submitted_by_name: string;
   submitted_at: string;
+  /** The version this screen edits from; null on closings saved before this was kept. */
+  updated_at?: string | null;
+  updated_by_name?: string | null;
 }
 interface CloseRes {
   close: CloseRow | null;
@@ -83,6 +86,9 @@ function Submitted({ date, close, onEdit }: { date: string; close: CloseRow; onE
         <Icon name="check" />
         <span className="t">{t("close.submitted")} · {t("close.submitted_by", { name: close.submitted_by_name, time: timeIST(close.submitted_at) })}</span>
       </div>
+      {close.updated_by_name && close.updated_at && (
+        <p className="muted small" style={{ margin: 0 }}>{t("close.last_changed", { name: close.updated_by_name, time: timeIST(close.updated_at) })}</p>
+      )}
       {close.flags.length > 0 && <FlagList flags={close.flags} />}
       <div className="card flush list">
         {rows.filter(([, v]) => v !== null).map(([label, v]) => (
@@ -125,7 +131,10 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
   const t = useSession().t;
   const toast = useToast();
   const c = data.close;
-  const [f, setF, clearDraft] = useDraft(`close.${date}`, {
+  const base = c?.updated_at ?? null;
+  const fresh = {
+    // The version of the closing this draft started from. If the server's is different, someone else saved since.
+    base,
     total: toRupees(c?.total_counter),
     cash: toRupees(c?.cash),
     online: toRupees(c?.online),
@@ -134,9 +143,20 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
     memo: c?.memo_photo_key ?? (null as string | null),
     posPhoto: c?.pos_photo_key ?? (null as string | null),
     note: c?.note ?? "",
-  });
+  };
+  const [f, setF, clearDraft] = useDraft(`close.${date}`, fresh);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // A draft kept on this phone from before someone else saved the closing would hide their numbers: drop it.
+  const [dropped, setDropped] = useState(false);
+  useEffect(() => {
+    if ((f.base ?? null) !== base) {
+      setF(fresh);
+      setDropped(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base]);
+  const changedElsewhere = error instanceof ApiError && error.code === "changed_elsewhere" ? (error.detail as { name: string | null; updated_at: string } | undefined) : undefined;
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
 
   // Suggest the app-entered expenses as a starting point when the field is empty.
@@ -168,6 +188,7 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
     try {
       const r = await sendOrQueue(`/closes/${date}`, "PUT", {
         ...v,
+        base_updated_at: f.base ?? null,
         memo_photo_key: f.memo,
         pos_photo_key: f.posPhoto,
         note: f.note,
@@ -236,7 +257,16 @@ function CloseForm({ date, data, onDone }: { date: string; data: CloseRes; onDon
               <span className="t">{t("close.unbalanced_note", { amount: formatINR(Math.abs(flags.find((x) => x.code === "formula_mismatch")?.diff ?? 0)) })}</span>
             </div>
           )}
-          <ErrorNote error={error} />
+          {dropped && <div className="check warn"><Icon name="alert" /><span className="t">{t("close.draft_dropped")}</span></div>}
+          {changedElsewhere ? (
+            <div className="check bad" role="alert">
+              <Icon name="alert" />
+              <span className="t" style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+                {t("close.changed_elsewhere", { name: changedElsewhere.name ?? "—", time: timeIST(changedElsewhere.updated_at) })}
+                <button className="btn small" onClick={() => (clearDraft(), onDone())}>{t("close.reload")}</button>
+              </span>
+            </div>
+          ) : <ErrorNote error={error} />}
           <button className="btn primary block" disabled={!complete || busy} onClick={submit}>
             <Icon name="check" /> {complete && !formulaOk ? t("close.submit_anyway") : data.close ? t("close.update") : t("close.submit")}
           </button>

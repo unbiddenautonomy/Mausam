@@ -187,11 +187,49 @@ export function Loading() {
   return <div className="empty">{t("common.loading")}</div>;
 }
 
+const KNOWN_ERRORS: Record<string, MessageKey> = {
+  day_locked: "common.locked",
+  month_closed: "error.month_closed",
+  month_not_over: "error.month_not_over",
+  waiter_code_taken: "error.waiter_code_taken",
+  wrong_pin: "error.wrong_pin",
+  too_many_tries: "error.too_many_tries",
+  changed_elsewhere: "error.changed_elsewhere",
+};
+
+type T = (key: MessageKey, params?: Record<string, string | number>) => string;
+
+/** A POS discount reason in words ("regular" → "Regular customer"). An unknown one is shown as it came. */
+export function discountReasonText(t: T, code: string): string {
+  const key = `discount_reason.${code}` as MessageKey;
+  const text = t(key);
+  return text === key ? code : text;
+}
+
+/** A bill's flags (a JSON list such as ["price_changed"]) in words, joined with " · ". */
+export function billFlagText(t: T, flags: string): string {
+  let list: unknown = [];
+  try {
+    list = JSON.parse(flags);
+  } catch {
+    // shown as nothing
+  }
+  return (Array.isArray(list) ? list : []).map((f) => {
+    const key = `bill_flag.${f}` as MessageKey;
+    const text = t(key);
+    return text === key ? String(f) : text;
+  }).join(" · ");
+}
+
+/** The sentence for an error code the server sent, or the general "something went wrong". */
+export function errorKey(code: string | null | undefined): MessageKey {
+  return (code && KNOWN_ERRORS[code]) || "common.error";
+}
+
 export function ErrorNote({ error }: { error: unknown }) {
   const t = useT();
   if (!error) return null;
-  const known: Record<string, MessageKey> = { day_locked: "common.locked", month_closed: "error.month_closed", waiter_code_taken: "error.waiter_code_taken" };
-  const msg = error instanceof ApiError && known[error.code] ? t(known[error.code]) : t("common.error");
+  const msg = t(errorKey(error instanceof ApiError ? error.code : null));
   return <div className="check bad"><Icon name="alert" /><span className="t">{msg}</span></div>;
 }
 

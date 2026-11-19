@@ -4,6 +4,7 @@ import { businessDate, formatDay, formatINR, rupeesToPaise, type Lang } from "@m
 import { api } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
+import { newClientId } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Empty, ErrorNote, Field, Loading, MoneyInput, NavCard, PageHead, PhotoInput, Pill, Segmented, useToast } from "../../components/ui";
 
@@ -183,6 +184,8 @@ function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; 
   });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // One id per delivery being entered, so a double tap or a retry saves it once.
+  const [clientId, setClientId] = useState(newClientId);
   const qty = Number(f.qty);
   const rate = rupeesToPaise(f.rate);
   const amount = qty > 0 && rate ? Math.round(qty * rate) : null;
@@ -200,10 +203,11 @@ function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; 
     try {
       const r = await api<{ mismatch: boolean }>(`/vendors/${vendorId}/deliveries`, {
         method: "POST",
-        json: { item_id: item?.id ?? null, item: item ? undefined : f.other, unit: item ? undefined : f.unit, qty, rate, photo_key: f.photo, note: f.note, business_date: businessDate() },
+        json: { item_id: item?.id ?? null, item: item ? undefined : f.other, unit: item ? undefined : f.unit, qty, rate, photo_key: f.photo, note: f.note, business_date: businessDate(), client_id: clientId },
       });
       toast(t("delivery.logged"));
       setF({ other: "", unit: "", qty: "", rate: "", photo: null, note: "" });
+      setClientId(newClientId());
       if (r.mismatch) toast(t("delivery.rate_differs", { rate: formatINR(rate!), agreed: formatINR(item!.agreed_rate) }));
       onDone();
     } catch (e) {
@@ -253,12 +257,16 @@ function PaymentForm({ vendorId, due, onDone }: { vendorId: number; due: number 
   const toast = useToast();
   const [f, setF] = useState({ amount: due && due > 0 ? String(due / 100) : "", mode: "cash" as "cash" | "online", fromCounter: false, note: "" });
   const [error, setError] = useState<unknown>(null);
+  // One id per payment being entered, so a double tap or a retry saves it once.
+  const [clientId] = useState(newClientId);
   const amount = rupeesToPaise(f.amount);
   async function save() {
     if (!amount) return;
     setError(null);
     try {
-      await api(`/vendors/${vendorId}/payments`, { method: "POST", json: { amount, mode: f.mode, from_counter: f.mode === "cash" && f.fromCounter, note: f.note } });
+      await api(`/vendors/${vendorId}/payments`, {
+        method: "POST", json: { amount, mode: f.mode, from_counter: f.mode === "cash" && f.fromCounter, note: f.note, client_id: clientId },
+      });
       toast(t("common.saved"));
       onDone();
     } catch (e) {

@@ -100,7 +100,14 @@ month.put("/:month", async (c) => {
 
 month.post("/:month/close", async (c) => {
   const m = requireMonth(c.req.param("month"));
+  // Closing locks every entry in the month, so only a month that has ended can be closed.
+  if (m >= businessDate().slice(0, 7)) throw new HttpError(422, "month_not_over");
+  const body = await c.req.json<{ force?: unknown }>().catch(() => ({}) as { force?: unknown });
   const snap = await summary(c.env.DB, m);
+  const missing = snap.checklist.missing;
+  const unpaid = Math.max(0, snap.checklist.staff_with_pay - snap.checklist.payroll_paid);
+  // Days without a closing or pay not marked paid: the owner has to say "close anyway", and that is recorded.
+  if ((missing.length || unpaid) && body.force !== true) throw new HttpError(422, "month_incomplete", { missing, unpaid });
   await c.env.DB.prepare(
     `INSERT INTO month_closes (month, status, totals, closed_by, closed_at, updated_at) VALUES (?, 'closed', ?, ?, datetime('now'), datetime('now'))
      ON CONFLICT (month) DO UPDATE SET status = 'closed', totals = excluded.totals, closed_by = excluded.closed_by, closed_at = excluded.closed_at, updated_at = excluded.updated_at`,
@@ -108,7 +115,8 @@ month.post("/:month/close", async (c) => {
     .bind(m, JSON.stringify(snap), c.get("user").id)
     .run();
   await c.env.DB.prepare("UPDATE alerts SET seen_at = COALESCE(seen_at, datetime('now')) WHERE type = 'month_close' AND business_date = ?").bind(`${m}-01`).run().catch(() => null);
-  await audit(c.env.DB, "month_closes", 0, "update", { month: m, status: "open" }, { month: m, status: "closed" }, c.get("user").id);
+  const forced = missing.length || unpaid ? { forced: true, missing, unpaid } : {};
+  await audit(c.env.DB, "month_closes", 0, "update", { month: m, status: "open" }, { month: m, status: "closed", ...forced }, c.get("user").id);
   return c.json({ ok: true });
 });
 

@@ -2,35 +2,44 @@ import { Hono } from "hono";
 import { addDays, DEFAULT_LANG, businessDate, DEFAULT_SETTINGS, parseUserList, type CloseFlag } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { hashPin, normalisePhone, requireRole, validPin } from "../lib/auth";
-import { audit, bool, loadSettings } from "../lib/db";
+import { audit, auditStmt, bool, loadSettings } from "../lib/db";
 import { HttpError, isDate, optionalPaise, optionalText, requireDate, requireText } from "../lib/http";
 
 export const owner = new Hono<AppEnv>();
 
 /* ---------- Alerts (owner and managers can see; only unseen count matters for badges) ---------- */
 
+/** The alert audiences each role sees. */
+const audienceFor = (role: string) => (role === "owner" ? ["owner", "manager", "all"] : ["manager", "all"]);
+
 owner.get("/alerts", requireRole("owner", "manager"), async (c) => {
   const user = c.get("user");
-  const audience = user.role === "owner" ? "('owner','manager','all')" : "('manager','all')";
   const { results } = await c.env.DB.prepare(
     `SELECT id, type, business_date, severity, params, created_at, seen_at FROM alerts
-     WHERE audience IN ${audience} ORDER BY seen_at IS NOT NULL, created_at DESC LIMIT 100`,
-  ).all<Record<string, unknown>>();
+     WHERE audience IN (SELECT value FROM json_each(?)) ORDER BY seen_at IS NOT NULL, created_at DESC LIMIT 100`,
+  )
+    .bind(JSON.stringify(audienceFor(user.role)))
+    .all<Record<string, unknown>>();
   return c.json({ alerts: results.map((r) => ({ ...r, params: JSON.parse(String(r.params)) })) });
 });
 
+/** Marks alerts seen: the ones listed, or all unseen ones. Only alerts this person can see: a manager can't clear the owner's. */
 owner.post("/alerts/seen", requireRole("owner", "manager"), async (c) => {
   const b = await c.req.json<{ ids?: number[] }>();
   const user = c.get("user");
+  const audience = JSON.stringify(audienceFor(user.role));
   if (Array.isArray(b.ids) && b.ids.length) {
     const ids = b.ids.map(Number).filter(Number.isInteger).slice(0, 200);
     await c.env.DB.prepare(
-      `UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE id IN (${ids.map(() => "?").join(",")}) AND seen_at IS NULL`,
+      `UPDATE alerts SET seen_at = datetime('now'), seen_by = ?1
+       WHERE id IN (SELECT value FROM json_each(?2)) AND audience IN (SELECT value FROM json_each(?3)) AND seen_at IS NULL`,
     )
-      .bind(user.id, ...ids)
+      .bind(user.id, JSON.stringify(ids), audience)
       .run();
   } else {
-    await c.env.DB.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE seen_at IS NULL").bind(user.id).run();
+    await c.env.DB.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ?1 WHERE seen_at IS NULL AND audience IN (SELECT value FROM json_each(?2))")
+      .bind(user.id, audience)
+      .run();
   }
   return c.json({ ok: true });
 });
@@ -139,13 +148,14 @@ owner.get("/reports/expenses", async (c) => {
 });
 
 /**
- * Cancelled bills and discounts: where money can go missing at the counter. Daily totals, who did them, and the bills,
- * newest first. "Who" is the person logged in on the POS device that saved the bill.
+ * Cancelled bills, discounts and items taken off after printing: where money can go missing at the counter. Daily
+ * totals, who did them, and the bills, newest first (with bills the server flagged, e.g. a price not on the menu).
+ * "Who" is the person logged in on the POS device.
  */
 owner.get("/reports/leaks", async (c) => {
   const { from, to } = rangeFrom(c);
   const db = c.env.DB;
-  const [daily, people, bills, sales] = await Promise.all([
+  const [daily, people, bills, sales, voids, voidPeople] = await Promise.all([
     db.prepare(
       `SELECT business_date,
               SUM(CASE WHEN status = 'cancelled' THEN total ELSE 0 END) AS cancelled,
@@ -167,15 +177,34 @@ owner.get("/reports/leaks", async (c) => {
     ).bind(from, to).all<{ name: string; cancelled: number; cancelled_n: number; discount: number; discount_n: number }>(),
     db.prepare(
       `SELECT b.bill_no, b.business_date, b.closed_at, b.order_type, b.table_name, b.token, b.status, b.total, b.subtotal, b.discount,
-              b.cancel_reason, u.name AS by_name, COALESCE(b.waiter_name, s.name) AS waiter_name
+              b.cancel_reason, u.name AS by_name, COALESCE(b.waiter_name, s.name) AS waiter_name,
+              b.discount_reason, a.name AS approved_by_name, b.flags
        FROM pos_bills b LEFT JOIN users u ON u.id = b.created_by LEFT JOIN staff s ON s.id = b.waiter_staff_id
-       WHERE b.business_date BETWEEN ? AND ? AND (b.status = 'cancelled' OR b.discount > 0)
+            LEFT JOIN users a ON a.id = b.discount_approved_by
+       WHERE b.business_date BETWEEN ? AND ? AND (b.status = 'cancelled' OR b.discount > 0 OR b.flags IS NOT NULL)
        ORDER BY b.closed_at DESC LIMIT 300`,
     ).bind(from, to).all(),
     db.prepare("SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS n FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?")
       .bind(from, to).first<{ total: number; n: number }>(),
+    db.prepare(
+      `SELECT b.bill_no, b.business_date, b.status AS bill_status, v.name, v.variation, v.qty, v.price, v.qty * v.price AS amount,
+              v.stage, v.removed_at, u.name AS by_name,
+              SUM(v.qty * v.price) OVER () AS all_amount, COUNT(*) OVER () AS all_n
+       FROM pos_bill_voids v JOIN pos_bills b ON b.id = v.bill_id LEFT JOIN users u ON u.id = v.removed_by
+       WHERE b.business_date BETWEEN ? AND ?
+       ORDER BY v.removed_at DESC LIMIT 300`,
+    ).bind(from, to).all<{ amount: number; all_amount: number; all_n: number }>(),
+    db.prepare(
+      `SELECT COALESCE(u.name, '—') AS name, SUM(v.qty * v.price) AS removed, COUNT(*) AS removed_n
+       FROM pos_bill_voids v JOIN pos_bills b ON b.id = v.bill_id LEFT JOIN users u ON u.id = v.removed_by
+       WHERE b.business_date BETWEEN ? AND ?
+       GROUP BY v.removed_by ORDER BY removed DESC`,
+    ).bind(from, to).all<{ name: string; removed: number; removed_n: number }>(),
   ]);
-  return c.json({ from, to, sales: sales?.total ?? 0, paid_bills: sales?.n ?? 0, days: daily.results, people: people.results, bills: bills.results });
+  return c.json({
+    from, to, sales: sales?.total ?? 0, paid_bills: sales?.n ?? 0, days: daily.results, people: people.results, bills: bills.results,
+    voids: voids.results, void_people: voidPeople.results,
+  });
 });
 
 /** Item sales for one day, like the old POS's Item Sales Summary: each item and variation, by category. Paid bills only. */
@@ -271,7 +300,7 @@ owner.patch("/users/:id", async (c) => {
   if (b.pin !== undefined) {
     if (!validPin(b.pin)) throw new HttpError(422, "invalid", { field: "pin" });
     const { hash, salt } = await hashPin(b.pin);
-    sets.push("pin_hash = ?", "pin_salt = ?", "failed_logins = 0", "locked_until = NULL");
+    sets.push("pin_hash = ?", "pin_salt = ?", "failed_logins = 0", "locked_until = NULL", "lock_count = 0");
     binds.push(hash, salt);
   }
   if (!sets.length) return c.json({ ok: true });
@@ -301,6 +330,7 @@ function staffFields(b: Record<string, unknown>) {
     pay_rate: optionalPaise(b.pay_rate, "pay_rate"),
     joined_on: isDate(b.joined_on) ? b.joined_on : null,
     active: b.active === false ? 0 : 1,
+    left_on: isDate(b.left_on) ? b.left_on : null,
   };
 }
 
@@ -321,10 +351,12 @@ owner.put("/staff/:id", async (c) => {
   const before = await c.env.DB.prepare("SELECT * FROM staff WHERE id = ?").bind(id).first();
   if (!before) throw new HttpError(404, "not_found");
   const f = staffFields(await c.req.json());
+  // Someone made inactive left on the day given, or today. Made active again, they haven't left.
+  f.left_on = f.active ? null : f.left_on ?? (before.left_on as string | null) ?? businessDate();
   await c.env.DB.prepare(
-    "UPDATE staff SET name = ?, name_local = ?, role = ?, phone = ?, pay_type = ?, pay_rate = ?, joined_on = ?, active = ? WHERE id = ?",
+    "UPDATE staff SET name = ?, name_local = ?, role = ?, phone = ?, pay_type = ?, pay_rate = ?, joined_on = ?, active = ?, left_on = ? WHERE id = ?",
   )
-    .bind(f.name, f.name_local, f.role, f.phone, f.pay_type, f.pay_rate, f.joined_on, f.active, id)
+    .bind(f.name, f.name_local, f.role, f.phone, f.pay_type, f.pay_rate, f.joined_on, f.active, f.left_on, id)
     .run();
   await audit(c.env.DB, "staff", id, "update", before, f, c.get("user").id);
   return c.json({ ok: true });
@@ -352,9 +384,15 @@ owner.post("/manage/categories", async (c) => {
 owner.put("/manage/categories/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const b = await c.req.json<Record<string, unknown>>();
-  await c.env.DB.prepare("UPDATE expense_categories SET name_en = ?, name_hi = ?, name_kn = ?, active = ? WHERE id = ?")
-    .bind(requireText(b.name_en, "name_en", 60), optionalText(b.name_hi, 60), optionalText(b.name_kn, 60), b.active === false ? 0 : 1, id)
-    .run();
+  const db = c.env.DB;
+  const before = await db.prepare("SELECT name_en, name_hi, name_kn, active FROM expense_categories WHERE id = ?").bind(id).first();
+  if (!before) throw new HttpError(404, "not_found");
+  const after = { name_en: requireText(b.name_en, "name_en", 60), name_hi: optionalText(b.name_hi, 60), name_kn: optionalText(b.name_kn, 60), active: b.active === false ? 0 : 1 };
+  await db.batch([
+    db.prepare("UPDATE expense_categories SET name_en = ?, name_hi = ?, name_kn = ?, active = ? WHERE id = ?")
+      .bind(after.name_en, after.name_hi, after.name_kn, after.active, id),
+    auditStmt(db, "expense_categories", id, "update", before, after, c.get("user").id),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -365,6 +403,7 @@ owner.get("/settings", async (c) => c.json({ settings: await loadSettings(c.env.
 owner.put("/settings", async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const stmts = [];
+  const changed: Record<string, string> = {};
   for (const [key, def] of Object.entries(DEFAULT_SETTINGS)) {
     if (b[key] === undefined) continue;
     let value: string;
@@ -379,11 +418,16 @@ owner.put("/settings", async (c) => {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[key]))) throw new HttpError(422, "invalid", { field: key });
       value = String(b[key]);
     }
+    changed[key] = value;
     stmts.push(
       c.env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(key, value),
     );
   }
-  if (stmts.length) await c.env.DB.batch(stmts);
+  if (stmts.length) {
+    const before = await loadSettings(c.env.DB);
+    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, String((before as unknown as Record<string, unknown>)[k])]));
+    await c.env.DB.batch([...stmts, auditStmt(c.env.DB, "settings", 0, "update", was, changed, c.get("user").id)]);
+  }
   return c.json({ settings: await loadSettings(c.env.DB) });
 });
 

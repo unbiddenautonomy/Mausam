@@ -96,7 +96,7 @@ pos.post("/import", async (c) => {
   const sorted = [...dates].sort();
   const saved = kind === "sales" ? stmts.length : stmts.length - dates.size;
   await db.prepare("UPDATE pos_imports SET rows = ?, from_date = ?, to_date = ? WHERE id = ?").bind(saved, sorted[0], sorted.at(-1), importId).run();
-  const rechecked = kind === "sales" ? await applyPosToCloses(db, sorted[0], sorted.at(-1)!) : 0;
+  const rechecked = kind === "sales" ? await applyPosToCloses(db, sorted[0], sorted.at(-1)!, user.id) : 0;
   await audit(db, "pos_imports", importId, "create", null, { kind, rows: saved, from: sorted[0], to: sorted.at(-1) }, user.id);
   return c.json({ id: importId, rows: saved, from: sorted[0], to: sorted.at(-1), rechecked });
 });

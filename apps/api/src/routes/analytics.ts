@@ -4,7 +4,7 @@ import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { audit } from "../lib/db";
 import { HttpError, isDate } from "../lib/http";
-import { rangeTotals } from "../lib/totals";
+import { rangeTotals, totalsByRange } from "../lib/totals";
 
 export const analytics = new Hono<AppEnv>();
 
@@ -63,14 +63,11 @@ function range(c: { req: { query: (k: string) => string | undefined } }) {
 /** Where the money went, and food cost % week by week. */
 analytics.get("/costs", async (c) => {
   const { from, to } = range(c);
-  const totals = await rangeTotals(c.env.DB, from, to);
-  // Weeks ending on `to`, oldest first; only full weeks inside the range.
-  const weeks: { from: string; to: string; sales: number; food: number; wages: number; left: number }[] = [];
-  for (let end = to; addDays(end, -6) >= from; end = addDays(end, -7)) {
-    const start = addDays(end, -6);
-    const w = await rangeTotals(c.env.DB, start, end);
-    weeks.unshift({ from: start, to: end, sales: w.sales, food: w.food, wages: w.wages, left: w.left });
-  }
+  // Weeks ending on `to`, oldest first; only full weeks inside the range. All weeks come from one set of queries.
+  const spans: { from: string; to: string }[] = [];
+  for (let end = to; addDays(end, -6) >= from; end = addDays(end, -7)) spans.unshift({ from: addDays(end, -6), to: end });
+  const [totals, perWeek] = await Promise.all([rangeTotals(c.env.DB, from, to), totalsByRange(c.env.DB, from, to, spans)]);
+  const weeks = spans.map((w, i) => ({ from: w.from, to: w.to, sales: perWeek[i].sales, food: perWeek[i].food, wages: perWeek[i].wages, left: perWeek[i].left }));
   return c.json({ from, to, totals, weeks });
 });
 

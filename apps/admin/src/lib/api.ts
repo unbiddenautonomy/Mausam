@@ -56,29 +56,57 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
 
 /* ---------- Offline queue ---------- */
 
-interface Queued {
+const FAILED_KEY = "mausam.queue.failed";
+
+export interface Queued {
   path: string;
   method: string;
   json: unknown;
   at: number;
+  /** Who saved it. Only that person's login sends it, so a shared phone doesn't send one person's entry as another's. */
+  user?: number | null;
+}
+/** An entry the server refused. It stays on the phone until someone sends it again or deletes it. */
+export interface Failed extends Queued {
+  error: string;
+  failed_at: number;
 }
 
-function readQueue(): Queued[] {
+function readList<T>(key: string): T[] {
   try {
-    return JSON.parse(safeGet(QUEUE_KEY) ?? "[]");
+    const v = JSON.parse(safeGet(key) ?? "[]");
+    return Array.isArray(v) ? v : [];
   } catch {
     return [];
   }
 }
-const listeners = new Set<(n: number) => void>();
+const readQueue = () => readList<Queued>(QUEUE_KEY);
+export const failedEntries = () => readList<Failed>(FAILED_KEY);
+
+const listeners = new Set<(n: number, failed: number) => void>();
+function changed() {
+  const q = readQueue().length;
+  const f = failedEntries().length;
+  listeners.forEach((l) => l(q, f));
+}
 function writeQueue(q: Queued[]) {
   safeSet(QUEUE_KEY, JSON.stringify(q));
-  listeners.forEach((l) => l(q.length));
+  changed();
+}
+function writeFailed(f: Failed[]) {
+  safeSet(FAILED_KEY, f.length ? JSON.stringify(f) : null);
+  changed();
 }
 export const queueSize = () => readQueue().length;
-export function onQueueChange(fn: (n: number) => void) {
+export function onQueueChange(fn: (n: number, failed: number) => void) {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+let owner: number | null = null;
+/** The logged-in person. Set by the session; entries saved offline are marked with it. */
+export function setQueueOwner(id: number | null) {
+  owner = id;
 }
 
 /** A write that survives being offline. Returns { queued: true } when saved on the phone instead. */
@@ -87,36 +115,60 @@ export async function sendOrQueue<T>(path: string, method: string, json: unknown
     return await api<T>(path, { method, json });
   } catch (e) {
     if (e instanceof ApiError) throw e; // the server answered: a real error, don't queue
-    writeQueue([...readQueue(), { path, method, json, at: Date.now() }]);
+    writeQueue([...readQueue(), { path, method, json, at: Date.now(), user: owner }]);
     return { queued: true };
   }
 }
 
+/** Worth trying again later without anyone doing anything: logged out, too many requests, or a server fault. */
+const tryLater = (e: ApiError) => e.status === 401 || e.status === 429 || e.status >= 500;
+
 let flushing = false;
+/**
+ * Sends what was saved offline, oldest first. Stops at the first entry that can't go yet (still offline, logged out,
+ * or a server fault) and keeps it. An entry the server refuses (for example a locked day) moves to the "not sent"
+ * list with its reason, so nothing is lost without the person seeing it.
+ */
 export async function flushQueue() {
   if (flushing || !token) return;
   flushing = true;
   try {
-    let q = readQueue();
-    while (q.length) {
-      const item = q[0];
+    for (;;) {
+      const q = readQueue();
+      const i = q.findIndex((item) => item.user == null || item.user === owner);
+      if (i === -1) break;
+      const item = q[i];
       try {
         await api(item.path, { method: item.method, json: item.json });
       } catch (e) {
-        if (!(e instanceof ApiError)) break; // still offline
-        // The server rejected it (e.g. day locked). Drop it so it doesn't block the rest.
-        console.warn("Dropped queued entry", item, e);
+        if (!(e instanceof ApiError) || tryLater(e)) break;
+        writeFailed([...failedEntries(), { ...item, error: e.code, failed_at: Date.now() }]);
       }
-      q = q.slice(1);
-      writeQueue(q);
+      writeQueue(readQueue().filter((x) => !(x.at === item.at && x.path === item.path)));
     }
   } finally {
     flushing = false;
   }
 }
 
+/** Tries a refused entry again. Throws the server's answer if it's refused again; the entry then stays in the list. */
+export async function retryFailed(item: Failed): Promise<void> {
+  await api(item.path, { method: item.method, json: item.json });
+  dropFailed(item);
+}
+export function dropFailed(item: Failed) {
+  writeFailed(failedEntries().filter((x) => !(x.at === item.at && x.path === item.path)));
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => void flushQueue());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void flushQueue();
+  });
+  // The phone doesn't always say when the internet is back, so try again every minute while entries wait.
+  window.setInterval(() => {
+    if (queueSize() > 0) void flushQueue();
+  }, 60_000);
 }
 
 /* ---------- Photos ---------- */

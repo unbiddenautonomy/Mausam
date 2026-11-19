@@ -224,6 +224,7 @@ h2 { font-size: 1.15rem; }
 .bill-row .sync.ok { color: var(--good); }
 .bill-row .sync.wait { color: var(--warn); }
 .bill-row .sync.bad { color: var(--bad); }
+.bill-reject { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 8px 14px; background: var(--bad-soft); color: var(--bad); border-bottom: 1px solid var(--surface-2); font-weight: 600; }
 
 /* Open orders (no table map) */
 .btn.huge { min-height: 96px; font-size: 1.35rem; padding: 0 28px; border-radius: 16px; }

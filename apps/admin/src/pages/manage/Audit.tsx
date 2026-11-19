@@ -11,6 +11,8 @@ const TABLES: Record<string, MessageKey> = {
   expenses: "entries.expenses", day_closes: "entries.close", shopping_trips: "entries.shopping", staff: "manage.staff", users: "manage.users",
   advances: "people.advances", payroll: "people.payroll", vendors: "vendor.title", vendor_items: "vendor.items", deliveries: "delivery.add",
   vendor_payments: "payment.add", month_closes: "month.title", pos_imports: "pos.title",
+  settings: "manage.settings", expense_categories: "manage.categories", dining_tables: "tables.title", attendance: "people.attendance",
+  pos_counters: "posset.counters",
 };
 const SKIP = new Set(["id", "created_at", "updated_at", "submitted_at", "created_by", "submitted_by", "flags", "category_name_hi", "category_name_kn"]);
 
