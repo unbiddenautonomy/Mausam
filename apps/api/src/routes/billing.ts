@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import { billTotals, businessDate, BILL_PAY_MODES, financialYear, validCounter, waiterCommission, type BillPayMode } from "@mausam/shared";
+import { addDays, billTotals, businessDate, BILL_PAY_MODES, financialYear, validCounter, waiterCommission, type BillPayMode, type Role } from "@mausam/shared";
 import type { AppEnv } from "../env";
-import { requireRole } from "../lib/auth";
-import { audit, bool } from "../lib/db";
+import { requireRole, validPin } from "../lib/auth";
+import { PIN_COLUMNS, tryPin, type PinUser } from "../lib/pin";
+import { audit, auditStmt, bool } from "../lib/db";
 import { HttpError, isDate, optionalText, requireText } from "../lib/http";
 import { managersCanSee } from "./analytics";
 import { applyPosToCloses } from "./entries";
@@ -17,6 +18,7 @@ export const billing = new Hono<AppEnv>();
 const POS_SETTING_KEYS = [
   "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
   "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required", "pos_bill_copies",
+  "pos_discount_limit_pct",
 ] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
 
@@ -38,6 +40,8 @@ export interface PosSettings {
   waiter_required: boolean;
   /** How many copies of a bill print at Save & Print (the second goes to the kitchen). Reprints print one. */
   bill_copies: number;
+  /** The biggest discount staff may give on their own, as a % of the bill. More needs a manager's or the owner's PIN. 100 = no limit. */
+  discount_limit_pct: number;
 }
 
 async function loadPosSettings(db: D1Database): Promise<PosSettings> {
@@ -58,6 +62,7 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     commission_bp: Number(m.pos_commission_bp ?? 0) || 0,
     waiter_required: (m.pos_waiter_required ?? "1") === "1",
     bill_copies: Math.min(Math.max(Number(m.pos_bill_copies ?? 2) || 2, 1), 3),
+    discount_limit_pct: Math.min(Math.max(Number(m.pos_discount_limit_pct ?? 100) || 0, 0), 100),
   };
 }
 
@@ -100,18 +105,21 @@ const withOptions = <T extends Record<string, unknown>>(rows: T[]) =>
 /** Everything the counter needs to bill offline. */
 billing.get("/config", async (c) => {
   const db = c.env.DB;
-  const [cats, items, tables, waiters, settings] = await Promise.all([
+  const [cats, items, tables, waiters, settings, approvers] = await Promise.all([
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
     db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort, variations, addons FROM menu_items WHERE active = 1 ORDER BY sort, name").all<Record<string, unknown>>(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
     db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
+    // Who can allow a discount above the staff limit with their PIN.
+    db.prepare("SELECT id, name FROM users WHERE active = 1 AND role IN ('owner', 'manager') ORDER BY role DESC, name").all(),
   ]);
   return c.json({
     categories: cats.results,
     items: withOptions(items.results),
     tables: tables.results,
     waiters: waiters.results,
+    approvers: approvers.results,
     settings,
     business_date: businessDate(),
     server_time: new Date().toISOString(),
@@ -123,30 +131,68 @@ interface BillIn {
   client_id?: unknown; bill_no?: unknown; counter?: unknown; business_date?: unknown; order_type?: unknown;
   table_id?: unknown; table_name?: unknown; token?: unknown; waiter_staff_id?: unknown; guests?: unknown;
   discount?: unknown; prices_include_tax?: unknown; total?: unknown; status?: unknown; cancel_reason?: unknown;
-  opened_at?: unknown; closed_at?: unknown; lines?: unknown; payments?: unknown;
+  opened_at?: unknown; closed_at?: unknown; lines?: unknown; payments?: unknown; voids?: unknown;
+  discount_reason?: unknown; discount_approved_by?: unknown; printed_no?: unknown;
 }
 
 type Result = { client_id: string; status: "saved" | "duplicate" | "rejected"; error?: string; bill_no?: string };
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const BILL_NO_RE = /^[A-Z0-9]{1,3}\d{4}-\d{5}$/;
 
 /** Checks one bill from the counter and returns the statements that save it, or a reason it's refused. */
 interface WaiterInfo { name: string; is_waiter: number; commission_bp: number | null }
-interface BillCtx { waiters: Map<number, WaiterInfo>; defaultBp: number }
-
-/** Loads what the bill check needs about staff: names, and each waiter's commission rate. */
-async function billCtx(db: D1Database): Promise<BillCtx> {
-  const [{ results }, settings] = await Promise.all([
-    db.prepare("SELECT id, name, is_waiter, commission_bp FROM staff").all<WaiterInfo & { id: number }>(),
-    loadPosSettings(db),
-  ]);
-  return { waiters: new Map(results.map((r) => [r.id, r])), defaultBp: settings.commission_bp };
+interface BillCtx {
+  waiters: Map<number, WaiterInfo>; defaultBp: number; discountLimitPct: number;
+  /** Every price a menu item can be billed at today: its own or a variation's, with or without each add-on. */
+  prices: Map<number, Set<number>>;
+  /** The business day now, for spotting bills dated in the future or more than a week back. */
+  today: string;
 }
 
-function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): { stmts: D1PreparedStatement[]; date: string } | { error: string } {
+/** Loads what the bill check needs: staff names and commission rates, the menu's prices, and the discount limit. */
+async function billCtx(db: D1Database): Promise<BillCtx> {
+  const [{ results }, settings, menu] = await Promise.all([
+    db.prepare("SELECT id, name, is_waiter, commission_bp FROM staff").all<WaiterInfo & { id: number }>(),
+    loadPosSettings(db),
+    db.prepare("SELECT id, price, variations, addons FROM menu_items").all<{ id: number; price: number; variations: string | null; addons: string | null }>(),
+  ]);
+  const prices = new Map<number, Set<number>>();
+  for (const m of menu.results) {
+    const variations = parseOptions(m.variations) ?? [];
+    const bases = variations.length ? [m.price, ...variations.map((v) => v.price)] : [m.price];
+    const extras = [0, ...(parseOptions(m.addons) ?? []).map((a) => a.price)];
+    prices.set(m.id, new Set(bases.flatMap((p) => extras.map((x) => p + x))));
+  }
+  return {
+    waiters: new Map(results.map((r) => [r.id, r])), defaultBp: settings.commission_bp, discountLimitPct: settings.discount_limit_pct,
+    prices, today: businessDate(),
+  };
+}
+
+/**
+ * Things on a bill the owner should look at. A flag never refuses a bill: it's a real sale.
+ * - price_changed: a line's price isn't one the menu has for that item (now). Menu prices can change in a day.
+ * - odd_date: the bill's business day is in the future or more than 7 days back.
+ * - discount_over_limit: staff gave a discount above the limit with no manager's or owner's PIN (the POS was offline).
+ */
+function billFlags(
+  b: { business_date: string; discount: number; subtotal: number; approvedBy: number | null; lines: { item_id: number | null; price: number }[] },
+  role: Role, ctx: BillCtx,
+): string[] {
+  const flags: string[] = [];
+  if (b.lines.some((l) => l.item_id !== null && ctx.prices.has(l.item_id) && !ctx.prices.get(l.item_id)!.has(l.price))) flags.push("price_changed");
+  if (b.business_date > ctx.today || b.business_date < addDays(ctx.today, -7)) flags.push("odd_date");
+  const limit = Math.round((b.subtotal * ctx.discountLimitPct) / 100);
+  if (role === "staff" && ctx.discountLimitPct < 100 && b.discount > limit && b.approvedBy === null) flags.push("discount_over_limit");
+  return flags;
+}
+
+function prepareBill(db: D1Database, b: BillIn, user: { id: number; role: Role }, ctx: BillCtx): { stmts: D1PreparedStatement[]; date: string } | { error: string } {
+  const userId = user.id;
   if (typeof b.client_id !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(b.client_id)) return { error: "client_id" };
   if (!validCounter(b.counter)) return { error: "counter" };
-  if (typeof b.bill_no !== "string" || !/^[A-Z0-9]{1,3}\d{4}-\d{5}$/.test(b.bill_no) || !b.bill_no.startsWith(b.counter)) return { error: "bill_no" };
+  if (typeof b.bill_no !== "string" || !BILL_NO_RE.test(b.bill_no) || !b.bill_no.startsWith(b.counter)) return { error: "bill_no" };
   if (!isDate(b.business_date)) return { error: "business_date" };
   if (b.order_type !== "dine_in" && b.order_type !== "parcel") return { error: "order_type" };
   if (b.status !== "paid" && b.status !== "cancelled") return { error: "status" };
@@ -199,17 +245,23 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
 
   const reason = optionalText(b.cancel_reason, 200);
   if (b.status === "cancelled" && !reason) return { error: "cancel_reason" };
+  const voids = voidsOf(b.voids);
+  const discountReason = totals.discount > 0 ? optionalText(b.discount_reason, 40) : null;
+  const approvedBy = totals.discount > 0 && b.discount_approved_by != null ? int(b.discount_approved_by, 1, 1e9) : null;
+  const flags = billFlags({ business_date: b.business_date, discount: totals.discount, subtotal: totals.subtotal, approvedBy, lines }, user.role, ctx);
 
   const stmts: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO pos_bills (client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
          subtotal, discount, tax, round_off, total, prices_include_tax, status, cancel_reason, opened_at, closed_at, created_by,
-         waiter_name, commission_bp, commission)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         waiter_name, commission_bp, commission, discount_reason, discount_approved_by, flags, printed_bill_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       b.client_id, b.bill_no, b.counter, b.business_date, b.order_type, tableId, optionalText(b.table_name, 40), token, waiter, guests,
       totals.subtotal, totals.discount, totals.tax, totals.round_off, totals.total, include ? 1 : 0, b.status, b.status === "cancelled" ? reason : null,
-      b.opened_at, b.closed_at, userId, waiterInfo?.name ?? null, commissionBp, commission,
+      b.opened_at, b.closed_at, userId, waiterInfo?.name ?? null, commissionBp, commission, discountReason, approvedBy,
+      flags.length ? JSON.stringify(flags) : null,
+      typeof b.printed_no === "string" && BILL_NO_RE.test(b.printed_no) && b.printed_no !== b.bill_no ? b.printed_no : null,
     ),
     ...lines.map((l) =>
       db.prepare(
@@ -220,8 +272,41 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
     ...payments.map((p) =>
       db.prepare("INSERT INTO pos_payments (bill_id, mode, amount) VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?)").bind(b.client_id, p.mode, p.amount),
     ),
+    // A bill the server refused before and the POS sent again: it's sorted now.
+    db.prepare("UPDATE pos_bill_rejects SET resolved_at = datetime('now') WHERE client_id = ? AND resolved_at IS NULL").bind(b.client_id),
+    ...voids.map((v) =>
+      db.prepare(
+        `INSERT INTO pos_bill_voids (bill_id, name, variation, qty, price, stage, removed_at, removed_by)
+         VALUES ((SELECT id FROM pos_bills WHERE client_id = ?), ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(b.client_id, v.name, v.variation, v.qty, v.price, v.stage, v.at, v.by),
+    ),
   ];
   return { stmts, date: b.business_date };
+}
+
+interface VoidRow { name: string; variation: string | null; qty: number; price: number; stage: "kitchen" | "billed"; at: string; by: number | null }
+
+/**
+ * Items taken off after the kitchen got them or the bill was printed. Optional, and never a reason to refuse a bill:
+ * an entry that doesn't make sense is skipped. At most 200 are kept.
+ */
+function voidsOf(raw: unknown): VoidRow[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VoidRow[] = [];
+  for (const v of raw.slice(-200) as Record<string, unknown>[]) {
+    const qty = int(v?.qty, 1, 999);
+    const price = int(v?.price, 0, 1e8);
+    if (qty === null || price === null || typeof v.name !== "string" || !v.name.trim()) continue;
+    if (v.stage !== "kitchen" && v.stage !== "billed") continue;
+    out.push({
+      name: v.name.trim().slice(0, 120),
+      variation: typeof v.variation === "string" && v.variation.trim() ? v.variation.trim().slice(0, 40) : null,
+      qty, price, stage: v.stage,
+      at: typeof v.at === "string" && ISO_RE.test(v.at) ? v.at : new Date().toISOString(),
+      by: v.by == null ? null : int(v.by, 1, 1e9),
+    });
+  }
+  return out;
 }
 
 /**
@@ -279,8 +364,26 @@ function posDayStatements(db: D1Database, date: string): D1PreparedStatement[] {
 const BILLS_PER_REQUEST = 20;
 
 /** Send finished bills. Each one is saved, recognised as already saved, or refused with a reason. */
+/**
+ * A manager or the owner allows a discount above the staff limit by typing their PIN on the POS. Wrong PINs count
+ * towards their account lock, like wrong logins. The bill then carries discount_approved_by.
+ */
+billing.post("/discount-approval", requireRole("owner", "manager", "staff"), async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const id = int(b.approver_id, 1, 1e9);
+  if (id === null || !validPin(b.pin)) throw new HttpError(403, "wrong_pin");
+  const approver = await c.env.DB.prepare(`SELECT ${PIN_COLUMNS} FROM users WHERE id = ? AND active = 1 AND role IN ('owner', 'manager')`)
+    .bind(id)
+    .first<PinUser>();
+  if (!approver) throw new HttpError(403, "wrong_pin");
+  const check = await tryPin(c.env, approver, b.pin);
+  if (check === "locked") throw new HttpError(429, "too_many_tries");
+  if (check === "wrong") throw new HttpError(403, "wrong_pin");
+  return c.json({ ok: true, id: approver.id, name: approver.name });
+});
+
 billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
-  const body = await c.req.json<{ bills?: unknown; counter?: unknown }>();
+  const body = await c.req.json<{ bills?: unknown; counter?: unknown; device?: unknown }>();
   if (!Array.isArray(body.bills) || body.bills.length === 0 || body.bills.length > 50) throw new HttpError(422, "invalid", { field: "bills" });
   const db = c.env.DB;
   const user = c.get("user");
@@ -312,7 +415,7 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
       results.push({ client_id: clientId, status: "duplicate", bill_no: String(raw.bill_no) });
       continue;
     }
-    const prepared = prepareBill(db, raw ?? {}, user.id, ctx);
+    const prepared = prepareBill(db, raw ?? {}, user, ctx);
     if ("error" in prepared) {
       results.push({ client_id: clientId, status: "rejected", error: prepared.error });
       continue;
@@ -346,18 +449,60 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
   }
 
   const savedDates = [...new Set(toSave.filter((b) => results[b.index].status === "saved").map((b) => b.date))].sort();
-  if (savedDates.length) await applyPosToCloses(db, savedDates[0], savedDates.at(-1)!);
+  if (savedDates.length) await applyPosToCloses(db, savedDates[0], savedDates.at(-1)!, user.id);
+  // The counter was seen. A device set up offline claims its letter here, if nobody holds it.
+  let counterTaken = false;
   if (validCounter(body.counter)) {
     const last = results.filter((r) => r.status === "saved").at(-1)?.bill_no ?? null;
-    await db
+    const device = validDevice(body.device) ? body.device : null;
+    const now = new Date().toISOString();
+    const row = await db
       .prepare(
-        `INSERT INTO pos_counters (code, last_seen_at, last_bill_no) VALUES (?, ?, ?)
-         ON CONFLICT (code) DO UPDATE SET last_seen_at = excluded.last_seen_at, last_bill_no = COALESCE(excluded.last_bill_no, pos_counters.last_bill_no)`,
+        `INSERT INTO pos_counters (code, last_seen_at, last_bill_no, device_id, claimed_at) VALUES (?1, ?2, ?3, ?4, CASE WHEN ?4 IS NULL THEN NULL ELSE ?2 END)
+         ON CONFLICT (code) DO UPDATE SET last_seen_at = excluded.last_seen_at, last_bill_no = COALESCE(excluded.last_bill_no, pos_counters.last_bill_no),
+           claimed_at = CASE WHEN pos_counters.device_id IS NULL THEN excluded.claimed_at ELSE pos_counters.claimed_at END,
+           device_id = COALESCE(pos_counters.device_id, excluded.device_id)
+         RETURNING device_id`,
       )
-      .bind(body.counter, new Date().toISOString(), last)
-      .run();
+      .bind(body.counter, now, last, device)
+      .first<{ device_id: string | null }>();
+    counterTaken = !!device && !!row?.device_id && row.device_id !== device;
   }
-  return c.json({ results });
+  // Bills are saved either way (they're real sales); a device told its letter is taken must pick another.
+  return c.json({ results, ...(counterTaken ? { counter_taken: true } : {}) });
+});
+
+/**
+ * The POS reports bills the server refused (with the reason), so the owner can see them on the bills page. Reporting
+ * the same bill again updates it. A bill that is later saved is marked sorted.
+ */
+billing.post("/rejects", requireRole("owner", "manager", "staff"), async (c) => {
+  const body = await c.req.json<{ rejects?: unknown }>();
+  if (!Array.isArray(body.rejects) || body.rejects.length === 0 || body.rejects.length > 20) throw new HttpError(422, "invalid", { field: "rejects" });
+  const db = c.env.DB;
+  const user = c.get("user");
+  const stmts: D1PreparedStatement[] = [];
+  for (const r of body.rejects as { bill?: BillIn; reason?: unknown }[]) {
+    const b = r?.bill;
+    if (!b || typeof b.client_id !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(b.client_id)) continue;
+    const data = JSON.stringify(b);
+    if (data.length > 64_000) continue;
+    stmts.push(
+      db.prepare(
+        `INSERT INTO pos_bill_rejects (client_id, bill_no, counter, business_date, total, reason, data, reported_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (client_id) DO UPDATE SET reason = excluded.reason, data = excluded.data, bill_no = excluded.bill_no,
+           reported_at = datetime('now'), reported_by = excluded.reported_by
+         WHERE pos_bill_rejects.resolved_at IS NULL`,
+      ).bind(
+        b.client_id, typeof b.bill_no === "string" ? b.bill_no.slice(0, 20) : null, typeof b.counter === "string" ? b.counter.slice(0, 3) : null,
+        isDate(b.business_date) ? b.business_date : null, typeof b.total === "number" ? Math.round(b.total) : null,
+        optionalText(r.reason, 40) ?? "rejected", data, user.id,
+      ),
+    );
+  }
+  if (stmts.length) await db.batch(stmts);
+  return c.json({ ok: true, saved: stmts.length });
 });
 
 /** The highest bill number this counter has synced, so a reinstalled counter carries on from it. */
@@ -369,6 +514,55 @@ billing.get("/counters/:code/last", requireRole("owner", "manager", "staff"), as
   const prefix = `${code}${financialYear(businessDate())}-`;
   const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE bill_no LIKE ? ORDER BY bill_no DESC LIMIT 1").bind(`${prefix}%`).first<{ bill_no: string }>();
   return c.json({ last_bill_no: row?.bill_no ?? null });
+});
+
+/** A POS device's own random id, made once and kept on the device. */
+function validDevice(v: unknown): v is string {
+  return typeof v === "string" && /^[A-Za-z0-9-]{8,64}$/.test(v);
+}
+
+/** A counter letter held by a device that sent nothing for this long is free to take. */
+const COUNTER_IDLE_DAYS = 30;
+
+/**
+ * A device takes a counter letter when it's set up. Refused with 409 counter_taken while another device holds it and
+ * has used it in the last 30 days; the owner can release a letter (for a reinstalled or replaced device).
+ */
+billing.post("/counters/:code/claim", requireRole("owner", "manager", "staff"), async (c) => {
+  const code = c.req.param("code");
+  if (!validCounter(code)) throw new HttpError(422, "invalid", { field: "code" });
+  const body = await c.req.json<{ device?: unknown }>();
+  if (!validDevice(body.device)) throw new HttpError(422, "invalid", { field: "device" });
+  const db = c.env.DB;
+  const row = await db.prepare("SELECT device_id, last_seen_at, claimed_at FROM pos_counters WHERE code = ?").bind(code)
+    .first<{ device_id: string | null; last_seen_at: string | null; claimed_at: string | null }>();
+  const cutoff = new Date(Date.now() - COUNTER_IDLE_DAYS * 86_400_000).toISOString();
+  const lastUsed = [row?.last_seen_at, row?.claimed_at].filter(Boolean).sort().at(-1) ?? "";
+  if (row?.device_id && row.device_id !== body.device && lastUsed > cutoff) throw new HttpError(409, "counter_taken");
+  await db.prepare(
+    `INSERT INTO pos_counters (code, device_id, claimed_at) VALUES (?, ?, ?)
+     ON CONFLICT (code) DO UPDATE SET device_id = excluded.device_id, claimed_at = excluded.claimed_at`,
+  ).bind(code, body.device, new Date().toISOString()).run();
+  return c.json({ ok: true });
+});
+
+/** Owner: the counter letters, which are held by a device, and when each was last used. */
+billing.get("/counters", requireRole("owner"), async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT code, last_seen_at, last_bill_no, claimed_at, device_id IS NOT NULL AS held FROM pos_counters ORDER BY code",
+  ).all();
+  return c.json({ counters: results });
+});
+
+/** Owner: frees a counter letter, so another (or a reinstalled) device can take it. */
+billing.post("/counters/:code/release", requireRole("owner"), async (c) => {
+  const code = c.req.param("code");
+  if (!validCounter(code)) throw new HttpError(422, "invalid", { field: "code" });
+  const db = c.env.DB;
+  const before = await db.prepare("SELECT code, device_id, claimed_at FROM pos_counters WHERE code = ?").bind(code).first();
+  await db.prepare("UPDATE pos_counters SET device_id = NULL, claimed_at = NULL WHERE code = ?").bind(code).run();
+  if (before) await audit(db, "pos_counters", 0, "update", before, { code, device_id: null }, c.get("user").id);
+  return c.json({ ok: true });
 });
 
 /* ---------------- Several POS screens: shared running orders and one token counter ---------------- */
@@ -518,15 +712,22 @@ billing.get("/bills", requireRole("owner", "manager"), async (c) => {
     .bind(date)
     .all<Record<string, unknown> & { id: number }>();
   // By date, not by a list of bill ids: D1 allows only 100 values in one query, and a busy day has more bills.
-  const [items, pays] = await Promise.all([
+  const [items, pays, counters, rejects] = await Promise.all([
     db.prepare("SELECT i.* FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date = ? ORDER BY i.id").bind(date).all<{ bill_id: number }>(),
     db.prepare("SELECT p.* FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date = ? ORDER BY p.id").bind(date).all<{ bill_id: number }>(),
+    db.prepare("SELECT code, last_seen_at, last_bill_no FROM pos_counters ORDER BY code").all(),
+    // Bills the server refused that haven't been saved since (a bill with no readable date shows on every day).
+    db.prepare(
+      `SELECT r.client_id, r.bill_no, r.counter, r.business_date, r.total, r.reason, r.reported_at, u.name AS by_name
+       FROM pos_bill_rejects r LEFT JOIN users u ON u.id = r.reported_by
+       WHERE r.resolved_at IS NULL AND (r.business_date = ? OR r.business_date IS NULL) ORDER BY r.reported_at DESC LIMIT 100`,
+    ).bind(date).all(),
   ]);
-  const counters = await db.prepare("SELECT * FROM pos_counters ORDER BY code").all();
   return c.json({
     date,
     bills: bills.map((b) => ({ ...b, lines: items.results.filter((i) => i.bill_id === b.id), payments: pays.results.filter((p) => p.bill_id === b.id) })),
     counters: counters.results,
+    rejects: rejects.results,
   });
 });
 
@@ -652,7 +853,9 @@ billing.post("/tables", async (c) => {
   const f = tableFields(await c.req.json());
   const res = await c.env.DB.prepare("INSERT INTO dining_tables (area, name, seats, sort, active) VALUES (?, ?, ?, ?, ?)")
     .bind(f.area, f.name, f.seats, f.sort, f.active).run();
-  return c.json({ id: Number(res.meta.last_row_id) }, 201);
+  const id = Number(res.meta.last_row_id);
+  await audit(c.env.DB, "dining_tables", id, "create", null, f, c.get("user").id);
+  return c.json({ id }, 201);
 });
 
 billing.patch("/tables/:id", async (c) => {
@@ -660,8 +863,11 @@ billing.patch("/tables/:id", async (c) => {
   const before = await c.env.DB.prepare("SELECT * FROM dining_tables WHERE id = ?").bind(id).first();
   if (!before) throw new HttpError(404, "not_found");
   const f = tableFields({ ...before, ...(await c.req.json<Record<string, unknown>>()) });
-  await c.env.DB.prepare("UPDATE dining_tables SET area = ?, name = ?, seats = ?, sort = ?, active = ? WHERE id = ?")
-    .bind(f.area, f.name, f.seats, f.sort, f.active, id).run();
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare("UPDATE dining_tables SET area = ?, name = ?, seats = ?, sort = ?, active = ? WHERE id = ?").bind(f.area, f.name, f.seats, f.sort, f.active, id),
+    auditStmt(db, "dining_tables", id, "update", before, f, c.get("user").id),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -692,13 +898,23 @@ billing.put("/settings", async (c) => {
     if (r === null) throw new HttpError(422, "invalid", { field: "bill_copies" });
     updates.push(["pos_bill_copies", String(r)]);
   }
+  if (b.discount_limit_pct !== undefined) {
+    const r = int(b.discount_limit_pct, 0, 100);
+    if (r === null) throw new HttpError(422, "invalid", { field: "discount_limit_pct" });
+    updates.push(["pos_discount_limit_pct", String(r)]);
+  }
   if (b.commission_bp !== undefined) {
     const r = int(b.commission_bp, 0, 10000);
     if (r === null) throw new HttpError(422, "invalid", { field: "commission_bp" });
     updates.push(["pos_commission_bp", String(r)]);
   }
   if (updates.length) {
-    await db.batch(updates.map(([k, v]) => db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(k, v)));
+    const before = await loadPosSettings(db);
+    const was = Object.fromEntries(updates.map(([k]) => [k, String((before as unknown as Record<string, unknown>)[k.replace(/^pos_/, "")])]));
+    await db.batch([
+      ...updates.map(([k, v]) => db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(k, v)),
+      auditStmt(db, "settings", 0, "update", was, Object.fromEntries(updates), c.get("user").id),
+    ]);
   }
   return c.json({ settings: await loadPosSettings(db) });
 });

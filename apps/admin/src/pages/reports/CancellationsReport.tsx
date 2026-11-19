@@ -2,17 +2,27 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { dateRange, formatDay, formatINR, formatINRShort } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
-import { Empty, ErrorNote, Loading, Pill, Stat } from "../../components/ui";
+import { billFlagText, discountReasonText, Empty, ErrorNote, Loading, Pill, Stat } from "../../components/ui";
 import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
 
 interface Totals { cancelled: number; cancelled_n: number; discount: number; discount_n: number }
 interface LeakBill {
   bill_no: string; business_date: string; closed_at: string; order_type: "dine_in" | "parcel"; table_name: string | null; token: number | null;
   status: "paid" | "cancelled"; total: number; subtotal: number; discount: number; cancel_reason: string | null; by_name: string | null; waiter_name: string | null;
+  discount_reason?: string | null; approved_by_name?: string | null; flags?: string | null;
 }
-interface Res { from: string; to: string; sales: number; paid_bills: number; days: (Totals & { business_date: string })[]; people: (Totals & { name: string })[]; bills: LeakBill[] }
+/** An item taken off after the kitchen got it or the bill was printed. `all_*` are totals for the whole period. */
+interface Removed {
+  bill_no: string; business_date: string; bill_status: "paid" | "cancelled"; name: string; variation: string | null; qty: number; price: number; amount: number;
+  stage: "kitchen" | "billed"; removed_at: string; by_name: string | null; all_amount: number; all_n: number;
+}
+interface Res {
+  from: string; to: string; sales: number; paid_bills: number; days: (Totals & { business_date: string })[]; people: (Totals & { name: string })[]; bills: LeakBill[];
+  voids?: Removed[];
+  void_people?: { name: string; removed: number; removed_n: number }[];
+}
 
-/** Cancelled bills and discounts: where money can go missing at the counter. */
+/** Cancelled bills, discounts and items taken off after printing: where money can go missing at the counter. */
 export function CancellationsReport() {
   const t = useSession().t;
   return (
@@ -36,6 +46,12 @@ function Body({ days }: { days: Range }) {
   const colors = { cancelled: "var(--series-1)", discount: "var(--series-2)" };
   const byDate = new Map(d.days.map((r) => [r.business_date, r]));
   const rows = dateRange(d.from, d.to).map((date) => ({ date, cancelled: byDate.get(date)?.cancelled ?? 0, discount: byDate.get(date)?.discount ?? 0 }));
+  const voids = d.voids ?? [];
+  const removed = voids[0]?.all_amount ?? 0;
+  // People who cancelled or discounted, and people who took items off: one row each, by name.
+  const blank = { cancelled: 0, cancelled_n: 0, discount: 0, discount_n: 0, removed: 0, removed_n: 0 };
+  const people = new Map(d.people.map((p) => [p.name, { ...blank, ...p }]));
+  for (const v of d.void_people ?? []) people.set(v.name, { ...blank, ...people.get(v.name), ...v });
   const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
 
   return (
@@ -43,8 +59,9 @@ function Body({ days }: { days: Range }) {
       <div className="stats">
         <Stat hero label={names.cancelled} value={formatINR(cancelled)} delta={`${t("bills.count", { n: sum("cancelled_n") })}${pct(cancelled) ? ` · ${pct(cancelled)}` : ""}`} />
         <Stat label={names.discount} value={formatINR(discount)} delta={`${t("bills.count", { n: sum("discount_n") })}${pct(discount) ? ` · ${pct(discount)}` : ""}`} />
+        {voids.length > 0 && <Stat label={t("reports.removed")} value={formatINR(removed)} delta={pct(removed)} />}
       </div>
-      {d.bills.length === 0 ? <Empty>{t("reports.leaks_none")}</Empty> : (
+      {d.bills.length === 0 && voids.length === 0 ? <Empty>{t("reports.leaks_none")}</Empty> : (
         <>
           <div className="card chart-card">
             <div className="legend">
@@ -69,13 +86,19 @@ function Body({ days }: { days: Range }) {
             <p className="muted small" style={{ margin: 0 }}>{t("reports.by_person_help")}</p>
             <div className="card flush">
               <table className="data">
-                <thead><tr><th></th><th className="r">{names.cancelled}</th><th className="r">{names.discount}</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th></th><th className="r">{names.cancelled}</th><th className="r">{names.discount}</th>
+                    {voids.length > 0 && <th className="r">{t("reports.removed")}</th>}
+                  </tr>
+                </thead>
                 <tbody>
-                  {d.people.map((p) => (
+                  {[...people.values()].map((p) => (
                     <tr key={p.name}>
                       <td>{p.name}</td>
                       <td className="r">{formatINR(p.cancelled)} <span className="faint">({p.cancelled_n})</span></td>
                       <td className="r">{formatINR(p.discount)} <span className="faint">({p.discount_n})</span></td>
+                      {voids.length > 0 && <td className="r">{formatINR(p.removed)} <span className="faint">({p.removed_n})</span></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -83,7 +106,7 @@ function Body({ days }: { days: Range }) {
             </div>
           </section>
 
-          <section className="form">
+          {d.bills.length > 0 && <section className="form">
             <h2>{t("reports.leak_bills")}</h2>
             <div className="card flush list">
               {d.bills.map((b) => (
@@ -95,14 +118,42 @@ function Body({ days }: { days: Range }) {
                     </span>
                     {b.status === "cancelled"
                       ? <span className="small">{t("reports.reason")}: {b.cancel_reason || "—"}</span>
-                      : <span className="small">{t("reports.discount_of", { amount: formatINR(b.discount), bill: formatINR(b.subtotal) })}</span>}
+                      : b.discount > 0 && (
+                        <span className="small">
+                          {t("reports.discount_of", { amount: formatINR(b.discount), bill: formatINR(b.subtotal) })}
+                          {" · "}{b.discount_reason ? discountReasonText(t, b.discount_reason) : <span className="faint">{t("reports.no_reason")}</span>}
+                          {b.approved_by_name ? ` · ${t("reports.approved_by", { name: b.approved_by_name })}` : ""}
+                        </span>
+                      )}
+                    {b.flags && <span className="small" style={{ color: "var(--warn)" }}>{billFlagText(t, b.flags)}</span>}
                   </span>
-                  {b.status === "cancelled" ? <Pill tone="bad">{t("bills.cancelled_one")}</Pill> : <Pill tone="warn">{t("reports.discount_one")}</Pill>}
-                  <span className="amount">{formatINR(b.status === "cancelled" ? b.total : b.discount)}</span>
+                  {b.status === "cancelled" ? <Pill tone="bad">{t("bills.cancelled_one")}</Pill>
+                    : b.discount > 0 ? <Pill tone="warn">{t("reports.discount_one")}</Pill> : <Pill tone="warn">{t("reports.flagged")}</Pill>}
+                  <span className="amount">{formatINR(b.status === "cancelled" ? b.total : b.discount > 0 ? b.discount : b.total)}</span>
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
+          {voids.length > 0 && (
+            <section className="form">
+              <h2>{t("reports.removed")}</h2>
+              <p className="muted small" style={{ margin: 0 }}>{t("reports.removed_help")}</p>
+              <div className="card flush list">
+                {voids.map((v, i) => (
+                  <div key={`${v.bill_no}-${i}`} className="row">
+                    <span className="grow">
+                      <strong>{v.qty} × {v.name}{v.variation ? ` [${v.variation}]` : ""}</strong>
+                      <span className="muted small">
+                        {v.bill_no} · {formatDay(v.business_date)} {time(v.removed_at)}{v.by_name ? ` · ${v.by_name}` : ""}
+                      </span>
+                    </span>
+                    <Pill tone={v.stage === "billed" ? "bad" : "warn"}>{t(v.stage === "billed" ? "reports.stage_billed" : "reports.stage_kitchen")}</Pill>
+                    <span className="amount">{formatINR(v.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
     </>

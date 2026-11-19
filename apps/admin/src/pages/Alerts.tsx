@@ -33,7 +33,7 @@ export function Alerts() {
       month: String(p.month ?? ""),
     });
   }
-  const link = (a: AlertRow) => (a.type === "backup_missing" ? "/alerts" : a.type === "shopping_open" ? "/entries/shopping" : a.type.startsWith("expense_high") ? `/entries/expenses?date=${a.business_date}` : `/entries/close/${a.business_date}`);
+  const link = (a: AlertRow) => (a.type === "backup_missing" ? "/alerts" : a.type.startsWith("login_locked") ? "/manage/users" : a.type === "shopping_open" ? "/entries/shopping" : a.type.startsWith("expense_high") ? `/entries/expenses?date=${a.business_date}` : `/entries/close/${a.business_date}`);
 
   async function markSeen(ids?: number[]) {
     await api("/alerts/seen", { method: "POST", json: { ids } }).catch(() => {});

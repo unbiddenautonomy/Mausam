@@ -1,4 +1,4 @@
-import { noteToken, storage, type Bill, type Config, type RemoteOrder } from "./store";
+import { noteServerTime, noteToken, readyToResend, storage, type Bill, type Config, type RemoteOrder } from "./store";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string) {
@@ -21,8 +21,22 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   return data as T;
 }
 
+/**
+ * Logs this screen out: the server forgets the login, so the old token can't be used again. With no internet the
+ * screen still logs out (after at most 3 seconds); that login then runs out on the server by itself.
+ */
+export async function logout(): Promise<void> {
+  if (storage.token()) {
+    const wait = new Promise((done) => setTimeout(done, 3000));
+    await Promise.race([api("/auth/logout", { method: "POST" }).catch(() => {}), wait]);
+  }
+  storage.setToken(null);
+}
+
 export async function fetchConfig(): Promise<Config> {
-  const c = await api<Omit<Config, "fetched_at">>("/billing/config");
+  const sent = Date.now();
+  const c = await api<Omit<Config, "fetched_at"> & { server_time?: string }>("/billing/config");
+  noteServerTime(c.server_time, sent, Date.now());
   const config = { ...c, fetched_at: new Date().toISOString() };
   storage.setConfig(config);
   return config;
@@ -46,11 +60,13 @@ export async function syncBills(): Promise<{ waiting: number; rejected: number }
       const pending = storage.bills().filter((b) => !b.synced && !b.rejected).slice(0, batchSize);
       if (!pending.length) break;
       let results: SyncResult[];
+      let counterTaken: boolean | undefined;
       try {
-        ({ results } = await api<{ results: SyncResult[] }>("/billing/bills", {
+        ({ results, counter_taken: counterTaken } = await api<{ results: SyncResult[]; counter_taken?: boolean }>("/billing/bills", {
           method: "POST",
-          json: { counter: storage.counter()?.code, bills: pending.map(({ synced, rejected, ...b }) => b) },
+          json: { counter: storage.counter()?.code, device: storage.device(), bills: pending.map(({ synced, rejected, reported, ...b }) => b) },
         }));
+        if (counterTaken) noteCounterTaken();
       } catch (e) {
         if (e instanceof ApiError && e.status >= 500) batchSize = Math.max(1, Math.floor(batchSize / 2));
         throw e;
@@ -73,10 +89,50 @@ export async function syncBills(): Promise<{ waiting: number; rejected: number }
       // Fewer answers than bills sent, or a bill to try again: the rest go on the next round.
       if (retry || results.length < pending.length) break;
     }
+    await reportRejects();
   } finally {
     syncing = false;
   }
   return count();
+}
+
+/** The server says another device holds this screen's letter. Bills already made are kept and still sent. */
+function noteCounterTaken() {
+  const c = storage.counter();
+  if (c && !c.taken) storage.setCounter({ ...c, taken: true });
+}
+
+/**
+ * Takes a counter letter for this device. "taken" when another device holds it; "offline" when the server can't be
+ * reached (the letter is then claimed with the first bills sent).
+ */
+export async function claimCounter(code: string): Promise<"ok" | "taken" | "offline"> {
+  try {
+    await api(`/billing/counters/${code}/claim`, { method: "POST", json: { device: storage.device() } });
+    return "ok";
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) return "taken";
+    if (e instanceof ApiError && e.status === 401) throw e;
+    return "offline";
+  }
+}
+
+/** Tells the server about bills it refused, so the owner sees them. Tried again on the next sync if it fails. */
+async function reportRejects() {
+  const list = storage.bills().filter((b) => b.rejected && !b.reported).slice(0, 20);
+  if (!list.length) return;
+  await api("/billing/rejects", {
+    method: "POST",
+    json: { rejects: list.map(({ synced, rejected, reported, ...bill }) => ({ bill, reason: rejected })) },
+  });
+  const done = new Set(list.map((b) => `${b.client_id}|${b.rejected}`));
+  storage.setBills(storage.bills().map((b) => (done.has(`${b.client_id}|${b.rejected}`) ? { ...b, reported: true } : b)));
+}
+
+/** Sends a refused bill again (with a new number if its number was already used). */
+export async function resendBill(clientId: string): Promise<{ waiting: number; rejected: number }> {
+  storage.setBills(storage.bills().map((b) => (b.client_id === clientId && b.rejected ? readyToResend(b) : b)));
+  return syncBills();
 }
 
 function count() {

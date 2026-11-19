@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { businessDate, computePay, countDays, monthDates, type AttendanceStatus, type PayType } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
-import { addCounterExpense, removeCounterExpense } from "../lib/counter";
-import { assertDayOpen, audit, bool } from "../lib/db";
+import { counterExpenseStmts, removeCounterExpense } from "../lib/counter";
+import { assertDayOpen, audit, auditStmt, bool, clientIdOf, isClientIdClash } from "../lib/db";
 import { HttpError, optionalText, requireDate, requirePaise } from "../lib/http";
 
 const STATUSES: AttendanceStatus[] = ["present", "half", "absent", "leave", "off"];
@@ -40,6 +40,19 @@ people.put("/attendance/:date", async (c) => {
   await assertDayOpen(c.env.DB, user, date);
   const b = await c.req.json<{ marks?: { staff_id: number; status: AttendanceStatus | null }[] }>();
   if (!Array.isArray(b.marks) || b.marks.length > 200) throw new HttpError(422, "invalid", { field: "marks" });
+  // What each person was marked before, by name, for the audit log (one row for the day's changes).
+  const { results: was } = await c.env.DB.prepare(
+    `SELECT s.id, s.name, a.status FROM staff s LEFT JOIN attendance a ON a.staff_id = s.id AND a.business_date = ?1
+     WHERE s.id IN (SELECT value FROM json_each(?2))`,
+  ).bind(date, JSON.stringify(b.marks.map((m) => Number(m.staff_id)))).all<{ id: number; name: string; status: AttendanceStatus | null }>();
+  const before: Record<string, string | null> = {};
+  const after: Record<string, string | null> = {};
+  for (const m of b.marks) {
+    const row = was.find((w) => w.id === Number(m.staff_id));
+    if (!row || (row.status ?? null) === (m.status ?? null)) continue;
+    before[row.name] = row.status ?? null;
+    after[row.name] = m.status ?? null;
+  }
   const stmts = b.marks.map((m) => {
     if (m.status === null) return c.env.DB.prepare("DELETE FROM attendance WHERE staff_id = ? AND business_date = ?").bind(Number(m.staff_id), date);
     if (!STATUSES.includes(m.status)) throw new HttpError(422, "invalid", { field: "status" });
@@ -48,8 +61,9 @@ people.put("/attendance/:date", async (c) => {
        ON CONFLICT (staff_id, business_date) DO UPDATE SET status = excluded.status, marked_by = excluded.marked_by, marked_at = datetime('now')`,
     ).bind(Number(m.staff_id), date, m.status, user.id);
   });
+  if (Object.keys(after).length) stmts.push(auditStmt(c.env.DB, "attendance", Number(date.replace(/-/g, "")), "update", before, after, user.id));
   if (stmts.length) await c.env.DB.batch(stmts);
-  return c.json({ ok: true, saved: stmts.length });
+  return c.json({ ok: true, saved: b.marks.length });
 });
 
 /** Month grid for the owner: one row per person, one letter per day. */
@@ -91,19 +105,38 @@ people.post("/advances", async (c) => {
   const fromCounter = b.from_counter === undefined ? true : bool(b.from_counter);
   const mode = b.mode === "online" ? "online" : "cash";
   const note = optionalText(b.note);
-  const res = await c.env.DB.prepare(
-    "INSERT INTO advances (staff_id, business_date, amount, mode, from_counter, note, given_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  )
-    .bind(staffId, date, amount, mode, fromCounter && mode === "cash" ? 1 : 0, note, user.id)
-    .run();
-  const id = Number(res.meta.last_row_id);
-  if (fromCounter && mode === "cash") {
-    const expenseId = await addCounterExpense(c.env.DB, {
-      date, categoryKey: "staff_advance", amount, source: "advance", refId: id, note: `${staff.name}${note ? ` · ${note}` : ""}`, userId: user.id,
-    });
-    await c.env.DB.prepare("UPDATE advances SET expense_id = ? WHERE id = ?").bind(expenseId, id).run();
+  const db = c.env.DB;
+  const clientId = clientIdOf(b.client_id);
+  const already = async () =>
+    clientId ? await db.prepare("SELECT id FROM advances WHERE client_id = ?").bind(clientId).first<{ id: number }>() : null;
+  const had = await already();
+  if (had) return c.json({ id: had.id, duplicate: true });
+  const cash = fromCounter && mode === "cash";
+  // The advance, its counter expense and the link between them are saved together, or not at all.
+  let results: D1Result[];
+  try {
+    results = await db.batch([
+      db.prepare(
+        "INSERT INTO advances (staff_id, business_date, amount, mode, from_counter, note, given_by, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+      ).bind(staffId, date, amount, mode, cash ? 1 : 0, note, user.id, clientId),
+      ...(cash
+        ? counterExpenseStmts(db, "advances", {
+          date, categoryKey: "staff_advance", amount, source: "advance", note: `${staff.name}${note ? ` · ${note}` : ""}`, userId: user.id,
+        })
+        : []),
+    ]);
+  } catch (e) {
+    // The same form saved twice at the same moment: the other save won.
+    const won = isClientIdClash(e) ? await already() : null;
+    if (won) return c.json({ id: won.id, duplicate: true });
+    throw e;
   }
-  await audit(c.env.DB, "advances", id, "create", null, { staff_id: staffId, date, amount, mode, from_counter: fromCounter }, user.id);
+  const id = Number((results[0].results[0] as { id: number }).id);
+  const row = await db.prepare("SELECT expense_id FROM advances WHERE id = ?").bind(id).first<{ expense_id: number | null }>();
+  await db.batch([
+    auditStmt(db, "advances", id, "create", null, { staff_id: staffId, date, amount, mode, from_counter: fromCounter }, user.id),
+    ...(row?.expense_id ? [auditStmt(db, "expenses", row.expense_id, "create", null, { date, amount, source: "advance", ref_id: id }, user.id)] : []),
+  ]);
   return c.json({ id }, 201);
 });
 
@@ -121,7 +154,11 @@ people.delete("/advances/:id", async (c) => {
 
 /* ---------- Month-end pay (owner) ---------- */
 
-interface StaffRow { id: number; name: string; role: string; pay_type: PayType | null; pay_rate: number | null; joined_on: string | null; is_waiter: number }
+interface StaffRow {
+  id: number; name: string; role: string; pay_type: PayType | null; pay_rate: number | null; joined_on: string | null; is_waiter: number;
+  /** The last day they worked, if they've left. */
+  left_on?: string | null;
+}
 interface PayrollRow {
   staff_id: number; pay_type: string | null; rate: number | null; days_worked: number; days_absent: number; days_unmarked: number;
   gross: number; advances: number; adjustment: number; net: number; commission: number; status: "draft" | "paid"; paid_on: string | null; note: string | null;
@@ -159,8 +196,10 @@ async function loadMonth(db: D1Database, month: string, staffId?: number): Promi
 function payFor(month: string, s: StaffRow, adjustment: number, data: MonthData) {
   const today = businessDate();
   const all = monthDates(month);
-  const dates = all.filter((d) => d <= today && (!s.joined_on || d >= s.joined_on));
-  const notEmployed = s.joined_on ? all.filter((d) => d < s.joined_on!).length : 0;
+  // Days before they joined or after they left aren't counted, and a monthly wage is cut for them.
+  const employed = (d: string) => (!s.joined_on || d >= s.joined_on) && (!s.left_on || d <= s.left_on);
+  const dates = all.filter((d) => d <= today && employed(d));
+  const notEmployed = all.filter((d) => !employed(d)).length;
   const counts = countDays(dates, data.marks.get(s.id) ?? new Map());
   const advances = data.advances.get(s.id) ?? 0;
   const commission = data.commission.get(s.id) ?? 0;
@@ -176,10 +215,10 @@ async function computeFor(db: D1Database, month: string, s: StaffRow, adjustment
 people.get("/payroll/:month", requireRole("owner"), async (c) => {
   const month = requireMonth(c.req.param("month"));
   const { results: staff } = await c.env.DB.prepare(
-    `SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter FROM staff
-     WHERE active = 1 OR id IN (SELECT staff_id FROM payroll WHERE month = ?) ORDER BY role, name`,
+    `SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter, left_on FROM staff
+     WHERE active = 1 OR left_on >= ?2 OR id IN (SELECT staff_id FROM payroll WHERE month = ?1) ORDER BY role, name`,
   )
-    .bind(month)
+    .bind(month, `${month}-01`)
     .all<StaffRow>();
   const { results: saved } = await c.env.DB.prepare("SELECT * FROM payroll WHERE month = ?").bind(month).all<PayrollRow>();
   const byStaff = new Map(saved.map((r) => [r.staff_id, r]));
@@ -212,7 +251,7 @@ people.put("/payroll/:month/:staffId", requireRole("owner"), async (c) => {
   const user = c.get("user");
   const month = requireMonth(c.req.param("month"));
   const staffId = Number(c.req.param("staffId"));
-  const s = await c.env.DB.prepare("SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter FROM staff WHERE id = ?").bind(staffId).first<StaffRow>();
+  const s = await c.env.DB.prepare("SELECT id, name, role, pay_type, pay_rate, joined_on, is_waiter, left_on FROM staff WHERE id = ?").bind(staffId).first<StaffRow>();
   if (!s) throw new HttpError(404, "not_found");
   const b = await c.req.json<{ adjustment?: unknown; note?: unknown; status?: unknown }>();
   const before = await c.env.DB.prepare("SELECT * FROM payroll WHERE staff_id = ? AND month = ?").bind(staffId, month).first<PayrollRow>();
@@ -222,9 +261,15 @@ people.put("/payroll/:month/:staffId", requireRole("owner"), async (c) => {
     if (typeof b.adjustment !== "number" || !Number.isInteger(b.adjustment) || Math.abs(b.adjustment) > 1_00_00_000_00) throw new HttpError(422, "invalid", { field: "adjustment" });
     adjustment = b.adjustment;
   }
-  const status = b.status === "paid" ? "paid" : "draft";
-  const p = await computeFor(c.env.DB, month, s, adjustment);
   const note = b.note === undefined ? before?.note ?? null : optionalText(b.note);
+  // A paid row stays paid, with its numbers frozen, unless the request asks for "draft": saving a note changes only the note.
+  if (before?.status === "paid" && b.status === undefined) {
+    await c.env.DB.prepare("UPDATE payroll SET note = ?, updated_at = datetime('now') WHERE staff_id = ? AND month = ?").bind(note, staffId, month).run();
+    await audit(c.env.DB, "payroll", staffId, "update", before, { month, note }, user.id);
+    return c.json({ ok: true, net: before.net });
+  }
+  const status = b.status === "paid" || (b.status === undefined && before?.status === "paid") ? "paid" : "draft";
+  const p = await computeFor(c.env.DB, month, s, adjustment);
   await c.env.DB.prepare(
     `INSERT INTO payroll (staff_id, month, pay_type, rate, days_worked, days_absent, days_unmarked, gross, advances, adjustment, net, status, paid_on, note, commission, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))

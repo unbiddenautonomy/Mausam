@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../env";
-import { createSession, hashPin, normalisePhone, requireAuth, validPin, verifyPin } from "../lib/auth";
+import { createSession, hashPin, normalisePhone, requireAuth, validPin } from "../lib/auth";
 import { HttpError, requireText } from "../lib/http";
+import { audit } from "../lib/db";
+import { PIN_COLUMNS, tryPin, type PinUser } from "../lib/pin";
 import { DEFAULT_LANG } from "@mausam/shared";
 
-const MAX_FAILS = 5;
-const LOCK_MINUTES = 15;
 const LANGS = ["en", "hi", "kn"];
 
 export const auth = new Hono<AppEnv>();
@@ -66,40 +66,21 @@ auth.post("/login", async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
   const phone = normalisePhone(body.phone);
   if (!phone || !validPin(body.pin)) throw new HttpError(401, "wrong_login");
-  const user = await c.env.DB.prepare(
-    "SELECT id, name, phone, role, language, pin_hash, pin_salt, failed_logins, locked_until FROM users WHERE phone = ? AND active = 1",
-  )
+  const user = await c.env.DB.prepare(`SELECT ${PIN_COLUMNS}, phone, role, language FROM users WHERE phone = ? AND active = 1`)
     .bind(phone)
-    .first<{
-      id: number;
-      name: string;
-      phone: string;
-      role: string;
-      language: string;
-      pin_hash: string;
-      pin_salt: string;
-      failed_logins: number;
-      locked_until: string | null;
-    }>();
+    .first<PinUser & { phone: string; role: string; language: string }>();
   if (!user) throw new HttpError(401, "wrong_login");
-  if (user.locked_until && user.locked_until > new Date().toISOString()) throw new HttpError(429, "too_many_tries");
-
-  if (!(await verifyPin(body.pin, user.pin_hash, user.pin_salt))) {
-    const fails = user.failed_logins + 1;
-    const lock = fails >= MAX_FAILS ? new Date(Date.now() + LOCK_MINUTES * 60_000).toISOString() : null;
-    await c.env.DB.prepare("UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?")
-      .bind(lock ? 0 : fails, lock, user.id)
-      .run();
-    throw new HttpError(401, "wrong_login");
-  }
-  await c.env.DB.prepare("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?").bind(user.id).run();
+  const check = await tryPin(c.env, user, body.pin);
+  if (check === "locked") throw new HttpError(429, "too_many_tries");
+  if (check === "wrong") throw new HttpError(401, "wrong_login");
   const token = await createSession(c.env.DB, user.id);
-  const { pin_hash, pin_salt, failed_logins, locked_until, ...safe } = user;
+  const { pin_hash, pin_salt, locked_until, lock_count, ...safe } = user;
   return c.json({ token, user: safe });
 });
 
 auth.use("/me", requireAuth);
 auth.use("/logout", requireAuth);
+auth.use("/pin", requireAuth);
 
 auth.get("/me", (c) => c.json({ user: c.get("user") }));
 
@@ -115,5 +96,29 @@ auth.patch("/me", async (c) => {
 auth.post("/logout", async (c) => {
   const token = (c.req.header("Authorization") ?? "").slice(7);
   await c.env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
+  return c.json({ ok: true });
+});
+
+/**
+ * A person changes their own PIN, after typing the old one. Their other devices are logged out; this one stays in.
+ * Wrong old PINs count towards the account lock, like wrong logins.
+ */
+auth.post("/pin", async (c) => {
+  const body = await c.req.json<Record<string, unknown>>();
+  if (!validPin(body.new_pin)) throw new HttpError(422, "invalid", { field: "new_pin" });
+  const me = c.get("user");
+  const db = c.env.DB;
+  const user = await db.prepare(`SELECT ${PIN_COLUMNS} FROM users WHERE id = ?`).bind(me.id).first<PinUser>();
+  if (!user) throw new HttpError(401, "not_logged_in");
+  const check = validPin(body.old_pin) ? await tryPin(c.env, user, body.old_pin) : "wrong";
+  if (check === "locked") throw new HttpError(429, "too_many_tries");
+  if (check === "wrong") throw new HttpError(403, "wrong_pin");
+  const { hash, salt } = await hashPin(body.new_pin);
+  const token = (c.req.header("Authorization") ?? "").slice(7);
+  await db.batch([
+    db.prepare("UPDATE users SET pin_hash = ?, pin_salt = ? WHERE id = ?").bind(hash, salt, me.id),
+    db.prepare("DELETE FROM sessions WHERE user_id = ? AND token <> ?").bind(me.id, token),
+  ]);
+  await audit(db, "users", me.id, "update", null, { pin_changed: true }, me.id);
   return c.json({ ok: true });
 });

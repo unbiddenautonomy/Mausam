@@ -50,6 +50,10 @@ export function PosOptionsPage() {
             <span className="muted small">{t("posset.copies_help")}</span>
           </div>
         )}
+        <Field label={t("posset.discount_limit")} help={t("posset.discount_limit_help")} htmlFor="g-disc">
+          <input id="g-disc" className="input num" inputMode="numeric" value={String(s.discount_limit_pct ?? 100)}
+            onChange={(e) => setF({ ...s, discount_limit_pct: Math.min(100, Number(e.target.value.replace(/\D/g, "") || 0)) })} />
+        </Field>
         {toggle("use_gst", t("posset.gst"), t("posset.gst_help"))}
         {s.use_gst && (
           <>
@@ -70,6 +74,46 @@ export function PosOptionsPage() {
         <button className="btn primary" disabled={!f} onClick={save}><Icon name="check" /> {t("common.save")}</button>
         <p className="muted small" style={{ margin: 0 }}>{t("posset.saved_note")}</p>
       </div>
+      <Counters />
     </div>
+  );
+}
+
+interface CounterRow { code: string; last_seen_at: string | null; last_bill_no: string | null; held: number }
+
+/** The counter letters in use. The owner frees one when its device was reset or replaced. */
+function Counters() {
+  const { t } = useSession();
+  const res = useApi<{ counters: CounterRow[] }>("/billing/counters");
+  const [error, setError] = useState<unknown>(null);
+  if (!res.data?.counters.length) return null;
+  async function free(code: string) {
+    if (!confirm(t("posset.counter_free_confirm", { code }))) return;
+    setError(null);
+    try {
+      await api(`/billing/counters/${code}/release`, { method: "POST" });
+      res.reload();
+    } catch (e) {
+      setError(e);
+    }
+  }
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—");
+  return (
+    <section className="form">
+      <h2>{t("posset.counters")}</h2>
+      <p className="muted small" style={{ margin: 0 }}>{t("posset.counters_help")}</p>
+      <ErrorNote error={error} />
+      <div className="card flush list">
+        {res.data.counters.map((c) => (
+          <div key={c.code} className="row">
+            <span className="grow">
+              <strong>{c.code}</strong>
+              <span className="muted small">{c.last_bill_no ?? "—"} · {when(c.last_seen_at)}</span>
+            </span>
+            {c.held ? <button className="btn small" onClick={() => void free(c.code)}>{t("posset.counter_free")}</button> : <span className="muted small">{t("posset.counter_unheld")}</span>}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

@@ -2,21 +2,23 @@
 // also becomes an expense line, so the day's counter total still adds up against the memo.
 import { audit } from "./db";
 
-export async function addCounterExpense(
+/**
+ * The statements that add the counter expense for a row just inserted (an advance or a vendor payment) and link the
+ * row to it. They go in the same db.batch, right after that row's INSERT, so all of it is saved or none.
+ * They rely on last_insert_rowid(): first the row's id (the expense's ref_id), then the expense's id.
+ */
+export function counterExpenseStmts(
   db: D1Database,
-  e: { date: string; categoryKey: string; amount: number; source: "advance" | "vendor_payment"; refId: number; note: string | null; userId: number },
-): Promise<number> {
-  const cat = await db.prepare("SELECT id FROM expense_categories WHERE key = ?").bind(e.categoryKey).first<{ id: number }>();
-  const res = await db
-    .prepare(
+  table: "advances" | "vendor_payments",
+  e: { date: string; categoryKey: string; amount: number; source: "advance" | "vendor_payment"; note: string | null; userId: number },
+): D1PreparedStatement[] {
+  return [
+    db.prepare(
       `INSERT INTO expenses (business_date, category_id, amount, mode, has_receipt, note, created_by, source, ref_id)
-       VALUES (?, ?, ?, 'cash', 0, ?, ?, ?, ?)`,
-    )
-    .bind(e.date, cat?.id ?? 14, e.amount, e.note, e.userId, e.source, e.refId)
-    .run();
-  const id = Number(res.meta.last_row_id);
-  await audit(db, "expenses", id, "create", null, { ...e, id }, e.userId);
-  return id;
+       VALUES (?, COALESCE((SELECT id FROM expense_categories WHERE key = ?), 14), ?, 'cash', 0, ?, ?, ?, last_insert_rowid())`,
+    ).bind(e.date, e.categoryKey, e.amount, e.note, e.userId, e.source),
+    db.prepare(`UPDATE ${table} SET expense_id = last_insert_rowid() WHERE id = (SELECT ref_id FROM expenses WHERE id = last_insert_rowid())`),
+  ];
 }
 
 export async function removeCounterExpense(db: D1Database, expenseId: number | null, userId: number): Promise<void> {

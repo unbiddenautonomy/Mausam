@@ -29,6 +29,34 @@ export async function audit(
     .run();
 }
 
+/** The audit row as a statement, to add to a db.batch with the change it records. */
+export function auditStmt(
+  db: D1Database,
+  table: string,
+  rowId: number,
+  action: "create" | "update" | "delete",
+  before: unknown,
+  after: unknown,
+  userId: number,
+): D1PreparedStatement {
+  return db
+    .prepare("INSERT INTO audit_log (table_name, row_id, action, before, after, user_id) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(table, rowId, action, before ? JSON.stringify(before) : null, after ? JSON.stringify(after) : null, userId);
+}
+
+/**
+ * A form makes one random id when it opens and sends it with the save, so a double tap or a re-send after a lost
+ * reply saves once. Returns the id, or null when the form didn't send one (older screens).
+ */
+export function clientIdOf(v: unknown): string | null {
+  return typeof v === "string" && /^[A-Za-z0-9-]{8,64}$/.test(v) ? v : null;
+}
+
+/** Was this a unique-index clash on client_id (two saves of the same form at the same moment)? */
+export function isClientIdClash(e: unknown): boolean {
+  return String(e).includes("UNIQUE") && String(e).includes("client_id");
+}
+
 /** Managers can't change a day after it locks. The owner always can. */
 export async function assertDayOpen(db: D1Database, user: AuthUser, date: string): Promise<void> {
   // A closed month is locked for everyone; the owner reopens it first.

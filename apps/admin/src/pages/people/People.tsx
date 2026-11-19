@@ -3,6 +3,7 @@ import { businessDate, formatDay, formatINR, rupeesToPaise, type AttendanceStatu
 import { api } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
+import { newClientId } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Empty, ErrorNote, Field, Loading, MoneyInput, NavCard, PageHead, Pill, Stat, useToast } from "../../components/ui";
 
@@ -124,6 +125,8 @@ export function Advances() {
   const list = useApi<{ advances: Advance[] }>(`/people/advances?month=${month}`);
   const staff = useApi<{ staff: AttRow[] }>(`/people/attendance/${businessDate()}`);
   const [f, setF] = useState({ staff_id: "", amount: "", fromCounter: true, note: "" });
+  // One id per advance being entered, so a double tap or a retry saves it once.
+  const [clientId, setClientId] = useState(newClientId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const amount = rupeesToPaise(f.amount);
@@ -140,9 +143,10 @@ export function Advances() {
     setBusy(true);
     setError(null);
     try {
-      await api("/people/advances", { method: "POST", json: { staff_id: Number(f.staff_id), amount, from_counter: f.fromCounter, note: f.note } });
+      await api("/people/advances", { method: "POST", json: { staff_id: Number(f.staff_id), amount, from_counter: f.fromCounter, note: f.note, client_id: clientId } });
       toast(t("common.saved"));
       setF({ staff_id: "", amount: "", fromCounter: true, note: "" });
+      setClientId(newClientId());
       list.reload();
     } catch (e) {
       setError(e);

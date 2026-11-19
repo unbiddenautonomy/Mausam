@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { businessDate, checkClose, isLocked, type CloseFlag } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
-import { assertDayOpen, audit, bool, loadSettings } from "../lib/db";
+import { assertDayOpen, audit, auditStmt, bool, loadSettings } from "../lib/db";
 import { alertParams, notify } from "../lib/notify";
 import { HttpError, isDate, optionalPaise, optionalText, requireDate, requirePaise } from "../lib/http";
 
@@ -235,7 +235,8 @@ entries.get("/closes", async (c) => {
 entries.get("/closes/:date", async (c) => {
   const date = requireDate(c.req.param("date"));
   const close = await c.env.DB.prepare(
-    `SELECT d.*, u.name AS submitted_by_name FROM day_closes d JOIN users u ON u.id = d.submitted_by WHERE d.business_date = ?`,
+    `SELECT d.*, u.name AS submitted_by_name, e.name AS updated_by_name
+     FROM day_closes d JOIN users u ON u.id = d.submitted_by LEFT JOIN users e ON e.id = d.updated_by WHERE d.business_date = ?`,
   )
     .bind(date)
     .first();
@@ -282,17 +283,25 @@ entries.put("/closes/:date", async (c) => {
   const nextDay = new Date(Date.parse(date + "T00:00:00Z") + 86_400_000).toISOString().slice(0, 10);
   const escalateAt = Date.parse(`${nextDay}T00:00:00Z`) + (eh * 60 + em - 330) * 60_000;
   const before = await db.prepare("SELECT * FROM day_closes WHERE business_date = ?").bind(date).first<Record<string, unknown>>();
+  // The screen says which version it started from (updated_at, or null for a new closing). If someone else saved
+  // since, refuse rather than overwrite their numbers; the screen offers to reload. Older screens don't send it.
+  if ("base_updated_at" in b && before && (before.updated_at ?? null) !== (b.base_updated_at ?? null)) {
+    const by = before.updated_by ?? before.submitted_by;
+    const who = await db.prepare("SELECT name FROM users WHERE id = ?").bind(by).first<{ name: string }>();
+    throw new HttpError(409, "changed_elsewhere", { updated_at: before.updated_at ?? before.submitted_at, name: who?.name ?? null });
+  }
   const late = before ? bool(before.late) : Date.now() > escalateAt;
   if (late) flags.push({ code: "late" });
 
   await db
     .prepare(
-      `INSERT INTO day_closes (business_date, total_counter, cash, online, expenses, pos_sales, note, memo_photo_key, pos_photo_key, flags, late, submitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO day_closes (business_date, total_counter, cash, online, expenses, pos_sales, note, memo_photo_key, pos_photo_key, flags, late, submitted_by,
+         updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (business_date) DO UPDATE SET
          total_counter = excluded.total_counter, cash = excluded.cash, online = excluded.online, expenses = excluded.expenses,
          pos_sales = excluded.pos_sales, note = excluded.note, memo_photo_key = excluded.memo_photo_key,
-         pos_photo_key = excluded.pos_photo_key, flags = excluded.flags`,
+         pos_photo_key = excluded.pos_photo_key, flags = excluded.flags, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
     )
     .bind(
       date,
@@ -307,6 +316,8 @@ entries.put("/closes/:date", async (c) => {
       JSON.stringify(flags),
       late ? 1 : 0,
       before ? Number(before.submitted_by) : user.id,
+      new Date().toISOString(),
+      user.id,
     )
     .run();
   const row = await db.prepare("SELECT * FROM day_closes WHERE business_date = ?").bind(date).first<Record<string, unknown>>();
@@ -355,11 +366,15 @@ entries.put("/closes/:date", async (c) => {
       ),
     );
   }
-  return c.json({ close: mapClose({ ...row!, submitted_by_name: user.name }) });
+  return c.json({ close: mapClose({ ...row!, submitted_by_name: user.name, updated_by_name: user.name }) });
 });
 
-/** After a POS import: fill in POS sales on closes that had none and re-run their checks. */
-export async function applyPosToCloses(db: D1Database, from: string, to: string): Promise<number> {
+/**
+ * After POS sales change (an import, or bills from the POS): fill in POS sales on closes that had none or a different
+ * figure, and re-run their checks. Each change gets an audit row (by `userId`, whoever sent the sales), and the
+ * owner's close_flag alert is raised or settled the way saving a closing does.
+ */
+export async function applyPosToCloses(db: D1Database, from: string, to: string, userId: number): Promise<number> {
   const { results } = await db
     .prepare(
       `SELECT d.*, p.total AS pos_total FROM day_closes d JOIN pos_daily p ON p.business_date = d.business_date
@@ -367,16 +382,38 @@ export async function applyPosToCloses(db: D1Database, from: string, to: string)
     )
     .bind(from, to)
     .all<Record<string, unknown> & { business_date: string; pos_total: number }>();
-  const settings = await loadSettings(db);
+  if (!results.length) return 0;
+  // Cash expenses for every day in one query, so a long import stays within the free plan's 50 queries.
+  const [settings, cash] = await Promise.all([
+    loadSettings(db),
+    db.prepare(
+      `SELECT business_date, COALESCE(SUM(amount), 0) AS s FROM expenses
+       WHERE business_date BETWEEN ? AND ? AND mode = 'cash' AND deleted_at IS NULL GROUP BY business_date`,
+    ).bind(from, to).all<{ business_date: string; s: number }>(),
+  ]);
+  const cashOn = new Map(cash.results.map((r) => [r.business_date, r.s]));
+  const stmts: D1PreparedStatement[] = [];
   for (const r of results) {
-    const entered = await sumCashExpenses(db, r.business_date);
+    const entered = { s: cashOn.get(r.business_date) ?? 0 };
     const input = {
       total_counter: Number(r.total_counter), cash: Number(r.cash), online: Number(r.online), expenses: Number(r.expenses),
       pos_sales: r.pos_total, memo_photo_key: (r.memo_photo_key as string | null) ?? null,
     };
     const flags = checkClose(input, { expensesEntered: entered.s, tolerance: settings.cash_tolerance });
     if (bool(r.late)) flags.push({ code: "late" });
-    await db.prepare("UPDATE day_closes SET pos_sales = ?, flags = ? WHERE business_date = ?").bind(r.pos_total, JSON.stringify(flags), r.business_date).run();
+    const serious = flags.filter((f) => f.code !== "no_memo_photo" && f.code !== "formula_mismatch");
+    stmts.push(
+      db.prepare("UPDATE day_closes SET pos_sales = ?, flags = ? WHERE business_date = ?").bind(r.pos_total, JSON.stringify(flags), r.business_date),
+      auditStmt(db, "day_closes", Number(r.id), "update", { pos_sales: r.pos_sales ?? null, flags: JSON.parse(String(r.flags ?? "[]")) },
+        { pos_sales: r.pos_total, flags, source: "pos" }, userId),
+      serious.length
+        ? db.prepare(
+          `INSERT INTO alerts (type, business_date, severity, params) VALUES ('close_flag', ?, 'warn', ?)
+           ON CONFLICT (type, business_date) DO UPDATE SET params = excluded.params, seen_at = NULL`,
+        ).bind(r.business_date, JSON.stringify({ count: serious.length }))
+        : db.prepare("UPDATE alerts SET seen_at = datetime('now') WHERE type = 'close_flag' AND business_date = ? AND seen_at IS NULL").bind(r.business_date),
+    );
   }
+  await db.batch(stmts);
   return results.length;
 }

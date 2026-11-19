@@ -3,16 +3,21 @@ import type { Order } from "./store";
 
 // A tiny in-memory localStorage, so the store can run under Node.
 const mem = new Map<string, string>();
+/** Set to make the stub refuse to save, like a full or blocked browser storage. */
+let full = false;
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
   getItem: (k: string) => mem.get(k) ?? null,
-  setItem: (k: string, v: string) => void mem.set(k, v),
+  setItem: (k: string, v: string) => {
+    if (full) throw new Error("QuotaExceededError");
+    mem.set(k, v);
+  },
   removeItem: (k: string) => void mem.delete(k),
   clear: () => mem.clear(),
   key: () => null,
   length: 0,
 };
 
-const { addItem, billNumbersFull, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, billNumbersFull, clockOffMinutes, readyToResend, noteServerTime, onStorageChange, overDiscountLimit, serverNow, storageBroken, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -36,6 +41,32 @@ describe("orders", () => {
     o = changeQty(o, o.lines[1].key, -1);
     expect(o.lines).toHaveLength(1);
     expect(totalsOf(o, settings).total).toBe(44000);
+  });
+
+  it("records items taken off after the kitchen got them or the bill was printed", () => {
+    let o = newOrder("dine_in", null, 1);
+    o = addItem(o, bhaji, cats, settings);
+    o = addItem(o, bhaji, cats, settings);
+    o = addItem(o, pav, cats, settings);
+    // Taking off something the kitchen hasn't seen isn't recorded.
+    o = changeQty(o, o.lines[1].key, -1, 7);
+    expect(o.voids).toBeUndefined();
+    // The kitchen has 1 of the 2 bhajis: the first one taken off is unsent, the second was sent.
+    o = { ...o, lines: o.lines.map((l) => ({ ...l, sent: 1 })) };
+    o = changeQty(o, o.lines[0].key, -1, 7);
+    expect(o.voids).toBeUndefined();
+    o = changeQty(o, o.lines[0].key, -1, 7, new Date("2026-08-01T08:00:00Z"));
+    expect(o.lines).toHaveLength(0);
+    expect(o.voids).toEqual([{ name: "Bhaji", variation: null, qty: 1, price: 22000, stage: "kitchen", at: "2026-08-01T08:00:00.000Z", by: 7 }]);
+    // After the bill is printed, every item taken off counts, sent or not.
+    o = addItem(addItem(o, pav, cats, settings), pav, cats, settings);
+    o = { ...o, bill_no: "A2627-00001" };
+    o = changeQty(o, o.lines[0].key, -1, 8);
+    expect(o.voids?.[1]).toMatchObject({ name: "1 Pav (Oil)", qty: 1, price: 500, stage: "billed", by: 8 });
+    const b = toBill(o, settings, "paid", [{ mode: "cash", amount: 500 }], null);
+    expect(b.voids).toHaveLength(2);
+    // A bill with nothing taken off carries no voids field, as before.
+    expect(toBill(addItem(newOrder("parcel", null, 2), pav, cats, settings), settings, "paid", [], null).voids).toBeUndefined();
   });
 
   it("no GST without a GSTIN", () => {
@@ -210,5 +241,71 @@ describe("item sales", () => {
       { category: "Pav Bhaji", name: "Manchurian", variation: "Half", qty: 3, amount: 45000 },
       { category: "Pav Bhaji", name: "1 Pav (Oil)", variation: null, qty: 3, amount: 1500 },
     ]);
+  });
+});
+
+describe("discounts", () => {
+  it("limits staff, not managers, and only when a limit is set", () => {
+    expect(overDiscountLimit(1001, 10000, { discount_limit_pct: 10 }, "staff")).toBe(true);
+    expect(overDiscountLimit(1000, 10000, { discount_limit_pct: 10 }, "staff")).toBe(false);
+    expect(overDiscountLimit(5000, 10000, { discount_limit_pct: 10 }, "manager")).toBe(false);
+    expect(overDiscountLimit(5000, 10000, {}, "staff")).toBe(false);
+  });
+
+  it("carries the reason and who allowed it onto the bill, only when there is a discount", () => {
+    let o = addItem(newOrder("parcel", null, 1), bhaji, cats, settings);
+    o = { ...o, discount: 2000, discount_reason: "regular", discount_approved_by: 3 };
+    expect(toBill(o, settings, "paid", [], null)).toMatchObject({ discount: 2000, discount_reason: "regular", discount_approved_by: 3 });
+    expect(toBill({ ...o, discount: 0 }, settings, "paid", [], null).discount_reason).toBeUndefined();
+  });
+});
+
+describe("device storage", () => {
+  it("keeps bills in memory and warns while the device can't save, then saves again", () => {
+    const seen: boolean[] = [];
+    const stop = onStorageChange((b) => seen.push(b));
+    const order = addItem(newOrder("parcel", null, 1), bhaji, cats, settings);
+    const first = toBill(order, settings, "paid", [{ mode: "cash", amount: 22000 }], null);
+    full = true;
+    try {
+      storage.setBills([first]);
+      expect(storageBroken()).toBe(true);
+      // The bill is still there for this session, so it still gets sent.
+      expect(storage.bills().map((b) => b.client_id)).toEqual([first.client_id]);
+      expect(mem.get("mausam.pos.bills")).toBeUndefined();
+    } finally {
+      full = false;
+    }
+    storage.setBills(storage.bills());
+    expect(storageBroken()).toBe(false);
+    expect(JSON.parse(mem.get("mausam.pos.bills")!)).toHaveLength(1);
+    expect(seen).toEqual([true, false]);
+    stop();
+  });
+});
+
+describe("device clock", () => {
+  it("works out how far off the clock is, and corrects order times by it", () => {
+    const now = Date.now();
+    noteServerTime(new Date(now + 5 * 60_000).toISOString(), now - 100, now + 100);
+    expect(clockOffMinutes()).toBe(5);
+    expect(Math.abs(serverNow().getTime() - (Date.now() + 5 * 60_000))).toBeLessThan(1000);
+    // A clock right to within a few seconds counts as right.
+    noteServerTime(new Date(now + 2000).toISOString(), now, now);
+    expect(clockOffMinutes()).toBe(0);
+    expect(storage.clock()).toBe(0);
+  });
+});
+
+describe("refused bills", () => {
+  it("gives a bill refused for a used number the next number, keeping its id and the printed number", () => {
+    const b = { ...toBill(addItem(newOrder("parcel", null, 1), pav, cats, settings), settings, "paid", [{ mode: "cash", amount: 500 }], null), rejected: "duplicate_number", reported: true };
+    expect(b.bill_no).toMatch(/^A\d{4}-00001$/);
+    const again = readyToResend(b);
+    expect(again).toMatchObject({ client_id: b.client_id, bill_no: b.bill_no.replace("00001", "00002"), printed_no: b.bill_no });
+    expect(again.rejected).toBeUndefined();
+    expect(again.reported).toBeUndefined();
+    // Any other refusal is just sent again as it is.
+    expect(readyToResend({ ...b, rejected: "total_mismatch" }).bill_no).toBe(b.bill_no);
   });
 });

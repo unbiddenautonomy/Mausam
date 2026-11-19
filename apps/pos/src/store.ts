@@ -26,8 +26,24 @@ export interface PosSettings {
   waiter_required?: boolean;
   /** Copies of a bill printed at Save & Print, one after the other (the second is the kitchen's). */
   bill_copies?: number;
+  /** The biggest discount staff may give without a manager's PIN, as a % of the bill. 100 (or missing) = no limit. */
+  discount_limit_pct?: number;
 }
-export interface Config { categories: Category[]; items: Item[]; tables: Table[]; waiters: Waiter[]; settings: PosSettings; fetched_at: string }
+/** Someone who can allow a discount above the staff limit with their PIN: a manager or the owner. */
+export interface Approver { id: number; name: string }
+export interface Config {
+  categories: Category[]; items: Item[]; tables: Table[]; waiters: Waiter[]; settings: PosSettings; fetched_at: string; approvers?: Approver[];
+}
+
+/** Why a discount was given. The codes go to the server; the owner's reports show them in words. */
+export const DISCOUNT_REASONS = ["regular", "staff", "complaint", "guest", "offer", "other"] as const;
+export type DiscountReason = (typeof DISCOUNT_REASONS)[number];
+
+/** Is this discount more than staff may give without a manager's PIN? Managers and the owner have no limit. */
+export function overDiscountLimit(paise: number, subtotal: number, s: Pick<PosSettings, "discount_limit_pct">, role: string | undefined): boolean {
+  const pct = s.discount_limit_pct ?? 100;
+  return role === "staff" && pct < 100 && paise > Math.round((subtotal * pct) / 100);
+}
 
 export interface Line {
   key: string; item_id: number | null; name: string; category: string | null; price: number; tax_rate: number; qty: number; sent: number; note: string | null;
@@ -44,12 +60,22 @@ export interface Order {
   guests: number | null;
   lines: Line[];
   discount: number;
+  /** Why the discount was given, and the manager or owner who allowed one above the staff limit. */
+  discount_reason?: DiscountReason | null;
+  discount_approved_by?: number | null;
   opened_at: string;
   bill_no: string | null; // set when the bill is first printed (or paid)
   business_date: string;
   /** When any screen last changed this order. Screens share running orders, and the newest change wins. */
   updated_at?: string;
+  /** Items taken off after the kitchen got them or the bill was printed. The owner sees these in the leaks report. */
+  voids?: Void[];
 }
+/**
+ * An item taken off an order after it went to the kitchen ("kitchen") or after the bill was printed ("billed").
+ * Taking off an item nobody has seen yet isn't recorded.
+ */
+export interface Void { name: string; variation: string | null; qty: number; price: number; stage: "kitchen" | "billed"; at: string; by: number | null }
 export interface Payment { mode: BillPayMode; amount: number }
 export interface Bill {
   client_id: string; bill_no: string; counter: string; business_date: string; order_type: Order["type"];
@@ -58,15 +84,30 @@ export interface Bill {
   opened_at: string; closed_at: string;
   lines: { item_id: number | null; name: string; category: string | null; qty: number; price: number; tax_rate: number; note: string | null; variation?: string | null; modifier?: string | null }[];
   payments: Payment[];
+  voids?: Void[];
+  discount_reason?: DiscountReason | null;
+  discount_approved_by?: number | null;
+  /** The number on the paper copy, when the bill was given a new one because that number was already used. */
+  printed_no?: string;
   synced?: boolean;
+  /** Why the server refused it (an error code). Such a bill isn't sent again until someone taps Send again. */
   rejected?: string;
+  /** The refusal has been reported to the server, for the owner's bills page. */
+  reported?: boolean;
 }
 /**
  * This screen's counter code and bill number sequence, and the highest token number it has seen (tokens never restart).
  * Bill numbers restart at 1 each financial year (`fy`, e.g. "2627"). A counter saved before this has no `fy`: it is
  * taken to be the current year, so its numbers carry on.
  */
-export interface Counter { code: string; seq: number; tokenDate: string; token: number; fy?: string }
+export interface Counter {
+  code: string; seq: number; tokenDate: string; token: number; fy?: string;
+  /** The server says another device holds this letter: pick another before the next bill. */
+  taken?: boolean;
+}
+
+/** The most removed items a bill carries to the server (the newest are kept). */
+export const MAX_VOIDS = 200;
 
 /** The highest running number a bill number can have (five digits). */
 export const MAX_BILL_SEQ = 99_999;
@@ -96,9 +137,30 @@ const K = {
   pushed: "mausam.pos.pushed",
   closed: "mausam.pos.closed",
   cursor: "mausam.pos.cursor",
+  clock: "mausam.pos.clock",
+  device: "mausam.pos.device",
 } as const;
 
+/**
+ * Values the device refused to save (storage full or blocked). The app keeps using them from memory, so bills made
+ * meanwhile still go to the server in this session, but they're lost if the browser is closed: hence the red banner.
+ */
+const unsaved = new Map<string, unknown>();
+const storageListeners = new Set<(broken: boolean) => void>();
+
+/** Is there anything the device couldn't save? */
+export function storageBroken(): boolean {
+  return unsaved.size > 0;
+}
+
+/** Calls `fn` whenever saving on the device starts or stops failing. Returns a function that stops it. */
+export function onStorageChange(fn: (broken: boolean) => void): () => void {
+  storageListeners.add(fn);
+  return () => void storageListeners.delete(fn);
+}
+
 function read<T>(key: string, fallback: T): T {
+  if (unsaved.has(key)) return (unsaved.get(key) ?? fallback) as T;
   try {
     const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as T) : fallback;
@@ -106,12 +168,27 @@ function read<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
-function write(key: string, value: unknown) {
+function write(key: string, value: unknown): boolean {
+  const before = storageBroken();
+  let ok = true;
   try {
     if (value === null || value === undefined) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify(value));
+    unsaved.delete(key);
   } catch {
-    /* storage full or blocked: the app keeps working in memory */
+    unsaved.set(key, value);
+    ok = false;
+  }
+  if (before !== storageBroken()) for (const fn of storageListeners) fn(storageBroken());
+  return ok;
+}
+
+/** Asks the browser not to clear this app's saved data when the device runs low on space. Once is enough. */
+export function keepStorage() {
+  try {
+    void navigator.storage?.persist?.().catch(() => {});
+  } catch {
+    /* not offered by this browser */
   }
 }
 
@@ -138,7 +215,47 @@ export const storage = {
   /** How far this screen has read the server's list of order changes. */
   cursor: () => read<number>(K.cursor, 0),
   setCursor: (n: number) => write(K.cursor, n),
+  /** This device's own random id, made the first time it's asked for. It tells the server which device holds a counter letter. */
+  device: () => {
+    const id = read<string | null>(K.device, null);
+    if (id) return id;
+    const made = uid();
+    write(K.device, made);
+    return made;
+  },
+  /** How far this device's clock is behind the server's, in milliseconds (negative: ahead). */
+  clock: () => read<number>(K.clock, 0),
+  setClock: (ms: number) => write(K.clock, ms),
 };
+
+/** A clock more than this far off gets a warning on screen. */
+export const CLOCK_WARN_MS = 2 * 60_000;
+
+/**
+ * Notes the server's time from a reply, to work out how far off this device's clock is. `sent` and `received` are
+ * when the request left and the reply came back (device time); the server's time is taken as halfway between.
+ */
+export function noteServerTime(serverIso: string | undefined, sent: number, received: number) {
+  const server = serverIso ? Date.parse(serverIso) : NaN;
+  if (!Number.isFinite(server) || received - sent > 30_000) return;
+  const offset = Math.round(server - (sent + received) / 2);
+  // Small differences are just the network; keep 0 so nothing changes on a good clock.
+  storage.setClock(Math.abs(offset) < 5_000 ? 0 : offset);
+}
+
+/**
+ * The time now, corrected by the server's clock. Running orders shared between screens are stamped with this, so a
+ * screen whose clock is wrong doesn't make its old changes look newest.
+ */
+export function serverNow(): Date {
+  return new Date(Date.now() + storage.clock());
+}
+
+/** Minutes this device's clock is off, when it's off by more than 2 minutes; otherwise 0. */
+export function clockOffMinutes(): number {
+  const ms = storage.clock();
+  return Math.abs(ms) > CLOCK_WARN_MS ? Math.round(Math.abs(ms) / 60_000) : 0;
+}
 
 /** A running order as the server has it: the newest version from any screen, or closed. */
 export interface RemoteOrder { id: string; updated_at: string; closed: boolean; data: Order | null }
@@ -217,11 +334,22 @@ export function addItem(order: Order, item: Item, cats: Category[], s: PosSettin
   return { ...order, lines };
 }
 
-export function changeQty(order: Order, key: string, delta: number): Order {
-  const lines = order.lines
-    .map((l) => (l.key === key ? { ...l, qty: l.qty + delta, sent: Math.min(l.sent, l.qty + delta) } : l))
-    .filter((l) => l.qty > 0);
-  return { ...order, lines };
+/**
+ * Adds or takes off `delta` of a line. Taking off an item after the bill was printed, or one the kitchen already has,
+ * is recorded in `voids` with who did it (`by`, the user logged in on this screen).
+ */
+export function changeQty(order: Order, key: string, delta: number, by: number | null = null, now = new Date()): Order {
+  const line = order.lines.find((l) => l.key === key);
+  if (!line) return order;
+  const qty = Math.max(0, line.qty + delta);
+  const removed = order.bill_no ? line.qty - qty : line.sent - Math.min(line.sent, qty);
+  const lines = order.lines.map((l) => (l === line ? { ...l, qty, sent: Math.min(l.sent, qty) } : l)).filter((l) => l.qty > 0);
+  if (removed <= 0) return { ...order, lines };
+  const entry: Void = {
+    name: line.name, variation: line.variation ?? null, qty: removed, price: line.price,
+    stage: order.bill_no ? "billed" : "kitchen", at: now.toISOString(), by,
+  };
+  return { ...order, lines, voids: [...(order.voids ?? []), entry] };
 }
 
 export function totalsOf(order: Order, s: PosSettings): BillTotals {
@@ -290,7 +418,20 @@ export function toBill(order: Order, s: PosSettings, status: Bill["status"], pay
       variation: l.variation ?? null, modifier: l.modifier ?? null,
     })),
     payments,
+    ...(order.voids?.length ? { voids: order.voids.slice(-MAX_VOIDS) } : {}),
+    ...(t.discount > 0 ? { discount_reason: order.discount_reason ?? null, discount_approved_by: order.discount_approved_by ?? null } : {}),
   };
+}
+
+/**
+ * A refused bill, ready to send again. One refused because its number was already used gets the next number from
+ * this counter; the number on the paper copy is kept in `printed_no`. Its client_id stays, so it's never saved twice.
+ */
+export function readyToResend(b: Bill): Bill {
+  const { rejected, reported, ...rest } = b;
+  if (rejected !== "duplicate_number") return rest;
+  const no = takeBillNo();
+  return { ...rest, bill_no: no, counter: counterOf(no), printed_no: b.printed_no ?? b.bill_no };
 }
 
 /** Keep sent bills for 3 days (for reprints and the day summary); unsent bills are kept until they go. */

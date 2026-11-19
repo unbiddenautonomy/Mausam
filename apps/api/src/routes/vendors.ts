@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { businessDate, dayOfWeek } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
-import { addCounterExpense, removeCounterExpense } from "../lib/counter";
-import { assertDayOpen, audit, bool } from "../lib/db";
+import { counterExpenseStmts, removeCounterExpense } from "../lib/counter";
+import { assertDayOpen, audit, auditStmt, bool, clientIdOf, isClientIdClash } from "../lib/db";
 import { HttpError, optionalPaise, optionalText, requireDate, requirePaise, requireText } from "../lib/http";
 import { raise } from "../cron";
 
@@ -173,12 +173,24 @@ vendors.post("/:id{[0-9]+}/deliveries", async (c) => {
   }
   if (!item) throw new HttpError(422, "invalid", { field: "item" });
   const amount = Math.round(qty * rate);
-  const res = await c.env.DB.prepare(
-    `INSERT INTO deliveries (vendor_id, item_id, business_date, item, unit, qty, rate, amount, agreed_rate, photo_key, note, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(vendorId, itemId, date, item, unit, qty, rate, amount, agreed, optionalText(b.photo_key, 200), optionalText(b.note), user.id)
-    .run();
+  const clientId = clientIdOf(b.client_id);
+  const already = async () =>
+    clientId ? await c.env.DB.prepare("SELECT id, amount FROM deliveries WHERE client_id = ?").bind(clientId).first<{ id: number; amount: number }>() : null;
+  const had = await already();
+  if (had) return c.json({ id: had.id, amount: had.amount, mismatch: agreed !== null && rate !== agreed, duplicate: true });
+  let res: D1Result;
+  try {
+    res = await c.env.DB.prepare(
+      `INSERT INTO deliveries (vendor_id, item_id, business_date, item, unit, qty, rate, amount, agreed_rate, photo_key, note, created_by, client_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(vendorId, itemId, date, item, unit, qty, rate, amount, agreed, optionalText(b.photo_key, 200), optionalText(b.note), user.id, clientId)
+      .run();
+  } catch (e) {
+    const won = isClientIdClash(e) ? await already() : null;
+    if (won) return c.json({ id: won.id, amount: won.amount, mismatch: agreed !== null && rate !== agreed, duplicate: true });
+    throw e;
+  }
   const id = Number(res.meta.last_row_id);
   await audit(c.env.DB, "deliveries", id, "create", null, { vendorId, item, qty, rate, amount }, user.id);
   const mismatch = agreed !== null && rate !== agreed;
@@ -216,19 +228,36 @@ vendors.post("/:id{[0-9]+}/payments", async (c) => {
   const mode = b.mode === "online" ? "online" : "cash";
   const fromCounter = mode === "cash" && bool(b.from_counter);
   const note = optionalText(b.note);
-  const res = await c.env.DB.prepare(
-    "INSERT INTO vendor_payments (vendor_id, business_date, amount, mode, from_counter, note, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  )
-    .bind(vendorId, date, amount, mode, fromCounter ? 1 : 0, note, user.id)
-    .run();
-  const id = Number(res.meta.last_row_id);
-  if (fromCounter) {
-    const expenseId = await addCounterExpense(c.env.DB, {
-      date, categoryKey: "vendor_payment", amount, source: "vendor_payment", refId: id, note: `${vendor.name}${note ? ` · ${note}` : ""}`, userId: user.id,
-    });
-    await c.env.DB.prepare("UPDATE vendor_payments SET expense_id = ? WHERE id = ?").bind(expenseId, id).run();
+  const db = c.env.DB;
+  const clientId = clientIdOf(b.client_id);
+  const already = async () =>
+    clientId ? await db.prepare("SELECT id FROM vendor_payments WHERE client_id = ?").bind(clientId).first<{ id: number }>() : null;
+  const had = await already();
+  if (had) return c.json({ id: had.id, duplicate: true });
+  // The payment, its counter expense and the link between them are saved together, or not at all.
+  let results: D1Result[];
+  try {
+    results = await db.batch([
+      db.prepare(
+        "INSERT INTO vendor_payments (vendor_id, business_date, amount, mode, from_counter, note, created_by, client_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+      ).bind(vendorId, date, amount, mode, fromCounter ? 1 : 0, note, user.id, clientId),
+      ...(fromCounter
+        ? counterExpenseStmts(db, "vendor_payments", {
+          date, categoryKey: "vendor_payment", amount, source: "vendor_payment", note: `${vendor.name}${note ? ` · ${note}` : ""}`, userId: user.id,
+        })
+        : []),
+    ]);
+  } catch (e) {
+    const won = isClientIdClash(e) ? await already() : null;
+    if (won) return c.json({ id: won.id, duplicate: true });
+    throw e;
   }
-  await audit(c.env.DB, "vendor_payments", id, "create", null, { vendorId, amount, mode, fromCounter }, user.id);
+  const id = Number((results[0].results[0] as { id: number }).id);
+  const row = await db.prepare("SELECT expense_id FROM vendor_payments WHERE id = ?").bind(id).first<{ expense_id: number | null }>();
+  await db.batch([
+    auditStmt(db, "vendor_payments", id, "create", null, { vendorId, amount, mode, fromCounter }, user.id),
+    ...(row?.expense_id ? [auditStmt(db, "expenses", row.expense_id, "create", null, { date, amount, source: "vendor_payment", ref_id: id }, user.id)] : []),
+  ]);
   return c.json({ id }, 201);
 });
 
