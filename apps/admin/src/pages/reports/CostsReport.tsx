@@ -3,7 +3,7 @@ import { formatDay, formatINR } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { axisTick, BarList, ChartTooltip, pctFmt, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, BarList, ChartTooltip, pctFmt, ReportFrame, shortDay, type Period } from "./common";
 
 interface Totals { sales: number; expenses: number; food: number; bills: number; deliveries: number; wages: number; left: number }
 interface Week { from: string; to: string; sales: number; food: number; wages: number; left: number }
@@ -14,14 +14,14 @@ export function CostsReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.costs")} desc={t("reports.costs_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<{ totals: Totals; weeks: Week[] }>(`/analytics/costs?days=${days}`);
+  const res = useApi<{ totals: Totals; weeks: Week[] }>(`/analytics/costs?${p.q}`);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const s = res.data.totals;
@@ -78,7 +78,7 @@ function Body({ days }: { days: Range }) {
               </ResponsiveContainer>
             </div>
             <details className="table-view">
-              <summary>Table</summary>
+              <summary>{t("common.table_view")}</summary>
               <table className="data">
                 <thead><tr><th>{t("reports.week")}</th><th className="r">{foodName}</th><th className="r">{wagesName}</th></tr></thead>
                 <tbody>

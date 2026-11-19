@@ -1,3 +1,4 @@
+import { dateLocale } from "@mausam/shared";
 import { useState } from "react";
 import { api } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
@@ -97,7 +98,7 @@ function Counters() {
       setError(e);
     }
   }
-  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—");
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(dateLocale(), { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—");
   return (
     <section className="form">
       <h2>{t("posset.counters")}</h2>

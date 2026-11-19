@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { addDays, businessDate, formatDay, formatINR, type MessageKey } from "@mausam/shared";
+import { businessDate, dateLocale, formatINR, formatTime, type MessageKey } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
-import { clock } from "../../lib/format";
-import { Icon } from "../../components/Icon";
-import { billFlagText, discountReasonText, Empty, Loading, PageHead, Pill, Stat } from "../../components/ui";
+import { billFlagText, DayStepper, discountReasonText, Empty, Loading, PageHead, Pill, Stat } from "../../components/ui";
 
 interface Bill {
   id: number; bill_no: string; order_type: "dine_in" | "parcel"; table_name: string | null; token: number | null; waiter_name: string | null;
@@ -37,11 +35,7 @@ export function BillsPage() {
   return (
     <div className="page">
       <PageHead title={t("bills.title")} subtitle={t("bills.desc")} back="/more" />
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button className="btn small" onClick={() => setDate(addDays(date, -1))} aria-label={t("common.back")}><Icon name="left" /></button>
-        <strong style={{ flex: 1, textAlign: "center" }}>{formatDay(date)}</strong>
-        <button className="btn small" disabled={date >= today} onClick={() => setDate(addDays(date, 1))} aria-label="next"><Icon name="chevron" /></button>
-      </div>
+      <DayStepper date={date} max={today} onChange={setDate} />
       {!res.data ? <Loading /> : (
         <>
           <div className="stats">
@@ -51,7 +45,7 @@ export function BillsPage() {
             <Stat label={t("bills.cancelled")} value={formatINR(bills.filter((b) => b.status === "cancelled").reduce((s, b) => s + b.total, 0))} />
           </div>
           {res.data.counters.map((c) => (
-            <p key={c.code} className="small muted">{t("bills.counter_seen", { code: c.code, time: c.last_seen_at ? new Date(c.last_seen_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—" })}</p>
+            <p key={c.code} className="small muted">{t("bills.counter_seen", { code: c.code, time: c.last_seen_at ? new Date(c.last_seen_at).toLocaleString(dateLocale(), { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—" })}</p>
           ))}
           {rejects.length > 0 && (
             <section className="form">
@@ -78,7 +72,7 @@ export function BillsPage() {
                   <button className="row row-link as-button" onClick={() => setOpen(open === b.id ? null : b.id)} style={{ opacity: b.status === "cancelled" ? 0.7 : 1 }}>
                     <span className="grow">
                       <strong>{b.bill_no} · {b.order_type === "parcel" ? `${t("bills.parcel")} #${b.token ?? ""}` : b.table_name ?? `#${b.token ?? ""}`}</strong>
-                      <span className="muted small">{clock(new Date(b.closed_at).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }))} · {b.payments.map((p) => p.mode.toUpperCase()).join(" + ") || "—"}{b.waiter_name ? ` · ${b.waiter_name}` : ""}</span>
+                      <span className="muted small">{formatTime(new Date(b.closed_at))} · {b.payments.map((p) => p.mode.toUpperCase()).join(" + ") || "—"}{b.waiter_name ? ` · ${b.waiter_name}` : ""}</span>
                     </span>
                     {b.flags && <Pill tone="warn">{t("reports.flagged")}</Pill>}
                     {b.status === "cancelled" && <Pill tone="bad">{t("bills.cancelled_one")}</Pill>}
@@ -95,7 +89,7 @@ export function BillsPage() {
                         </div>
                       )}
                       {b.flags && <div className="small" style={{ color: "var(--warn)" }}>{billFlagText(t, b.flags)}</div>}
-                      {b.tax > 0 && <div className="small muted">GST: {formatINR(b.tax)}</div>}
+                      {b.tax > 0 && <div className="small muted">{t("bills.gst", { amount: formatINR(b.tax) })}</div>}
                       {b.cancel_reason && <div className="small" style={{ color: "var(--bad)" }}>{b.cancel_reason}</div>}
                       {b.printed_bill_no && <div className="small muted">{t("bills.printed_as", { no: b.printed_bill_no })}</div>}
                       {b.by_name && <div className="small muted">{b.by_name}</div>}

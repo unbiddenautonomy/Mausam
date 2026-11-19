@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { addDays, businessDate, formatDay, formatINR } from "@mausam/shared";
+import { businessDate, formatINR } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
-import { Icon } from "../../components/Icon";
 import { BarList } from "./common";
-import { Empty, ErrorNote, Loading, PageHead, Stat } from "../../components/ui";
+import { DayStepper, Empty, ErrorNote, Loading, PageHead, Stat } from "../../components/ui";
 
 interface Row { category: string; name: string; variation: string | null; qty: number; amount: number }
 
@@ -24,11 +23,7 @@ export function ItemSalesReport() {
   return (
     <div className="page">
       <PageHead title={t("reports.day_items")} subtitle={t("reports.day_items_desc")} back="/reports" />
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button className="btn small" onClick={() => setDate(addDays(date, -1))} aria-label={t("common.back")}><Icon name="left" /></button>
-        <strong style={{ flex: 1, textAlign: "center" }}>{formatDay(date)}</strong>
-        <button className="btn small" disabled={date >= today} onClick={() => setDate(addDays(date, 1))} aria-label="next"><Icon name="chevron" /></button>
-      </div>
+      <DayStepper date={date} max={today} onChange={setDate} />
       {res.error ? <ErrorNote error={res.error} /> : !res.data ? <Loading /> : items.length === 0 ? <Empty>{t("bills.none")}</Empty> : (
         <>
           <div className="stats">

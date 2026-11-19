@@ -1,9 +1,9 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dateRange, formatINR, formatINRShort } from "@mausam/shared";
+import { dateRange, formatHour, formatINR, formatINRShort } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { axisTick, BarList, ChartTooltip, hourSpan, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, BarList, ChartTooltip, hourSpan, ReportFrame, shortDay, type Period } from "./common";
 
 type Kind = "dine_in" | "parcel";
 const KINDS: Kind[] = ["dine_in", "parcel"];
@@ -21,14 +21,14 @@ export function OrderTypesReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.order_types")} desc={t("reports.order_types_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<Res>(`/reports/order-types?days=${days}`);
+  const res = useApi<Res>(`/reports/order-types?${p.q}`);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const d = res.data;
@@ -50,7 +50,7 @@ function Body({ days }: { days: Range }) {
   const daily = pivot(d.days, (r) => r.business_date, dateRange(d.from, d.to));
   const hourKeys = hourSpan(d.hours.map((h) => h.hour));
   const hourly = pivot(d.hours, (r) => r.hour, hourKeys);
-  const hourLabel = (h: number) => `${((h + 11) % 12) + 1}${h < 12 ? "am" : "pm"}`;
+  const hourLabel = (h: number) => formatHour(h);
 
   const legend = (
     <div className="legend">

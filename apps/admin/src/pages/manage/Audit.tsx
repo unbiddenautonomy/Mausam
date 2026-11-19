@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { formatDay, formatINR, type MessageKey } from "@mausam/shared";
 import { api } from "../../lib/api";
 import { useSession } from "../../lib/session";
-import { timeIST } from "../../lib/format";
+import { dateIST, timeIST } from "../../lib/format";
 import { ErrorNote, Loading, PageHead, Pill } from "../../components/ui";
 
 interface Entry { id: number; table_name: string; row_id: number; action: "create" | "update" | "delete"; before: string | null; after: string | null; at: string; user_name: string | null }
@@ -77,7 +77,7 @@ export function AuditPage() {
                 <summary className="row">
                   <span className="grow">
                     <strong className="ellipsis">{TABLES[e.table_name] ? t(TABLES[e.table_name]) : e.table_name} #{e.row_id}</strong>
-                    <span className="muted small">{formatDay(e.at.slice(0, 10))} {timeIST(e.at)} · {e.user_name ?? "—"}</span>
+                    <span className="muted small">{formatDay(dateIST(e.at))} {timeIST(e.at)} · {e.user_name ?? "—"}</span>
                   </span>
                   <Pill tone={tone[e.action]}>{actionLabel[e.action]}</Pill>
                 </summary>

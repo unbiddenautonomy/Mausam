@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { formatINR, rupeesToPaise, shoppingGap } from "@mausam/shared";
+import { formatDay, formatINR, rupeesToPaise, shoppingGap } from "@mausam/shared";
 import { api, ApiError } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
@@ -32,12 +32,25 @@ interface Exp {
 
 export function Shopping() {
   const { t } = useSession();
-  const today = useApi<{ business_date: string; shopping: { status: string; trip: { id: number } | null } }>("/today");
+  const today = useApi<{
+    business_date: string;
+    shopping: { status: string; trip: { id: number } | null; stale_trip: { id: number; business_date: string; manager_name: string } | null };
+  }>("/today");
   if (!today.data) return today.error ? <ErrorNote error={today.error} /> : <Loading />;
-  const trip = today.data.shopping.trip;
+  const { trip, stale_trip: stale } = today.data.shopping;
   return (
     <div className="page">
       <PageHead title={t("shopping.title")} back="/entries" />
+      {stale && (
+        <section className="section">
+          <div className="check bad">
+            <Icon name="alert" />
+            <span className="t">{t("shopping.stale", { date: formatDay(stale.business_date), name: stale.manager_name })}</span>
+          </div>
+          <TripView id={stale.id} onClosed={today.reload} />
+        </section>
+      )}
+      {stale && <h2>{t("shopping.today_trip")}</h2>}
       {trip ? <TripView id={trip.id} /> : <StartTrip onStarted={today.reload} />}
     </div>
   );
@@ -75,10 +88,10 @@ function StartTrip({ onStarted }: { onStarted: () => void }) {
   );
 }
 
-function TripView({ id }: { id: number }) {
+function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
   const { t, lang } = useSession();
   const toast = useToast();
-  const res = useApi<{ trip: Trip; expenses: Exp[] }>(`/shopping/${id}`);
+  const res = useApi<{ trip: Trip; expenses: Exp[]; tolerance: number }>(`/shopping/${id}`);
   const [back, setBack] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -88,7 +101,7 @@ function TripView({ id }: { id: number }) {
   const expected = trip.float_out - trip.spent;
   const backPaise = rupeesToPaise(back);
   const gap = backPaise === null ? null : shoppingGap(trip.float_out, trip.spent, backPaise);
-  const needsNote = gap !== null && Math.abs(gap) > 5000;
+  const needsNote = gap !== null && Math.abs(gap) > (res.data.tolerance ?? 5000);
 
   async function finish() {
     if (backPaise === null) return;
@@ -97,7 +110,8 @@ function TripView({ id }: { id: number }) {
     try {
       await api(`/shopping/${id}/close`, { method: "POST", json: { float_back: backPaise, note } });
       toast(t("shopping.closed"));
-      res.reload();
+      if (onClosed) onClosed();
+      else res.reload();
     } catch (e) {
       setError(e);
     } finally {

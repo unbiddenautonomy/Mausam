@@ -15,6 +15,29 @@ interface AlertRow {
   seen_at: string | null;
 }
 
+/** Where tapping an alert goes: the screen that fixes it. */
+export function alertLink(a: { type: string; business_date: string; params: Record<string, string | number> }): string {
+  const base = a.type.split(":")[0];
+  switch (base) {
+    case "backup_missing":
+      return "/alerts";
+    case "login_locked":
+      return "/manage/users";
+    case "shopping_open":
+      return "/entries/shopping";
+    case "expense_high":
+      return `/entries/expenses?date=${a.business_date}`;
+    case "attendance_missing":
+      return `/people/attendance?date=${a.business_date}`;
+    case "month_close":
+      return "/month";
+    case "rate_mismatch":
+      return a.params.vendor_id ? `/vendors/${a.params.vendor_id}` : "/vendors";
+    default:
+      return `/entries/close/${a.business_date}`;
+  }
+}
+
 export function Alerts() {
   const t = useSession().t;
   const res = useApi<{ alerts: AlertRow[] }>("/alerts");
@@ -33,7 +56,7 @@ export function Alerts() {
       month: String(p.month ?? ""),
     });
   }
-  const link = (a: AlertRow) => (a.type === "backup_missing" ? "/alerts" : a.type.startsWith("login_locked") ? "/manage/users" : a.type === "shopping_open" ? "/entries/shopping" : a.type.startsWith("expense_high") ? `/entries/expenses?date=${a.business_date}` : `/entries/close/${a.business_date}`);
+  const link = (a: AlertRow) => alertLink(a);
 
   async function markSeen(ids?: number[]) {
     await api("/alerts/seen", { method: "POST", json: { ids } }).catch(() => {});

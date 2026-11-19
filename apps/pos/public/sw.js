@@ -1,5 +1,6 @@
 // POS service worker: lets the counter open and bill with no internet.
 // The app shell is cached; pages are network-first (so updates arrive), assets cache-first (their names change per build).
+// "v1" is replaced with this build's version at build time (vite.config.ts), so each build gets a fresh cache.
 const CACHE = "mausam-pos-v1";
 const SHELL = ["/pos/", "/pos/manifest.webmanifest", "/icon.svg", "/icon-192.png"];
 self.addEventListener("install", (e) => {

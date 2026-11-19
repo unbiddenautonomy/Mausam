@@ -70,7 +70,7 @@ people.put("/attendance/:date", async (c) => {
 people.get("/attendance-month/:month", requireRole("owner"), async (c) => {
   const month = requireMonth(c.req.param("month"));
   const { results } = await c.env.DB.prepare(
-    "SELECT staff_id, business_date, status FROM attendance WHERE business_date LIKE ? || '-%'",
+    "SELECT staff_id, business_date, status FROM attendance WHERE business_date BETWEEN ?1 || '-01' AND ?1 || '-31'",
   )
     .bind(month)
     .all<{ staff_id: number; business_date: string; status: AttendanceStatus }>();
@@ -85,7 +85,7 @@ people.get("/advances", async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.staff_id, s.name AS staff_name, a.business_date, a.amount, a.mode, a.from_counter, a.note, u.name AS given_by_name, a.created_at
      FROM advances a JOIN staff s ON s.id = a.staff_id LEFT JOIN users u ON u.id = a.given_by
-     WHERE a.deleted_at IS NULL AND a.business_date LIKE ? || '-%'
+     WHERE a.deleted_at IS NULL AND a.business_date BETWEEN ?1 || '-01' AND ?1 || '-31'
      ORDER BY a.business_date DESC, a.id DESC`,
   )
     .bind(month)

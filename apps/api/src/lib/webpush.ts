@@ -32,7 +32,10 @@ export function b64urlDecode(text: string): Uint8Array {
 function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
-  for (const p of parts) (out.set(p, o), (o += p.length));
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
   return out;
 }
 

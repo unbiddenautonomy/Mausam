@@ -1,26 +1,27 @@
-import { businessDate, dateRange, dayOfWeek, formatDay } from "@mausam/shared";
+import { businessDate, dateRange, dayOfWeek, formatDay, weekdayNames } from "@mausam/shared";
 import { useSession } from "../../lib/session";
 import { timeIST } from "../../lib/format";
 import { ErrorNote, Loading, Stat } from "../../components/ui";
-import { ReportFrame, type Range } from "./common";
+import { ReportFrame, type Period } from "./common";
 import { useDaily } from "./SalesReport";
 
 export function ReportingReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.reporting")} desc={t("reports.reporting_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useDaily(days);
+  const res = useDaily(p);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const today = businessDate();
-  const byDate = new Map(res.data.days.map((d) => [d.business_date, d]));
+  // Days known only from POS bills have no closing yet, so they count as not sent.
+  const byDate = new Map(res.data.days.filter((d) => !d.from_pos).map((d) => [d.business_date, d]));
   // Today isn't due yet, so it's not counted as missing.
   const dates = dateRange(res.data.from, res.data.to);
   const status = (d: string) => {
@@ -31,7 +32,8 @@ function Body({ days }: { days: Range }) {
   const counted = dates.filter((d) => status(d) !== "future");
   const n = (s: string) => counted.filter((d) => status(d) === s).length;
   const lead = (dayOfWeek(dates[0]) + 6) % 7; // weeks start Monday
-  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const names = weekdayNames();
+  const weekdays = [...names.slice(1), names[0]];
   const label = { on_time: t("reports.on_time"), late: t("reports.late"), missing: t("reports.missing"), future: "" } as const;
 
   return (

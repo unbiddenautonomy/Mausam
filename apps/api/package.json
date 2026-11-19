@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "deploy": "wrangler deploy",
-    "release": "(wrangler d1 migrations apply mausam --remote || true) && wrangler deploy && wrangler d1 migrations apply mausam --remote",
+    "release": "node scripts/release.mjs",
     "db:migrate:local": "wrangler d1 migrations apply mausam --local",
     "db:migrate:remote": "wrangler d1 migrations apply mausam --remote",
     "typecheck": "tsc -p .",

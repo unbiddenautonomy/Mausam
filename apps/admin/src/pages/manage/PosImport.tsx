@@ -15,7 +15,7 @@ async function readFile(file: File): Promise<Cell[][]> {
   if (/\.(csv|txt)$/i.test(file.name) || file.type === "text/csv") {
     const Papa = (await import("papaparse")).default;
     const text = await file.text();
-    return Papa.parse<string[]>(text.replace(/^﻿/, ""), { skipEmptyLines: true }).data;
+    return Papa.parse<string[]>(text.replace(/^\uFEFF/, ""), { skipEmptyLines: true }).data;
   }
   const { readSheet } = await import("read-excel-file/browser");
   return (await readSheet(file)) as Cell[][];

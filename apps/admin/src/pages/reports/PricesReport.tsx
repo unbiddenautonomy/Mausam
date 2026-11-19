@@ -5,7 +5,7 @@ import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Icon } from "../../components/Icon";
 import { Empty, ErrorNote, Loading, Pill } from "../../components/ui";
-import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, ReportFrame, shortDay, type Period } from "./common";
 
 interface PriceItem { item: string; unit: string | null; points: { date: string; rate: number; source: string }[]; first: number; last: number; min: number; max: number; change: number }
 
@@ -13,14 +13,14 @@ export function PricesReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.prices")} desc={t("reports.prices_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<{ items: PriceItem[] }>(`/analytics/prices?days=${days}`);
+  const res = useApi<{ items: PriceItem[] }>(`/analytics/prices?${p.q}`);
   const [open, setOpen] = useState<string | null>(null);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;

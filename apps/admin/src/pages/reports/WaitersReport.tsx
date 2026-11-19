@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { addDays, businessDate, formatDay, formatINR } from "@mausam/shared";
+import { businessDate, formatDay, formatINR } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Icon } from "../../components/Icon";
-import { Empty, ErrorNote, Loading, PageHead, Segmented, Stat } from "../../components/ui";
+import { DayStepper, Empty, ErrorNote, Loading, PageHead, Segmented, Stat } from "../../components/ui";
 
 interface Row { waiter_id: number | null; name: string | null; waiter_code: string | null; business_date: string; bills: number; sales: number; before_tax: number; commission: number }
 interface Group { key: string; waiter_id: number | null; name: string; code: string | null; bills: number; sales: number; commission: number; days: Row[] }
@@ -32,8 +32,10 @@ export function WaitersReport() {
   const [day, setDay] = useState(today);
   const [open, setOpen] = useState<string | null>(null);
   const res = useApi<{ rows: Row[] }>(`/billing/waiters/report?month=${month}`);
-  const rows = res.data?.rows ?? [];
-  const shown = useMemo(() => group(view === "day" ? rows.filter((r) => r.business_date === day) : rows, t("wrep.no_waiter")), [rows, view, day, t]);
+  const shown = useMemo(() => {
+    const rows = res.data?.rows ?? [];
+    return group(view === "day" ? rows.filter((r) => r.business_date === day) : rows, t("wrep.no_waiter"));
+  }, [res.data, view, day, t]);
   const total = shown.reduce((s, g) => s + g.commission, 0);
   const sales = shown.reduce((s, g) => s + g.sales, 0);
   const unassigned = shown.find((g) => g.waiter_id === null);
@@ -42,8 +44,7 @@ export function WaitersReport() {
     setMonth(m);
     setDay(m === today.slice(0, 7) ? today : `${m}-01`);
   };
-  const stepDay = (n: number) => {
-    const d = addDays(day, n);
+  const pickDay = (d: string) => {
     if (d > today) return;
     if (d.slice(0, 7) !== month) setMonth(d.slice(0, 7));
     setDay(d);
@@ -61,11 +62,7 @@ export function WaitersReport() {
         <Segmented value={view} onChange={setView} options={[{ value: "month", label: t("wrep.month") }, { value: "day", label: t("wrep.day") }]} />
       </div>
       {view === "day" && (
-        <div className="card" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button className="btn small" onClick={() => stepDay(-1)} aria-label={t("common.back")}><Icon name="left" /></button>
-          <strong style={{ flex: 1, textAlign: "center" }}>{formatDay(day)}</strong>
-          <button className="btn small" disabled={day >= today} onClick={() => stepDay(1)} aria-label="next"><Icon name="chevron" /></button>
-        </div>
+        <DayStepper date={day} max={today} onChange={pickDay} />
       )}
       {res.error ? <ErrorNote error={res.error} /> : !res.data ? <Loading /> : shown.length === 0 ? <Empty>{t("wrep.empty")}</Empty> : (
         <>

@@ -3,7 +3,7 @@ import { addDays, DEFAULT_LANG, businessDate, DEFAULT_SETTINGS, parseUserList, t
 import type { AppEnv } from "../env";
 import { hashPin, normalisePhone, requireRole, validPin } from "../lib/auth";
 import { audit, auditStmt, bool, loadSettings } from "../lib/db";
-import { HttpError, isDate, optionalPaise, optionalText, requireDate, requireText } from "../lib/http";
+import { HttpError, isDate, optionalPaise, optionalText, requireText } from "../lib/http";
 
 export const owner = new Hono<AppEnv>();
 
@@ -116,20 +116,29 @@ owner.get("/summary", async (c) => {
 
 function rangeFrom(c: { req: { query: (k: string) => string | undefined } }) {
   const to = isDate(c.req.query("to")) ? c.req.query("to")! : businessDate();
-  const days = Math.min(Math.max(Number(c.req.query("days") ?? 30) || 30, 7), 366);
+  const days = Math.min(Math.max(Math.floor(Number(c.req.query("days") ?? 30)) || 30, 1), 366);
   return { from: addDays(to, -(days - 1)), to };
 }
 
 /** Daily totals for sales, cash/online split and reporting punctuality. */
 owner.get("/reports/daily", async (c) => {
   const { from, to } = rangeFrom(c);
+  // Days with no closing yet still show their POS total, the same rule rangeTotals uses, marked from_pos.
   const { results } = await c.env.DB.prepare(
-    `SELECT business_date, total_counter, cash, online, expenses, pos_sales, late, flags, submitted_at
-     FROM day_closes WHERE business_date BETWEEN ? AND ? ORDER BY business_date`,
+    `SELECT business_date, total_counter, cash, online, expenses, pos_sales, late, flags, submitted_at, 0 AS from_pos
+     FROM day_closes WHERE business_date BETWEEN ?1 AND ?2
+     UNION ALL
+     SELECT business_date, total, COALESCE(cash, 0), COALESCE(online, 0), 0, total, 0, '[]', NULL, 1
+     FROM pos_daily WHERE business_date BETWEEN ?1 AND ?2 AND business_date NOT IN (SELECT business_date FROM day_closes)
+     ORDER BY business_date`,
   )
     .bind(from, to)
     .all<Record<string, unknown>>();
-  return c.json({ from, to, days: results.map((r) => ({ ...r, late: bool(r.late), flags: JSON.parse(String(r.flags)) })) });
+  return c.json({
+    from,
+    to,
+    days: results.map((r) => ({ ...r, late: bool(r.late), flags: JSON.parse(String(r.flags)), from_pos: bool(r.from_pos) })),
+  });
 });
 
 /** Expenses per category per week (weeks start Monday). */
@@ -290,13 +299,23 @@ owner.patch("/users/:id", async (c) => {
   }
   const sets: string[] = [];
   const binds: unknown[] = [];
-  if (b.name !== undefined) (sets.push("name = ?"), binds.push(requireText(b.name, "name", 80)));
+  if (b.name !== undefined) {
+    sets.push("name = ?");
+    binds.push(requireText(b.name, "name", 80));
+  }
   if (b.role !== undefined) {
     if (!["owner", "manager", "staff"].includes(String(b.role))) throw new HttpError(422, "invalid", { field: "role" });
-    sets.push("role = ?"), binds.push(b.role);
+    sets.push("role = ?");
+    binds.push(b.role);
   }
-  if (b.language !== undefined) sets.push("language = ?"), binds.push(String(b.language));
-  if (b.active !== undefined) sets.push("active = ?"), binds.push(b.active ? 1 : 0);
+  if (b.language !== undefined) {
+    sets.push("language = ?");
+    binds.push(String(b.language));
+  }
+  if (b.active !== undefined) {
+    sets.push("active = ?");
+    binds.push(b.active ? 1 : 0);
+  }
   if (b.pin !== undefined) {
     if (!validPin(b.pin)) throw new HttpError(422, "invalid", { field: "pin" });
     const { hash, salt } = await hashPin(b.pin);
@@ -400,6 +419,13 @@ owner.put("/manage/categories/:id", async (c) => {
 
 owner.get("/settings", async (c) => c.json({ settings: await loadSettings(c.env.DB) }));
 
+/** Sensible limits for number settings. Money is in paise: up to ₹10,000 for the tolerances. */
+const NUMBER_RANGES: Record<string, [number, number]> = {
+  lock_hour: [0, 23],
+  cash_tolerance: [0, 10_000_00],
+  shopping_tolerance: [0, 10_000_00],
+};
+
 owner.put("/settings", async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const stmts = [];
@@ -411,9 +437,10 @@ owner.put("/settings", async (c) => {
       const raw = Array.isArray(b[key]) ? (b[key] as unknown[]).join(",") : String(b[key] ?? "");
       value = parseUserList(raw).join(",");
     } else if (typeof def === "number") {
-      const n = Number(b[key]);
-      if (!Number.isFinite(n) || n < 0) throw new HttpError(422, "invalid", { field: key });
-      value = String(Math.round(n));
+      const n = Math.round(Number(b[key]));
+      const [min, max] = NUMBER_RANGES[key] ?? [0, 1_00_00_000_00];
+      if (!Number.isFinite(n) || n < min || n > max) throw new HttpError(422, "invalid", { field: key, min, max });
+      value = String(n);
     } else {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(b[key]))) throw new HttpError(422, "invalid", { field: key });
       value = String(b[key]);

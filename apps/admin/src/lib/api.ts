@@ -54,6 +54,42 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
   return data as T;
 }
 
+/* ---------- Saved copies of pages, for opening them offline ---------- */
+
+const CACHE_PREFIX = "mausam.cache.";
+const CACHE_INDEX = "mausam.cache.index";
+const CACHE_MAX_ENTRIES = 40;
+const CACHE_MAX_CHARS = 150_000;
+
+/** The last good reply to a GET, kept per person so a shared phone doesn't show one person's data to another. */
+export function saveCopy(path: string, data: unknown): void {
+  if (owner === null) return;
+  const key = `${CACHE_PREFIX}${owner}:${path}`;
+  const text = JSON.stringify({ at: Date.now(), data });
+  if (text.length > CACHE_MAX_CHARS) return;
+  safeSet(key, text);
+  const index = readList<string>(CACHE_INDEX).filter((k) => k !== key);
+  index.push(key);
+  while (index.length > CACHE_MAX_ENTRIES) safeSet(index.shift()!, null);
+  safeSet(CACHE_INDEX, JSON.stringify(index));
+}
+
+export function savedCopy<T>(path: string): { at: number; data: T } | null {
+  if (owner === null) return null;
+  try {
+    const v = JSON.parse(safeGet(`${CACHE_PREFIX}${owner}:${path}`) ?? "null");
+    return v && typeof v.at === "number" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forgets every saved copy (on logging out). */
+export function clearCopies(): void {
+  for (const k of readList<string>(CACHE_INDEX)) safeSet(k, null);
+  safeSet(CACHE_INDEX, null);
+}
+
 /* ---------- Offline queue ---------- */
 
 const FAILED_KEY = "mausam.queue.failed";

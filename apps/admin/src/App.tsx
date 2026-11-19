@@ -7,7 +7,7 @@ import { Login, PosOnly } from "./pages/Login";
 import { Today } from "./pages/Today";
 import { EntriesHub } from "./pages/EntriesHub";
 import { Shopping } from "./pages/Shopping";
-import { AddExpense } from "./pages/AddExpense";
+import { AddExpense, EditExpense } from "./pages/AddExpense";
 import { Expenses } from "./pages/Expenses";
 import { CloseDay } from "./pages/CloseDay";
 import { History } from "./pages/History";
@@ -58,6 +58,7 @@ export function App() {
           <Route path="entries/shopping" element={<Shopping />} />
           <Route path="entries/expenses" element={<Expenses />} />
           <Route path="entries/expenses/new" element={<AddExpense />} />
+          <Route path="entries/expenses/:id/edit" element={<EditExpense />} />
           <Route path="entries/close" element={<CloseDay />} />
           <Route path="entries/close/:date" element={<CloseDay />} />
           <Route path="entries/history" element={<History />} />

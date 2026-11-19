@@ -9,9 +9,11 @@
     "ship": "pnpm build && pnpm --filter @mausam/api release",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "lint": "eslint .",
     "check": "pnpm typecheck && pnpm test && pnpm build && cd apps/api && npx wrangler deploy --dry-run --outdir ../../.wrangler-dry-run",
     "release": "pnpm --filter @mausam/api release",
-    "dev:pos": "pnpm --filter @mausam/pos dev"
+    "dev:pos": "pnpm --filter @mausam/pos dev",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "packageManager": "pnpm@10.28.0",
   "pnpm": {
@@ -19,5 +21,12 @@
       "esbuild",
       "workerd"
     ]
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.73.0"
   }
 }

@@ -56,7 +56,7 @@ analytics.put("/share", requireRole("owner"), async (c) => {
 
 function range(c: { req: { query: (k: string) => string | undefined } }) {
   const to = isDate(c.req.query("to")) ? c.req.query("to")! : businessDate();
-  const days = Math.min(Math.max(Number(c.req.query("days") ?? 30) || 30, 7), 366);
+  const days = Math.min(Math.max(Math.floor(Number(c.req.query("days") ?? 30)) || 30, 1), 366);
   return { from: addDays(to, -(days - 1)), to, days };
 }
 

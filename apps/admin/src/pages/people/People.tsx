@@ -1,6 +1,7 @@
+import { useSearchParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
 import { businessDate, formatDay, formatINR, rupeesToPaise, type AttendanceStatus } from "@mausam/shared";
-import { api } from "../../lib/api";
+import { api, sendOrQueue } from "../../lib/api";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { newClientId } from "../../lib/format";
@@ -29,7 +30,9 @@ const STATUSES: AttendanceStatus[] = ["present", "half", "absent", "leave", "off
 export function Attendance() {
   const { t } = useSession();
   const toast = useToast();
-  const [date, setDate] = useState(businessDate());
+  const [params] = useSearchParams();
+  const asked = params.get("date");
+  const [date, setDate] = useState(asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) && asked <= businessDate() ? asked : businessDate());
   const res = useApi<{ staff: AttRow[] }>(`/people/attendance/${date}`);
   const [marks, setMarks] = useState<Record<number, AttendanceStatus | null>>({});
   const [busy, setBusy] = useState(false);
@@ -48,7 +51,11 @@ export function Attendance() {
     setError(null);
     try {
       const changed = staff.filter((s) => (marks[s.id] ?? null) !== s.status).map((s) => ({ staff_id: s.id, status: marks[s.id] ?? null }));
-      await api(`/people/attendance/${date}`, { method: "PUT", json: { marks: changed } });
+      const r = await sendOrQueue<object>(`/people/attendance/${date}`, "PUT", { marks: changed });
+      if ("queued" in r) {
+        toast(t("offline.queued"));
+        return;
+      }
       toast(t("att.saved"));
       res.reload();
     } catch (e) {
@@ -143,8 +150,8 @@ export function Advances() {
     setBusy(true);
     setError(null);
     try {
-      await api("/people/advances", { method: "POST", json: { staff_id: Number(f.staff_id), amount, from_counter: f.fromCounter, note: f.note, client_id: clientId } });
-      toast(t("common.saved"));
+      const r = await sendOrQueue<object>("/people/advances", "POST", { staff_id: Number(f.staff_id), amount, from_counter: f.fromCounter, note: f.note, client_id: clientId, business_date: businessDate() });
+      toast(t("queued" in r ? "offline.queued" : "common.saved"));
       setF({ staff_id: "", amount: "", fromCounter: true, note: "" });
       setClientId(newClientId());
       list.reload();

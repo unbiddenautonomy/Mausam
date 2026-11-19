@@ -70,10 +70,12 @@ If Cloudflare asks you to pick a **workers.dev subdomain** first, type any short
 
 In the log you'll see lines like these, in this order. They're normal:
 
-1. A first `migrations apply` attempt that says the database doesn't exist. This is expected on the very first build only.
+1. A first `migrations apply` attempt that says it couldn't find the database, then `release: no database yet (first publish)`. This is expected on the very first build only.
 2. `Creating new D1 Database "mausam"` and `Creating new KV Namespace "mausam-admin-files"`.
 3. `Deployed mausam-admin`.
-4. Five migrations applied, `0001_init.sql` to `0005_pos_billing.sql`, each with a ✅.
+4. Eleven migrations applied, `0001_init.sql` to `0011_indexes.sql`, each with a ✅.
+
+On every later build the order is: migrations first, then the deploy. If a migration fails, the log ends with `release: the database changes failed, so nothing was published`, and the app that was already online keeps running unchanged.
 
 **If it says Failed** and the last red lines mention `D1` or a permission error, the token Cloudflare made can't create the database yet. Do [Adding the database permission](#adding-the-database-permission), then come back. For any other failure, look up the last red lines of the log and find them in [If something goes wrong](#if-something-goes-wrong).
 

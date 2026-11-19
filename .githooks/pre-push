@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs before every `git push` once switched on with `pnpm hooks:install`.
+# GitHub checks only run by hand, so this is the check that runs every time. Skip once with `git push --no-verify`.
+set -e
+echo "pre-push: lint, typecheck and tests"
+pnpm lint
+pnpm typecheck
+pnpm test

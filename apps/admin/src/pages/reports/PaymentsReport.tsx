@@ -2,31 +2,33 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { dateRange, formatDay, formatINR, formatINRShort } from "@mausam/shared";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, CsvButton, csvRupees, ReportFrame, shortDay, type Period } from "./common";
 import { useDaily } from "./SalesReport";
 
 export function PaymentsReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.cash")} desc={t("reports.cash_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useDaily(days);
+  const res = useDaily(p);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
-  if (res.data.days.length === 0) return <Empty>{t("reports.no_data")}</Empty>;
-  const byDate = new Map(res.data.days.map((d) => [d.business_date, d]));
+  // Only closed days: a closing splits the counter into cash, online and expenses; POS-only days don't.
+  const days = res.data.days.filter((d) => !d.from_pos);
+  if (days.length === 0) return <Empty>{t("reports.no_data")}</Empty>;
+  const byDate = new Map(days.map((d) => [d.business_date, d]));
   // The three parts add up to the total counter, so they stack.
   const rows = dateRange(res.data.from, res.data.to).map((d) => {
     const r = byDate.get(d);
     return { date: d, cash: r?.cash ?? null, online: r?.online ?? null, expenses: r?.expenses ?? null };
   });
-  const sum = (k: "cash" | "online" | "expenses") => res.data!.days.reduce((s, r) => s + r[k], 0);
+  const sum = (k: "cash" | "online" | "expenses") => days.reduce((s, r) => s + r[k], 0);
   const cash = sum("cash");
   const online = sum("online");
   const expenses = sum("expenses");
@@ -61,11 +63,12 @@ function Body({ days }: { days: Range }) {
           </ResponsiveContainer>
         </div>
         <details className="table-view">
-          <summary>Table</summary>
+          <summary>{t("common.table_view")}</summary>
+          <CsvButton name={`payments-${p.from}-to-${p.to}`} rows={() => [[t("common.date"), names.cash, names.online, names.expenses], ...days.map((r) => [r.business_date, csvRupees(r.cash), csvRupees(r.online), csvRupees(r.expenses)])]} />
           <table className="data">
             <thead><tr><th>{t("common.date")}</th><th className="r">{names.cash}</th><th className="r">{names.online}</th><th className="r">{names.expenses}</th></tr></thead>
             <tbody>
-              {[...res.data.days].reverse().map((r) => (
+              {[...days].reverse().map((r) => (
                 <tr key={r.business_date}><td>{formatDay(r.business_date)}</td><td className="r">{formatINR(r.cash)}</td><td className="r">{formatINR(r.online)}</td><td className="r">{formatINR(r.expenses)}</td></tr>
               ))}
             </tbody>

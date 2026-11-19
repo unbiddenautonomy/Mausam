@@ -1,9 +1,9 @@
-import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dateRange, formatDay, formatINR, formatINRShort, type Lang } from "@mausam/shared";
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { dateRange, formatDay, formatHour, formatINR, formatINRShort, type Lang } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { axisTick, ChartTooltip, hourSpan, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, hourSpan, CsvButton, csvRupees, ReportFrame, shortDay, widen, type Period } from "./common";
 
 export interface DailyRow {
   business_date: string;
@@ -12,42 +12,45 @@ export interface DailyRow {
   online: number;
   expenses: number;
   late: boolean;
-  submitted_at: string;
+  submitted_at: string | null;
+  /** No closing yet: the total comes from POS bills. */
+  from_pos?: boolean;
 }
 
-export function useDaily(days: Range) {
-  return useApi<{ from: string; to: string; days: DailyRow[] }>(`/reports/daily?days=${days}`);
+export function useDaily(p: Period) {
+  return useApi<{ from: string; to: string; days: DailyRow[] }>(`/reports/daily?${p.q}`);
 }
 
 export function SalesReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.sales")} desc={t("reports.sales_desc")}>
-      {(days) => (
+      {(p) => (
         <>
-          <SalesBody days={days} />
-          <Weekdays days={days} />
-          <BusyHours days={days} />
+          <SalesBody p={p} />
+          <Weekdays p={p} />
+          <BusyHours p={p} />
         </>
       )}
     </ReportFrame>
   );
 }
 
-function SalesBody({ days }: { days: Range }) {
+function SalesBody({ p }: { p: Period }) {
   const t = useSession().t;
   // Fetch 6 extra days so the 7-day average is complete from the first day shown.
-  const res = useDaily(String(Number(days) + 6) as Range);
+  const res = useDaily(widen(p, 6));
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const byDate = new Map(res.data.days.map((d) => [d.business_date, d]));
-  const all = dateRange(res.data.from, res.data.to).map((d) => ({ date: d, total: byDate.get(d)?.total_counter ?? null }));
+  const all = dateRange(res.data.from, res.data.to).map((d) => ({ date: d, total: byDate.get(d)?.total_counter ?? null, fromPos: !!byDate.get(d)?.from_pos }));
   const series = all.map((row, i) => {
     const window = all.slice(Math.max(0, i - 6), i + 1).map((r) => r.total).filter((v): v is number => v !== null);
     return { ...row, avg: window.length >= 4 ? Math.round(window.reduce((a, b) => a + b, 0) / window.length / 100) * 100 : null };
   });
-  const shown = series.slice(-Number(days));
-  const filled = shown.filter((r) => r.total !== null) as { date: string; total: number }[];
+  const shown = series.slice(-p.days);
+  const filled = shown.filter((r) => r.total !== null) as { date: string; total: number; fromPos: boolean }[];
+  const posOnly = filled.filter((r) => r.fromPos).length;
   if (filled.length === 0) return <Empty>{t("reports.no_data")}</Empty>;
   const sum = filled.reduce((s, r) => s + r.total, 0);
   const best = filled.reduce((a, b) => (b.total > a.total ? b : a));
@@ -57,7 +60,7 @@ function SalesBody({ days }: { days: Range }) {
   return (
     <>
       <div className="stats">
-        <Stat hero label={t("reports.period_total")} value={formatINR(sum)} />
+        <Stat hero label={t("reports.period_total")} value={formatINR(sum)} delta={posOnly ? `${posOnly} × ${t("reports.not_closed_short")}` : undefined} />
         <Stat label={t("reports.daily_avg")} value={formatINR(Math.round(sum / filled.length / 100) * 100)} />
         <Stat label={t("reports.best_day")} value={formatINR(best.total)} delta={formatDay(best.date)} />
       </div>
@@ -73,18 +76,28 @@ function SalesBody({ days }: { days: Range }) {
               <XAxis dataKey="date" tickFormatter={shortDay} tick={axisTick} axisLine={false} tickLine={false} minTickGap={24} />
               <YAxis tickFormatter={formatINRShort} tick={axisTick} axisLine={false} tickLine={false} width={56} />
               <Tooltip content={<ChartTooltip />} cursor={{ fill: "var(--surface-2)" }} />
-              <Bar dataKey="total" name={dailyName} fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+              <Bar dataKey="total" name={dailyName} fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                {shown.map((r) => <Cell key={r.date} fill="var(--series-1)" fillOpacity={r.fromPos ? 0.45 : 1} />)}
+              </Bar>
               <Line dataKey="avg" name={avgName} stroke="var(--text-2)" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls type="monotone" isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
         <details className="table-view">
-          <summary>Table</summary>
+          <summary>{t("common.table_view")}</summary>
+          <CsvButton
+            name={`sales-${p.from}-to-${p.to}`}
+            rows={() => [[t("common.date"), dailyName, avgName, ""], ...shown.map((r) => [r.date, csvRupees(r.total), csvRupees(r.avg), r.fromPos ? t("reports.not_closed") : ""])]}
+          />
           <table className="data">
             <thead><tr><th>{t("common.date")}</th><th className="r">{dailyName}</th><th className="r">{avgName}</th></tr></thead>
             <tbody>
               {[...shown].reverse().map((r) => (
-                <tr key={r.date}><td>{formatDay(r.date)}</td><td className="r">{formatINR(r.total)}</td><td className="r">{formatINR(r.avg)}</td></tr>
+                <tr key={r.date}>
+                  <td>{formatDay(r.date)}{r.fromPos && <div className="small muted">{t("reports.not_closed")}</div>}</td>
+                  <td className="r">{formatINR(r.total)}</td>
+                  <td className="r">{formatINR(r.avg)}</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -98,9 +111,9 @@ function SalesBody({ days }: { days: Range }) {
 const LOCALE: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", kn: "kn-IN" };
 
 /** Average sales for each weekday, Monday first. */
-function Weekdays({ days }: { days: Range }) {
+function Weekdays({ p }: { p: Period }) {
   const { t, lang } = useSession();
-  const res = useApi<{ weekdays: { weekday: number; avg: number | null; n: number }[] }>(`/analytics/weekdays?days=${days === "7" ? "28" : days}`);
+  const res = useApi<{ weekdays: { weekday: number; avg: number | null; n: number }[] }>(`/analytics/weekdays?${(p.days < 28 ? widen(p, 28 - p.days) : p).q}`);
   if (!res.data) return null;
   const f = new Intl.DateTimeFormat(LOCALE[lang], { weekday: "short", timeZone: "UTC" });
   const name = (d: number) => f.format(new Date(Date.UTC(2026, 10, 1 + d)));
@@ -123,7 +136,7 @@ function Weekdays({ days }: { days: Range }) {
           </ResponsiveContainer>
         </div>
         <details className="table-view">
-          <summary>Table</summary>
+          <summary>{t("common.table_view")}</summary>
           <table className="data">
             <thead><tr><th></th><th className="r">{avgName}</th><th className="r">{t("reports.days_counted")}</th></tr></thead>
             <tbody>
@@ -137,11 +150,11 @@ function Weekdays({ days }: { days: Range }) {
 }
 
 /** Busy hours: average sales in each hour the restaurant is open, from POS bills. */
-function BusyHours({ days }: { days: Range }) {
+function BusyHours({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<{ days_with_bills: number; hours: { hour: number; avg_sales: number; avg_bills: number }[] }>(`/analytics/hours?days=${days}`);
+  const res = useApi<{ days_with_bills: number; hours: { hour: number; avg_sales: number; avg_bills: number }[] }>(`/analytics/hours?${p.q}`);
   if (!res.data || res.data.days_with_bills < 1 || !res.data.hours.length) return null;
-  const label = (h: number) => `${((h + 11) % 12) + 1}${h < 12 ? "am" : "pm"}`;
+  const label = (h: number) => formatHour(h);
   // Every hour from the first to the last with sales (5am to 5am), so quiet hours show as gaps rather than disappearing.
   const byHour = new Map(res.data.hours.map((h) => [h.hour, h]));
   const rows = hourSpan(res.data.hours.map((h) => h.hour)).map((h) => {
@@ -165,7 +178,7 @@ function BusyHours({ days }: { days: Range }) {
           </ResponsiveContainer>
         </div>
         <details className="table-view">
-          <summary>Table</summary>
+          <summary>{t("common.table_view")}</summary>
           <table className="data">
             <thead><tr><th></th><th className="r">{avgName}</th><th className="r">{t("reports.hour_bills")}</th></tr></thead>
             <tbody>
