@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { formatINR, rupeesToPaise } from "@mausam/shared";
-import { sendOrQueue } from "../lib/api";
+import { api, sendOrQueue } from "../lib/api";
 import { useApi, useDraft } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, newClientId } from "../lib/format";
@@ -16,27 +16,82 @@ interface Cat {
   name_kn: string | null;
 }
 
+interface Saved {
+  id: number;
+  business_date: string;
+  trip_id: number | null;
+  category_id: number;
+  shop: string | null;
+  amount: number;
+  mode: "cash" | "online";
+  has_receipt: boolean;
+  photo_key: string | null;
+  note: string | null;
+  item: string | null;
+  qty: number | null;
+  unit: string | null;
+}
+
+const blank = () => ({
+  category_id: 0,
+  amount: "",
+  shop: "",
+  mode: "cash" as "cash" | "online",
+  photo_key: null as string | null,
+  no_receipt: false,
+  note: "",
+  item: "",
+  qty: "",
+  unit: "kg",
+  client_id: newClientId(),
+});
+type Draft = ReturnType<typeof blank>;
+
 export function AddExpense() {
+  return <ExpenseForm />;
+}
+
+/** The same form, filled with a saved expense. Saving changes it in place. */
+export function EditExpense() {
+  const { id } = useParams();
+  const res = useApi<{ expense: Saved }>(`/expenses/${Number(id)}`);
+  if (res.error) return <div className="page"><ErrorNote error={res.error} /></div>;
+  if (!res.data) return <Loading />;
+  const e = res.data.expense;
+  return (
+    <ExpenseForm
+      editing={e}
+      initial={{
+        category_id: e.category_id,
+        amount: (e.amount / 100).toFixed(2).replace(/\.00$/, ""),
+        shop: e.shop ?? "",
+        mode: e.mode,
+        photo_key: e.photo_key,
+        no_receipt: !e.has_receipt && !e.photo_key,
+        note: e.note ?? "",
+        item: e.item ?? "",
+        qty: e.qty ? String(e.qty) : "",
+        unit: e.unit ?? "kg",
+        client_id: "",
+      }}
+    />
+  );
+}
+
+function ExpenseForm({ editing, initial }: { editing?: Saved; initial?: Draft }) {
   const { t, lang } = useSession();
   const [params] = useSearchParams();
-  const tripId = params.get("trip");
-  const date = params.get("date");
+  const tripId = editing ? (editing.trip_id ? String(editing.trip_id) : null) : params.get("trip");
+  const date = editing ? editing.business_date : params.get("date");
   const backTo = tripId ? "/entries/shopping" : `/entries/expenses${date ? `?date=${date}` : ""}`;
   const toast = useToast();
   const cats = useApi<{ categories: Cat[] }>("/categories");
-  const [draft, setDraft, clearDraft] = useDraft(`expense.${tripId ?? "day"}`, {
-    category_id: 0,
-    amount: "",
-    shop: "",
-    mode: "cash" as "cash" | "online",
-    photo_key: null as string | null,
-    no_receipt: false,
-    note: "",
-    item: "",
-    qty: "",
-    unit: "kg",
-    client_id: newClientId(),
-  });
+  // A new expense keeps its draft on the phone; an edit starts from what was saved.
+  const [newDraft, setNewDraft, clearNewDraft] = useDraft(`expense.${tripId ?? "day"}`, blank());
+  const [editDraft, setEditDraft] = useState<Draft>(initial ?? blank());
+  const draft = editing ? editDraft : newDraft;
+  const setDraft = editing ? setEditDraft : setNewDraft;
+  const clearDraft = editing ? () => {} : clearNewDraft;
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof typeof draft>(k: K, v: (typeof draft)[K]) => setDraft((d) => ({ ...d, [k]: v }));
@@ -47,18 +102,26 @@ export function AddExpense() {
     if (!ready) return;
     setBusy(true);
     setError(null);
+    const body = {
+      category_id: draft.category_id,
+      amount: paise,
+      shop: draft.shop,
+      mode: draft.mode,
+      photo_key: draft.photo_key,
+      has_receipt: !draft.no_receipt,
+      note: draft.note,
+      item: draft.item || null,
+      qty: draft.qty ? Number(draft.qty) : null,
+      unit: draft.qty ? draft.unit : null,
+    };
     try {
+      if (editing) {
+        await api(`/expenses/${editing.id}`, { method: "PUT", json: body });
+        toast(t("common.saved"), backTo);
+        return;
+      }
       const r = await sendOrQueue("/expenses", "POST", {
-        category_id: draft.category_id,
-        amount: paise,
-        shop: draft.shop,
-        mode: draft.mode,
-        photo_key: draft.photo_key,
-        has_receipt: !draft.no_receipt,
-        note: draft.note,
-        item: draft.item || null,
-        qty: draft.qty ? Number(draft.qty) : null,
-        unit: draft.qty ? draft.unit : null,
+        ...body,
         trip_id: tripId ? Number(tripId) : null,
         business_date: date ?? undefined,
         client_id: draft.client_id,
@@ -74,7 +137,7 @@ export function AddExpense() {
 
   return (
     <div className="page">
-      <PageHead title={t("expense.title")} back={backTo} />
+      <PageHead title={editing ? t("expense.edit_title") : t("expense.title")} back={backTo} />
       <div className="form">
         <PhotoInput label={t("expense.receipt")} kind="receipt" value={draft.photo_key} onChange={(k) => setDraft((d) => ({ ...d, photo_key: k, no_receipt: k ? false : d.no_receipt }))} />
         {!draft.photo_key && (

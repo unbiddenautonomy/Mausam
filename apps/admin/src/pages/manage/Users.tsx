@@ -21,13 +21,7 @@ export function Users() {
   const res = useApi<{ users: U[] }>("/users");
   const [adding, setAdding] = useState(false);
 
-  async function resetPin(u: U) {
-    const pin = window.prompt(`${t("users.reset_pin")}: ${u.name}`);
-    if (!pin) return;
-    if (!/^\d{4}$/.test(pin)) return toast(t("login.pin"));
-    await api(`/users/${u.id}`, { method: "PATCH", json: { pin } });
-    toast(t("common.saved"));
-  }
+  const [resetting, setResetting] = useState<number | null>(null);
   async function toggle(u: U) {
     await api(`/users/${u.id}`, { method: "PATCH", json: { active: !u.active } });
     res.reload();
@@ -53,10 +47,11 @@ export function Users() {
               <Pill tone={u.role === "owner" ? "good" : undefined}>{t(`role.${u.role}` as const)}</Pill>
               {u.id !== user!.id && (
                 <span className="btn-row">
-                  <button className="btn small" onClick={() => resetPin(u)}>{t("users.reset_pin")}</button>
+                  <button className="btn small" onClick={() => setResetting(resetting === u.id ? null : u.id)}>{t("users.reset_pin")}</button>
                   <button className="btn small" onClick={() => toggle(u)}>{u.active ? <Icon name="lock" /> : <Icon name="check" />}</button>
                 </span>
               )}
+              {resetting === u.id && <ResetPin user={u} onDone={() => (setResetting(null), toast(t("common.saved")))} />}
             </div>
           ))}
         </div>
@@ -102,5 +97,43 @@ function AddUser({ onDone }: { onDone: () => void }) {
         <button className="btn primary" disabled={!f.name || f.phone.replace(/\D/g, "").length < 10 || f.pin.length !== 4} onClick={save}>{t("common.save")}</button>
       </div>
     </div>
+  );
+}
+
+/** The owner sets a new 4-digit PIN for someone, typed twice. */
+function ResetPin({ user, onDone }: { user: U; onDone: () => void }) {
+  const t = useSession().t;
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const mismatch = a.length === 4 && b.length === 4 && a !== b;
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (a.length !== 4 || a !== b) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/users/${user.id}`, { method: "PATCH", json: { pin: a } });
+      onDone();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const pin = (id: string, v: string, set: (v: string) => void) => (
+    <input id={id} className="input num" type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={v} onChange={(e) => set(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+  );
+  return (
+    <form className="form" style={{ flexBasis: "100%", paddingTop: 8 }} onSubmit={submit}>
+      <strong>{t("users.reset_for", { name: user.name })}</strong>
+      <div className="grid-2">
+        <Field label={t("pin.new")} htmlFor={`rp-a-${user.id}`}>{pin(`rp-a-${user.id}`, a, setA)}</Field>
+        <Field label={t("pin.again")} htmlFor={`rp-b-${user.id}`} error={mismatch ? t("pin.mismatch") : null}>{pin(`rp-b-${user.id}`, b, setB)}</Field>
+      </div>
+      <ErrorNote error={error} />
+      <button className="btn primary" disabled={busy || a.length !== 4 || a !== b}>{t("pin.save")}</button>
+    </form>
   );
 }

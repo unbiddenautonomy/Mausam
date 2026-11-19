@@ -1,6 +1,6 @@
 import { Link } from "react-router";
-import { addDays, DAY_START_HOUR, formatDay, formatINR, formatINRShort, istMoment, type CloseFlag, type Lang } from "@mausam/shared";
-import { useApi } from "../lib/hooks";
+import { addDays, DAY_START_HOUR, formatDay, weekdayShort, formatINR, formatINRShort, istMoment, type CloseFlag, type Lang } from "@mausam/shared";
+import { useApi, useRefreshOnReturn } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, clock } from "../lib/format";
 import { Icon } from "../components/Icon";
@@ -21,6 +21,7 @@ interface TodayData {
 export function Today() {
   const { t, user } = useSession();
   const today = useApi<TodayData>("/today");
+  useRefreshOnReturn(today.reload, today.data?.business_date);
   if (today.loading && !today.data) return <Loading />;
   if (!today.data) return <ErrorNote error={today.error ?? true} />;
   const d = today.data;
@@ -138,7 +139,7 @@ function OwnerOverview({ date }: { date: string }) {
   const s = useApi<Summary>(`/summary?date=${date}`);
   if (!s.data) return s.error ? <ErrorNote error={s.error} /> : <Loading />;
   const { close, compare } = s.data;
-  const weekday = formatDay(addDays(date, -7)).split(",")[0];
+  const weekday = weekdayShort(addDays(date, -7));
   const delta =
     close && compare
       ? t("home.vs_last_week", {
@@ -188,7 +189,7 @@ function OwnerOverview({ date }: { date: string }) {
 }
 
 function Week7({ rows }: { rows: Summary["last7"] }) {
-  const t = useSession().t;
+  const { t, lang } = useSession();
   const max = Math.max(1, ...rows.map((r) => r.total_counter ?? 0));
   return (
     <div className="card" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, alignItems: "end" }}>
@@ -199,7 +200,7 @@ function Week7({ rows }: { rows: Summary["last7"] }) {
             <span style={{ width: "100%", height: `${Math.max(4, ((r.total_counter ?? 0) / max) * 80)}px`, borderRadius: "4px 4px 0 0", background: r.status === "missing" ? "var(--bad-soft)" : "var(--series-1)" }} />
           </span>
           <span className={`pill ${r.status === "on_time" ? "good" : r.status === "late" ? "warn" : "bad"}`} style={{ padding: "1px 6px", fontSize: "0.7rem" }} aria-label={t(r.status === "on_time" ? "reports.on_time" : r.status === "late" ? "reports.late" : "reports.missing")}>
-            {formatDay(r.business_date).slice(0, 2)}
+            {lang === "en" ? weekdayShort(r.business_date).slice(0, 2) : weekdayShort(r.business_date)}
           </span>
         </Link>
       ))}

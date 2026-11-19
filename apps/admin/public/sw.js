@@ -1,11 +1,13 @@
 // Minimal service worker: makes the app installable, caches the app shell, and receives push reminders.
+// "v1" is replaced with this build's version at build time (vite.config.ts), so each build gets a fresh cache.
 const CACHE = "mausam-shell-v1";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon.svg"])));
   self.skipWaiting();
 });
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))));
+  // Only this app's old caches: the POS (at /pos/) keeps its own "mausam-pos-…" cache on the same site.
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("mausam-shell-") && k !== CACHE).map((k) => caches.delete(k)))));
   self.clients.claim();
 });
 self.addEventListener("fetch", (e) => {

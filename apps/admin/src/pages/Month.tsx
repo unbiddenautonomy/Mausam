@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { businessDate, formatDay, formatINR, monthCloseFor, monthDates, rupeesToPaise } from "@mausam/shared";
+import { businessDate, dateLocale, formatDay, formatINR, monthCloseFor, monthDates, rupeesToPaise } from "@mausam/shared";
 import { api, ApiError } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
@@ -57,7 +57,7 @@ export function MonthClose() {
     <div className="page month-page">
       <PageHead
         title={t("month.title")}
-        subtitle={new Date(`${m}-15T00:00:00Z`).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" })}
+        subtitle={new Date(`${m}-15T00:00:00Z`).toLocaleDateString(dateLocale(), { month: "long", year: "numeric", timeZone: "UTC" })}
         action={
           <div className="btn-row no-print">
             <input type="month" className="input" style={{ width: "auto" }} value={m} onChange={(e) => e.target.value && setM(e.target.value)} aria-label={t("pay.month")} />

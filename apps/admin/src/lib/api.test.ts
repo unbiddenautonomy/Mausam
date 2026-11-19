@@ -21,7 +21,7 @@ globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
   return new Response(JSON.stringify(body), { status: a.status, headers: { "Content-Type": "application/json" } });
 }) as typeof fetch;
 
-const { failedEntries, flushQueue, queueSize, retryFailed, sendOrQueue, setQueueOwner, setToken } = await import("./api");
+const { clearCopies, failedEntries, flushQueue, queueSize, retryFailed, savedCopy, saveCopy, sendOrQueue, setQueueOwner, setToken } = await import("./api");
 
 beforeEach(() => {
   mem.clear();
@@ -83,5 +83,24 @@ describe("offline queue", () => {
     answers = [{ status: 200 }];
     await retryFailed(f);
     expect(failedEntries()).toEqual([]);
+  });
+});
+
+describe("saved copies", () => {
+  it("keeps the last reply per person, and forgets them all on logout", () => {
+    setQueueOwner(1);
+    saveCopy("/today", { a: 1 });
+    expect(savedCopy("/today")?.data).toEqual({ a: 1 });
+    setQueueOwner(2);
+    expect(savedCopy("/today")).toBeNull();
+    setQueueOwner(1);
+    clearCopies();
+    expect(savedCopy("/today")).toBeNull();
+  });
+  it("keeps at most 40 pages, dropping the oldest", () => {
+    setQueueOwner(1);
+    for (let i = 0; i < 45; i++) saveCopy(`/p/${i}`, i);
+    expect(savedCopy("/p/0")).toBeNull();
+    expect(savedCopy("/p/44")?.data).toBe(44);
   });
 });

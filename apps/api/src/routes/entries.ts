@@ -53,6 +53,14 @@ entries.get("/today", async (c) => {
     const spent = await sumCashExpenses(db, date, Number(trip.id));
     tripOut = { ...trip, spent: spent.s, count: spent.n };
   }
+  // A trip from an earlier day that was never finished: its float is still out.
+  const staleTrip = await db
+    .prepare(
+      `SELECT t.id, t.business_date, t.float_out, u.name AS manager_name FROM shopping_trips t JOIN users u ON u.id = t.manager_id
+       WHERE t.status = 'open' AND t.business_date < ? ORDER BY t.business_date DESC, t.id DESC LIMIT 1`,
+    )
+    .bind(date)
+    .first<Record<string, unknown>>();
   const exp = await sumCashExpenses(db, date);
   const close = await db
     .prepare(
@@ -65,7 +73,7 @@ entries.get("/today", async (c) => {
     business_date: date,
     locked: isLocked(date, new Date(), settings.lock_hour),
     settings: { close_due: settings.close_due, shopping_due: settings.shopping_due },
-    shopping: { status: trip ? trip.status : "not_started", trip: tripOut },
+    shopping: { status: trip ? trip.status : "not_started", trip: tripOut, stale_trip: staleTrip ?? null },
     expenses: { count: exp.n, total: exp.s },
     close: { status: close ? "done" : "pending", close: mapClose(close) },
     open_alerts: alerts?.n ?? 0,
@@ -111,14 +119,16 @@ entries.post("/expenses", async (c) => {
   if (!cat) throw new HttpError(422, "invalid", { field: "category_id" });
   const mode = b.mode === "online" ? "online" : "cash";
   const tripId = b.trip_id ? Number(b.trip_id) : null;
-  if (tripId) {
-    const trip = await c.env.DB.prepare("SELECT status FROM shopping_trips WHERE id = ?").bind(tripId).first<{ status: string }>();
-    if (!trip) throw new HttpError(422, "invalid", { field: "trip_id" });
-  }
   const clientId = typeof b.client_id === "string" ? b.client_id.slice(0, 64) : null;
   if (clientId) {
     const existing = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.client_id = ?`).bind(clientId).first();
     if (existing) return c.json({ expense: mapExpense(existing), duplicate: true });
+  }
+  if (tripId) {
+    const trip = await c.env.DB.prepare("SELECT status FROM shopping_trips WHERE id = ?").bind(tripId).first<{ status: string }>();
+    if (!trip) throw new HttpError(422, "invalid", { field: "trip_id" });
+    // A closed trip's cash has been counted back; a new line would change a settled float.
+    if (trip.status !== "open") throw new HttpError(409, "trip_closed", { id: tripId });
   }
   const photoKey = optionalText(b.photo_key, 200);
   // Optional quantity bought, for price tracking.
@@ -151,6 +161,57 @@ entries.post("/expenses", async (c) => {
   return c.json({ expense: mapExpense(row!) }, 201);
 });
 
+entries.get("/expenses/:id", async (c) => {
+  const row = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.id = ?`).bind(Number(c.req.param("id"))).first();
+  if (!row) throw new HttpError(404, "not_found");
+  return c.json({ expense: mapExpense(row) });
+});
+
+/** Fix a typed-in expense: amount, what for, shop, cash or online, receipt, note, item and quantity. The day and trip stay. */
+entries.put("/expenses/:id", async (c) => {
+  const user = c.get("user");
+  const id = Number(c.req.param("id"));
+  const b = await c.req.json<Record<string, unknown>>();
+  const row = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.id = ?`).bind(id).first<Record<string, unknown>>();
+  if (!row) throw new HttpError(404, "not_found");
+  if (user.role !== "owner" && row.created_by !== user.id) throw new HttpError(403, "not_allowed");
+  if (row.source !== "manual") throw new HttpError(409, "linked_entry", { source: row.source });
+  await assertDayOpen(c.env.DB, user, String(row.business_date));
+  const amount = requirePaise(b.amount, "amount");
+  const categoryId = Number(b.category_id);
+  const cat = await c.env.DB.prepare("SELECT id FROM expense_categories WHERE id = ? AND (active = 1 OR id = ?)").bind(categoryId, row.category_id).first();
+  if (!cat) throw new HttpError(422, "invalid", { field: "category_id" });
+  // Moving cash spent on a closed trip would change a settled float.
+  if (row.trip_id && (amount !== row.amount || (b.mode === "online" ? "online" : "cash") !== row.mode)) {
+    const trip = await c.env.DB.prepare("SELECT status FROM shopping_trips WHERE id = ?").bind(row.trip_id).first<{ status: string }>();
+    if (trip && trip.status !== "open") throw new HttpError(409, "trip_closed", { id: row.trip_id });
+  }
+  const photoKey = optionalText(b.photo_key, 200);
+  const qty = b.qty === undefined || b.qty === null || b.qty === "" ? null : Number(b.qty);
+  if (qty !== null && !(qty > 0 && qty < 100000)) throw new HttpError(422, "invalid", { field: "qty" });
+  await c.env.DB.prepare(
+    `UPDATE expenses SET category_id = ?, shop = ?, amount = ?, mode = ?, has_receipt = ?, photo_key = ?, note = ?, item = ?, qty = ?, unit = ?
+     WHERE id = ? AND deleted_at IS NULL`,
+  )
+    .bind(
+      categoryId,
+      optionalText(b.shop, 80),
+      amount,
+      b.mode === "online" ? "online" : "cash",
+      b.has_receipt === false ? 0 : photoKey ? 1 : bool(b.has_receipt) ? 1 : 0,
+      photoKey,
+      optionalText(b.note),
+      optionalText(b.item, 60),
+      qty,
+      qty ? optionalText(b.unit, 20) ?? "kg" : null,
+      id,
+    )
+    .run();
+  const after = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.id = ?`).bind(id).first();
+  await audit(c.env.DB, "expenses", id, "update", row, after, user.id);
+  return c.json({ expense: mapExpense(after!) });
+});
+
 entries.delete("/expenses/:id", async (c) => {
   const user = c.get("user");
   const id = Number(c.req.param("id"));
@@ -177,7 +238,8 @@ entries.get("/shopping/:id", async (c) => {
   if (!trip) throw new HttpError(404, "not_found");
   const spent = await sumCashExpenses(c.env.DB, String(trip.business_date), id);
   const { results } = await c.env.DB.prepare(`${EXPENSE_SELECT} AND e.trip_id = ? ORDER BY e.id DESC`).bind(id).all();
-  return c.json({ trip: { ...trip, spent: spent.s, count: spent.n }, expenses: results.map(mapExpense) });
+  const settings = await loadSettings(c.env.DB);
+  return c.json({ trip: { ...trip, spent: spent.s, count: spent.n }, expenses: results.map(mapExpense), tolerance: settings.shopping_tolerance });
 });
 
 entries.post("/shopping", async (c) => {
@@ -203,7 +265,14 @@ entries.post("/shopping/:id/close", async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const trip = await c.env.DB.prepare("SELECT * FROM shopping_trips WHERE id = ?").bind(id).first<Record<string, unknown>>();
   if (!trip) throw new HttpError(404, "not_found");
-  await assertDayOpen(c.env.DB, user, String(trip.business_date));
+  if (trip.status === "open") {
+    // Finishing a trip left open is allowed after its day locks (the float has to come back some time), but not in a
+    // closed month.
+    const month = await c.env.DB.prepare("SELECT 1 FROM month_closes WHERE month = ? AND status = 'closed'").bind(String(trip.business_date).slice(0, 7)).first();
+    if (month) throw new HttpError(409, "month_closed");
+  } else {
+    await assertDayOpen(c.env.DB, user, String(trip.business_date));
+  }
   const floatBack = requirePaise(b.float_back, "float_back", { allowZero: true });
   const spent = await sumCashExpenses(c.env.DB, String(trip.business_date), id);
   const settings = await loadSettings(c.env.DB);
@@ -365,6 +434,9 @@ entries.put("/closes/:date", async (c) => {
         { url: `/entries/close/${date}`, dedupeKey: `alert:close_flag:${date}:${JSON.stringify(serious)}` },
       ),
     );
+  } else {
+    // Fixed on a later edit: the flag alert is settled too.
+    await db.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE type = 'close_flag' AND business_date = ? AND seen_at IS NULL").bind(user.id, date).run();
   }
   return c.json({ close: mapClose({ ...row!, submitted_by_name: user.name, updated_by_name: user.name }) });
 });

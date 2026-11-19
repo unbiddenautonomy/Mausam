@@ -9,9 +9,11 @@ function describe(f: Failed, t: ReturnType<typeof useSession>["t"]): { title: st
   const j = (f.json ?? {}) as Record<string, unknown>;
   const close = f.path.match(/^\/closes\/(\d{4}-\d{2}-\d{2})$/);
   if (close) return { title: t("unsent.close"), detail: `${formatDay(close[1])} · ${formatINR(Number(j.total_counter) || 0)}` };
+  const att = f.path.match(/^\/people\/attendance\/(\d{4}-\d{2}-\d{2})$/);
+  if (att) return { title: t("unsent.attendance"), detail: formatDay(att[1]) };
   const date = typeof j.business_date === "string" ? formatDay(j.business_date) : "";
   const amount = typeof j.amount === "number" ? formatINR(j.amount) : "";
-  return { title: f.path.startsWith("/expenses") ? t("unsent.expense") : f.path, detail: [date, amount].filter(Boolean).join(" · ") };
+  return { title: f.path.startsWith("/expenses") ? t("unsent.expense") : f.path.startsWith("/people/advances") ? t("unsent.advance") : f.path, detail: [date, amount].filter(Boolean).join(" · ") };
 }
 
 /** Entries saved offline that the server refused. They stay here until sent again or deleted. */

@@ -30,7 +30,9 @@ Open http://localhost:5173 on your computer, or `http://<your-computer's-IP>:517
 - **Without demo data**, the first screen asks you to create the owner account.
 - **With demo data**, log in as owner `9000000001` / PIN `1234`, or as a manager `9000000002` / PIN `1111`. On the POS, use the counter login `9000000004` / PIN `2222`.
 
-Run the tests with `pnpm test`, and the type checks with `pnpm typecheck`.
+Run the tests with `pnpm test`, the type checks with `pnpm typecheck`, and the linter with `pnpm lint`. `pnpm check` runs everything GitHub's check would (types, tests, build and a Worker dry run).
+
+GitHub checks only run when started by hand, so switch on the local pre-push check once per clone with `pnpm hooks:install`. Every `git push` then runs lint, typecheck and tests first (`git push --no-verify` skips it once).
 
 ## Put it online
 
@@ -110,10 +112,10 @@ GitHub also checks every pull request (types, tests, build). The UI rules and ne
 
 ## Safety built in
 
-- Logins: PINs are hashed; 5 wrong tries lock an account for 15 minutes, and one address can try 10 logins a minute.
+- Logins: PINs are hashed; 5 wrong tries lock an account for 15 minutes (twice as long each time after that, up to a day, and the owner gets an alert), and one address can try 10 logins a minute.
 - Nightly database backup to KV storage (35 days kept), plus D1 Time Travel. Restore steps are in the setup guide.
 - Security headers on the app and API, no cross-site API access by default, and request logs in the Cloudflare dashboard.
 
 ## Database changes
 
-New tables and columns are in `apps/api/migrations` (`0001` to `0006`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer. Online, each publish applies them automatically (`pnpm release`).
+New tables and columns are in `apps/api/migrations` (`0001` to `0011`). `pnpm --filter @mausam/api db:migrate:local` applies them on your computer. Online, each publish applies them automatically (`pnpm release`).

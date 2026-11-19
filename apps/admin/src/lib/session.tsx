@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { DEFAULT_LANG, translate, type Lang, type MessageKey, type User } from "@mausam/shared";
-import { api, flushQueue, getToken, setQueueOwner, setToken, setUnauthorisedHandler } from "./api";
+import { DEFAULT_LANG, setDateLang, translate, type Lang, type MessageKey, type User } from "@mausam/shared";
+import { api, clearCopies, flushQueue, getToken, setQueueOwner, setToken, setUnauthorisedHandler } from "./api";
 
 type T = (key: MessageKey, params?: Record<string, string | number>) => string;
 
@@ -20,7 +20,10 @@ const LANG_KEY = "mausam.lang";
 function storedLang(): Lang {
   try {
     const l = localStorage.getItem(LANG_KEY);
-    if (l === "en" || l === "hi" || l === "kn") return l;
+    if (l === "en" || l === "hi" || l === "kn") {
+      setDateLang(l);
+      return l;
+    }
   } catch {
     /* ignore */
   }
@@ -34,6 +37,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const applyLang = useCallback((l: Lang) => {
     setLangState(l);
+    setDateLang(l);
     document.documentElement.lang = l;
     try {
       localStorage.setItem(LANG_KEY, l);
@@ -82,6 +86,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       },
       signOut: () => {
         void api("/auth/logout", { method: "POST" }).catch(() => {});
+        clearCopies();
         setToken(null);
         setUser(null);
       },

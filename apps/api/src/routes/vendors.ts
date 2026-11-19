@@ -196,7 +196,7 @@ vendors.post("/:id{[0-9]+}/deliveries", async (c) => {
   const mismatch = agreed !== null && rate !== agreed;
   if (mismatch) {
     c.executionCtx.waitUntil(
-      raise(c.env, `rate_mismatch:${id}`, date, { vendor: vendor.name, category: item, amount: rate, usual: agreed }, "warn", "owner", `/vendors/${vendorId}`),
+      raise(c.env, `rate_mismatch:${id}`, date, { vendor: vendor.name, vendor_id: vendorId, category: item, amount: rate, usual: agreed }, "warn", "owner", `/vendors/${vendorId}`),
     );
   }
   return c.json({ id, amount, mismatch }, 201);

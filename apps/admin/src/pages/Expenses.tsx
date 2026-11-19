@@ -1,11 +1,11 @@
 import { Link, useSearchParams } from "react-router";
-import { addDays, businessDate, formatDay, formatINR } from "@mausam/shared";
+import { businessDate, formatINR } from "@mausam/shared";
 import { api } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, timeIST } from "../lib/format";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorNote, Loading, PageHead, Photo, PhotoLink, Pill } from "../components/ui";
+import { DayStepper, Empty, ErrorNote, errorText, Loading, PageHead, Photo, PhotoLink, Pill, useToast } from "../components/ui";
 
 interface Exp {
   id: number;
@@ -32,10 +32,11 @@ export function Expenses() {
   const res = useApi<{ expenses: Exp[] }>(`/expenses?date=${date}`);
   const total = res.data?.expenses.reduce((s, e) => s + e.amount, 0) ?? 0;
   const go = (d: string) => setParams(d === today ? {} : { date: d });
+  const toast = useToast();
 
   async function remove(e: Exp) {
     if (!window.confirm(`${t("common.delete")}: ${formatINR(e.amount)}?`)) return;
-    await api(`/expenses/${e.id}`, { method: "DELETE" }).catch(() => {});
+    await api(`/expenses/${e.id}`, { method: "DELETE" }).catch((err) => toast(errorText(t, err)));
     res.reload();
   }
 
@@ -50,14 +51,9 @@ export function Expenses() {
           </Link>
         }
       />
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button className="btn small" aria-label="Previous day" onClick={() => go(addDays(date, -1))}><Icon name="left" /></button>
-        <div style={{ flex: 1, textAlign: "center" }}>
-          <strong>{formatDay(date)}</strong>
-          <div className="muted small">{t("expense.day_total")}: <span className="num">{formatINR(total)}</span></div>
-        </div>
-        <button className="btn small" aria-label="Next day" disabled={date >= today} onClick={() => go(addDays(date, 1))}><Icon name="chevron" /></button>
-      </div>
+      <DayStepper date={date} max={today} onChange={go}>
+        <div className="muted small">{t("expense.day_total")}: <span className="num">{formatINR(total)}</span></div>
+      </DayStepper>
       {res.error ? <ErrorNote error={res.error} /> : !res.data ? <Loading /> : (
         <div className="card flush list">
           {res.data.expenses.length === 0 && <Empty>{t("expense.empty")}</Empty>}
@@ -82,7 +78,10 @@ export function Expenses() {
               </span>
               <span className="amount">{formatINR(e.amount)}</span>
               {(!e.source || e.source === "manual") && (user!.role === "owner" || e.created_by === user!.id) && (
-                <button className="btn small danger" aria-label={t("common.delete")} onClick={() => remove(e)}><Icon name="trash" /></button>
+                <>
+                  <Link className="btn small" aria-label={t("common.edit")} to={`/entries/expenses/${e.id}/edit`}><Icon name="edit" /></Link>
+                  <button className="btn small danger" aria-label={t("common.delete")} onClick={() => remove(e)}><Icon name="trash" /></button>
+                </>
               )}
             </div>
           ))}

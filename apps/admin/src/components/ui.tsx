@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { formatINR, rupeesToPaise, type MessageKey } from "@mausam/shared";
+import { addDays, formatDay, formatINR, rupeesToPaise, type MessageKey } from "@mausam/shared";
 import { ApiError, loadPhoto, uploadPhoto } from "../lib/api";
 import { useT } from "../lib/session";
 import { Icon, type IconName } from "./Icon";
@@ -182,6 +182,38 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/** Previous and next day arrows around the day's name. Tapping the name opens a date picker. */
+export function DayStepper({ date, max, onChange, children }: { date: string; max: string; onChange: (d: string) => void; children?: ReactNode }) {
+  const t = useT();
+  return (
+    <div className="card" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <button className="btn small" aria-label={t("common.prev_day")} onClick={() => onChange(addDays(date, -1))}><Icon name="left" /></button>
+      <div style={{ flex: 1, textAlign: "center" }}>
+        <label style={{ position: "relative", display: "inline-block", cursor: "pointer" }}>
+          <strong>{formatDay(date)}</strong>
+          <input
+            type="date"
+            value={date}
+            max={max}
+            aria-label={t("common.pick_day")}
+            onClick={(e) => {
+              try {
+                e.currentTarget.showPicker();
+              } catch {
+                // older browsers open it themselves
+              }
+            }}
+            onChange={(e) => e.target.value && onChange(e.target.value > max ? max : e.target.value)}
+            style={{ position: "absolute", inset: 0, width: "100%", opacity: 0, cursor: "pointer" }}
+          />
+        </label>
+        {children}
+      </div>
+      <button className="btn small" aria-label={t("common.next_day")} disabled={date >= max} onClick={() => onChange(addDays(date, 1))}><Icon name="chevron" /></button>
+    </div>
+  );
+}
+
 export function Loading() {
   const t = useT();
   return <div className="empty">{t("common.loading")}</div>;
@@ -195,6 +227,22 @@ const KNOWN_ERRORS: Record<string, MessageKey> = {
   wrong_pin: "error.wrong_pin",
   too_many_tries: "error.too_many_tries",
   changed_elsewhere: "error.changed_elsewhere",
+  too_many_reads: "error.too_many_reads",
+  phone_taken: "error.phone_taken",
+  trip_already_open: "error.trip_already_open",
+  trip_closed: "error.trip_closed",
+  linked_entry: "error.linked_entry",
+  future_date: "error.future_date",
+  note_required: "error.note_required",
+  not_allowed: "error.not_allowed",
+  not_found: "error.not_found",
+  too_large: "error.too_large",
+  memo_unavailable: "error.memo_unavailable",
+  memo_failed: "error.memo_failed",
+  cannot_demote_self: "error.cannot_demote_self",
+  wrong_login: "error.wrong_login",
+  invalid: "error.invalid",
+  offline: "error.offline",
 };
 
 type T = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -226,10 +274,15 @@ export function errorKey(code: string | null | undefined): MessageKey {
   return (code && KNOWN_ERRORS[code]) || "common.error";
 }
 
+/** The sentence for any error: a server code, or "no internet" when the request never reached the server. */
+export function errorText(t: T, error: unknown): string {
+  return t(error instanceof ApiError ? errorKey(error.code) : error instanceof TypeError ? "error.offline" : "common.error");
+}
+
 export function ErrorNote({ error }: { error: unknown }) {
   const t = useT();
   if (!error) return null;
-  const msg = t(errorKey(error instanceof ApiError ? error.code : null));
+  const msg = errorText(t, error);
   return <div className="check bad"><Icon name="alert" /><span className="t">{msg}</span></div>;
 }
 

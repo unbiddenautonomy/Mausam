@@ -97,8 +97,8 @@ export async function notify(
         const status = await sendPush(
           t,
           {
-            title: translate(lang, text.title, text.params),
-            body: translate(lang, text.body, text.params),
+            title: translate(lang, text.title, inLang(text.params, lang)),
+            body: translate(lang, text.body, inLang(text.params, lang)),
             url: opts.url ?? "/",
             badge: badges.get(t.role),
             tag: opts.dedupeKey,
@@ -116,10 +116,17 @@ export async function notify(
   return sent;
 }
 
+/** The alert's date written in the reader's language ("Thu, 12 Nov" or the same in Hindi or Kannada). */
+function inLang(params: Record<string, string | number> | undefined, lang: Lang): Record<string, string | number> | undefined {
+  const iso = params?.iso_date;
+  return typeof iso === "string" ? { ...params, date: formatDay(iso, true, lang) } : params;
+}
+
 /** Words for an alert row, used for both the push text and the app. */
 export function alertParams(type: string, date: string, params: Record<string, unknown>): Record<string, string | number> {
   return {
-    date: formatDay(date),
+    date: formatDay(date, true, "en"),
+    iso_date: date,
     count: Number(params.count ?? 0),
     amount: typeof params.amount === "number" ? formatINR(params.amount) : "",
     usual: typeof params.usual === "number" ? formatINR(params.usual) : "",

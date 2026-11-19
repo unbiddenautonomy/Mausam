@@ -4,7 +4,8 @@ import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
 import { CategoryBars } from "../Today";
-import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, CsvButton, csvRupees, ReportFrame, shortDay, type Period } from "./common";
+import { catName } from "../../lib/format";
 
 interface Row {
   business_date: string;
@@ -20,14 +21,14 @@ export function ExpenseReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.expenses")} desc={t("reports.expenses_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const { t, lang } = useSession();
-  const res = useApi<{ from: string; to: string; rows: Row[] }>(`/reports/expenses?days=${days}`);
+  const res = useApi<{ from: string; to: string; rows: Row[] }>(`/reports/expenses?${p.q}`);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const rows = res.data.rows;
@@ -54,6 +55,15 @@ function Body({ days }: { days: Range }) {
         <Stat hero label={t("reports.period_total")} value={formatINR(total)} />
         <Stat label={t("reports.daily_avg")} value={formatINR(Math.round(total / Math.max(1, perDay.size) / 100) * 100)} />
         <Stat label={t("expense.no_receipt")} value={formatINR(noReceipt)} delta={`${Math.round((noReceipt / total) * 100)}%`} />
+      </div>
+      <div>
+        <CsvButton
+          name={`expenses-${p.from}-to-${p.to}`}
+          rows={() => [
+            [t("common.date"), t("expense.category"), name, t("expense.no_receipt")],
+            ...rows.map((r) => [r.business_date, catName(r, lang), csvRupees(r.amount), csvRupees(r.no_receipt)]),
+          ]}
+        />
       </div>
       <div className="cols">
         <section className="section">

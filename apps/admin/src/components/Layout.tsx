@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
-import { LANGUAGES, type Lang } from "@mausam/shared";
+import { formatDay, formatTime, LANGUAGES, type Lang } from "@mausam/shared";
 import { failedEntries, onQueueChange, queueSize } from "../lib/api";
-import { useApi, useOnline } from "../lib/hooks";
+import { useApi, useOnline, useShowingSavedCopy } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { Icon, Logo, type IconName } from "./Icon";
 import { Toaster } from "./ui";
@@ -17,6 +17,7 @@ interface NavItem {
 export function Layout() {
   const { t, user, lang, setLang, signOut } = useSession();
   const online = useOnline();
+  const savedCopyAt = useShowingSavedCopy();
   const location = useLocation();
   const [queued, setQueued] = useState(queueSize());
   const [failed, setFailed] = useState(failedEntries().length);
@@ -98,6 +99,7 @@ export function Layout() {
         </header>
         <main className="main">
           {!online && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.banner")}</div>}
+          {savedCopyAt !== null && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.saved_copy", { time: `${formatDay(new Date(savedCopyAt + 330 * 60_000).toISOString().slice(0, 10), false)} ${formatTime(new Date(savedCopyAt))}` })}</div>}
           {online && queued > 0 && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.queued")} ({queued})</div>}
           {failed > 0 && location.pathname !== "/entries/unsent" && (
             <Link to="/entries/unsent" className="banner bad" style={{ display: "block", marginBottom: 16 }}>{t("unsent.banner", { n: failed })}</Link>

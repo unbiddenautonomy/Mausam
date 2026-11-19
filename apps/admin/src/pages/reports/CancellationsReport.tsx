@@ -1,9 +1,9 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { dateRange, formatDay, formatINR, formatINRShort } from "@mausam/shared";
+import { dateRange, formatDay, formatINR, formatINRShort, formatTime } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { billFlagText, discountReasonText, Empty, ErrorNote, Loading, Pill, Stat } from "../../components/ui";
-import { axisTick, ChartTooltip, ReportFrame, shortDay, type Range } from "./common";
+import { axisTick, ChartTooltip, ReportFrame, shortDay, type Period } from "./common";
 
 interface Totals { cancelled: number; cancelled_n: number; discount: number; discount_n: number }
 interface LeakBill {
@@ -27,14 +27,14 @@ export function CancellationsReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.leaks")} desc={t("reports.leaks_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<Res>(`/reports/leaks?days=${days}`);
+  const res = useApi<Res>(`/reports/leaks?${p.q}`);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const d = res.data;
@@ -52,7 +52,7 @@ function Body({ days }: { days: Range }) {
   const blank = { cancelled: 0, cancelled_n: 0, discount: 0, discount_n: 0, removed: 0, removed_n: 0 };
   const people = new Map(d.people.map((p) => [p.name, { ...blank, ...p }]));
   for (const v of d.void_people ?? []) people.set(v.name, { ...blank, ...people.get(v.name), ...v });
-  const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
+  const time = (iso: string) => formatTime(new Date(iso));
 
   return (
     <>

@@ -40,3 +40,22 @@ describe("alerts", () => {
     expect(await seen(ids[149])).toBe(true);
   });
 });
+
+describe("daily sales report", () => {
+  it("shows a day with POS bills but no closing, marked as from the POS, and takes a 1-day range", async () => {
+    await app.db.prepare("INSERT INTO pos_daily (business_date, total, cash, online, bills, source) VALUES ('2026-10-05', 500000, 200000, 300000, 12, 'pos')").run();
+    const r = await app.call(owner, "GET", "/reports/daily?to=2026-10-05&days=1");
+    expect(r.status).toBe(200);
+    expect(r.json.from).toBe("2026-10-05");
+    expect(r.json.days).toEqual([expect.objectContaining({ business_date: "2026-10-05", total_counter: 500000, cash: 200000, online: 300000, from_pos: true, flags: [] })]);
+  });
+});
+
+describe("settings", () => {
+  it("refuses numbers out of range", async () => {
+    expect((await app.call(owner, "PUT", "/settings", { lock_hour: 24 })).json).toMatchObject({ error: "invalid", detail: { field: "lock_hour" } });
+    expect((await app.call(owner, "PUT", "/settings", { cash_tolerance: 5_00_00_000 })).status).toBe(422);
+    const ok = await app.call(owner, "PUT", "/settings", { lock_hour: 9, shopping_tolerance: 10000 });
+    expect(ok.json.settings).toMatchObject({ lock_hour: 9, shopping_tolerance: 10000 });
+  });
+});

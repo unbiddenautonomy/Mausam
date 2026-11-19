@@ -69,3 +69,57 @@ describe("double saves", () => {
     expect(await count("audit_log")).toBeGreaterThanOrEqual(5);
   });
 });
+
+describe("expenses and shopping trips", () => {
+  const catId = async () => (await app.db.prepare("SELECT id FROM expense_categories WHERE active = 1 ORDER BY id LIMIT 1").first<{ id: number }>())!.id;
+
+  it("lets the person who entered an expense fix it, with an audit row", async () => {
+    const category_id = await catId();
+    const made = await app.call(manager, "POST", "/expenses", { category_id, amount: 12000, has_receipt: false, note: "milk" });
+    expect(made.status).toBe(201);
+    const id = made.json.expense.id;
+    const fixed = await app.call(manager, "PUT", `/expenses/${id}`, { category_id, amount: 21000, mode: "online", has_receipt: false, note: "milk, 2 days" });
+    expect(fixed.status).toBe(200);
+    expect(fixed.json.expense).toMatchObject({ amount: 21000, mode: "online", note: "milk, 2 days", business_date: made.json.expense.business_date });
+    const row = await app.db.prepare("SELECT action FROM audit_log WHERE table_name = 'expenses' AND row_id = ? ORDER BY id DESC").bind(id).first<{ action: string }>();
+    expect(row!.action).toBe("update");
+    expect((await app.call(manager, "GET", `/expenses/${id}`)).json.expense.amount).toBe(21000);
+  });
+
+  it("refuses a new bill on a finished trip, and lets a manager finish yesterday's trip after the day locks", async () => {
+    const category_id = await catId();
+    const old = "2026-01-10";
+    const r = await app.db.prepare("INSERT INTO shopping_trips (business_date, manager_id, float_out) SELECT ?, id, 500000 FROM users WHERE name = 'Vikram'").bind(old).run();
+    const tripId = Number(r.meta.last_row_id);
+    const today = await app.call(manager, "GET", "/today");
+    expect(today.json.shopping.stale_trip).toMatchObject({ id: tripId, business_date: old, manager_name: "Vikram" });
+    const done = await app.call(manager, "POST", `/shopping/${tripId}/close`, { float_back: 500000 });
+    expect(done.status).toBe(200);
+    expect((await app.call(manager, "GET", "/today")).json.shopping.stale_trip).toBeNull();
+    // Once finished, the locked day applies again: a manager can't redo it.
+    expect((await app.call(manager, "POST", `/shopping/${tripId}/close`, { float_back: 0, note: "x" })).status).toBe(409);
+    const late = await app.call(owner, "POST", "/expenses", { category_id, amount: 5000, has_receipt: false, trip_id: tripId, business_date: old });
+    expect(late.status).toBe(409);
+    expect(late.json.error).toBe("trip_closed");
+  });
+});
+
+describe("closing alerts", () => {
+  it("settles the flag alert once a later edit clears the flags", async () => {
+    // Today's closing, so it isn't late (a late closing keeps its flag).
+    const date = businessDate();
+    const base = (await app.call(owner, "GET", `/closes/${date}`)).json.close?.updated_at ?? null;
+    // Match the cash expenses other tests entered today, so only the POS figure differs.
+    const spent: number = (await app.call(owner, "GET", "/today")).json.expenses.total;
+    const ok = { total_counter: 100000 + spent, cash: 60000, online: 40000, expenses: spent };
+    // The POS says 9,000 but the counter says 1,000: a serious flag.
+    const flagged = await app.call(owner, "PUT", `/closes/${date}`, { ...ok, pos_sales: 900000, base_updated_at: base });
+    expect(flagged.status).toBe(200);
+    expect(flagged.json.close.flags.map((f: { code: string }) => f.code)).toContain("pos_differs");
+    const alert = () => app.db.prepare("SELECT seen_at FROM alerts WHERE type = 'close_flag' AND business_date = ?").bind(date).first<{ seen_at: string | null }>();
+    expect((await alert())!.seen_at).toBeNull();
+    const fixed = await app.call(owner, "PUT", `/closes/${date}`, { ...ok, pos_sales: ok.total_counter, base_updated_at: flagged.json.close.updated_at });
+    expect(fixed.status).toBe(200);
+    expect((await alert())!.seen_at).not.toBeNull();
+  });
+});

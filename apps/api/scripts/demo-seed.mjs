@@ -181,12 +181,10 @@ for (let i = 35; i >= 1; i--) {
   const posTotal = i === 8 ? total + 120_000 : total;
   out.push(`INSERT INTO pos_daily (business_date, total, cash, online, bills) VALUES (${q(d)}, ${posTotal}, ${posTotal - online}, ${online}, ${Math.round(total / 45000)});`);
   if (i === 8) out.push(`UPDATE day_closes SET pos_sales = ${posTotal}, flags = ${q(JSON.stringify([...flags, { code: "pos_differs", diff: -120_000 }]))} WHERE business_date = ${q(d)};`);
-  let itemsTotal = 0;
   const scale = total / 100 / weightSum;
   for (const [name, catName, price, w] of menu) {
     const qty = Math.max(0, Math.round(w * scale * (0.75 + rand() * 0.5) * (catName === "South Indian" && (dow === 0 || dow === 6) ? 1.6 : 1)));
     if (!qty) continue;
-    itemsTotal += qty * price * 100;
     out.push(`INSERT INTO pos_items (business_date, item, category, qty, amount) VALUES (${q(d)}, ${q(name)}, ${q(catName)}, ${qty}, ${qty * price * 100});`);
   }
   if (flags.some((f) => f.code === "formula_mismatch")) out.push(`INSERT INTO alerts (type, business_date, severity, params) VALUES ('close_flag', ${q(d)}, 'warn', '{"count":1}');`);

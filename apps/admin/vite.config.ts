@@ -1,4 +1,5 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
@@ -41,8 +42,31 @@ function ocrFiles(): Plugin {
   };
 }
 
+/**
+ * Names the service worker's cache after this build, so each new build starts a fresh cache and the old one, with
+ * last build's files, is deleted when the new worker takes over.
+ */
+function versionServiceWorker(): Plugin {
+  let outDir = "dist";
+  return {
+    name: "mausam-sw-version",
+    apply: "build",
+    configResolved(c) {
+      outDir = c.build.outDir.startsWith("/") ? c.build.outDir : join(c.root, c.build.outDir);
+    },
+    writeBundle(_options, bundle) {
+      const file = join(outDir, "sw.js");
+      const version = createHash("sha1").update(Object.keys(bundle).sort().join("\n")).digest("hex").slice(0, 10);
+      const src = readFileSync(file, "utf8");
+      const out = src.replace(/(const CACHE = "mausam-[a-z]+-)v1"/, `$1${version}"`);
+      if (out === src) throw new Error("sw.js: cache name not found");
+      writeFileSync(file, out);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), ocrFiles()],
+  plugins: [react(), ocrFiles(), versionServiceWorker()],
   server: {
     host: true,
     // In development the API runs on wrangler (port 8787)

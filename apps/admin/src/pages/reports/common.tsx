@@ -1,23 +1,101 @@
 import { useState, type ReactNode } from "react";
-import { formatDay, formatINR } from "@mausam/shared";
+import { addDays, businessDate, formatDay, formatINR } from "@mausam/shared";
 import { useSession } from "../../lib/session";
-import { PageHead, Segmented } from "../../components/ui";
+import { PageHead } from "../../components/ui";
 
-export const RANGES = ["7", "30", "90"] as const;
+export const RANGES = ["7", "30", "90", "month", "last_month", "custom"] as const;
 export type Range = (typeof RANGES)[number];
 
+/** The dates a report covers. `q` is the query the server takes: to=YYYY-MM-DD&days=N. */
+export interface Period { from: string; to: string; days: number; q: string }
+
+const dayCount = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+
+/** A period from two dates (swapped if the wrong way round, at most 366 days, never past today). */
+export function periodOf(from: string, to: string, today = businessDate()): Period {
+  if (to > today) to = today;
+  if (from > to) [from, to] = [to, from];
+  if (dayCount(from, to) > 366) from = addDays(to, -365);
+  const days = dayCount(from, to);
+  return { from, to, days, q: `to=${to}&days=${days}` };
+}
+
+/** The same period with `n` more days before it (for running averages). */
+export function widen(p: Period, n: number): Period {
+  return periodOf(addDays(p.from, -n), p.to);
+}
+
+/** Turns a choice into dates: the last 7/30/90 days, this month so far, last month, or two picked dates. */
+export function rangePeriod(r: Range, custom: { from: string; to: string }, today = businessDate()): Period {
+  if (r === "month") return periodOf(today.slice(0, 8) + "01", today, today);
+  if (r === "last_month") {
+    const end = addDays(today.slice(0, 8) + "01", -1);
+    return periodOf(end.slice(0, 8) + "01", end, today);
+  }
+  if (r === "custom") return periodOf(custom.from, custom.to, today);
+  return periodOf(addDays(today, -(Number(r) - 1)), today, today);
+}
+
 /** Every report page has the same frame: title, one period control, then its content. */
-export function ReportFrame({ title, desc, children }: { title: string; desc: string; children: (days: Range) => ReactNode }) {
+export function ReportFrame({ title, desc, children }: { title: string; desc: string; children: (p: Period) => ReactNode }) {
   const t = useSession().t;
-  const [days, setDays] = useState<Range>("30");
+  const today = businessDate();
+  const [range, setRange] = useState<Range>("30");
+  const [custom, setCustom] = useState({ from: addDays(today, -29), to: today });
+  const p = rangePeriod(range, custom, today);
+  const label = (r: Range) => (r === "month" ? t("reports.this_month") : r === "last_month" ? t("reports.last_month") : r === "custom" ? t("reports.custom") : t("reports.days", { n: r }));
   return (
     <div className="page">
       <PageHead title={title} subtitle={desc} back="/reports" />
-      <div style={{ maxWidth: 420 }}>
-        <Segmented<Range> value={days} onChange={setDays} options={RANGES.map((r) => ({ value: r, label: t("reports.days", { n: r }) }))} />
+      <div className="row-wrap" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", maxWidth: 560 }}>
+        <select className="input" style={{ width: "auto" }} value={range} onChange={(e) => setRange(e.target.value as Range)} aria-label={t("reports.period")}>
+          {RANGES.map((r) => <option key={r} value={r}>{label(r)}</option>)}
+        </select>
+        {range === "custom" ? (
+          <>
+            <input type="date" className="input" style={{ width: "auto" }} value={custom.from} max={today} aria-label={t("reports.date_from")} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, from: e.target.value }))} />
+            <input type="date" className="input" style={{ width: "auto" }} value={custom.to} max={today} aria-label={t("reports.to")} onChange={(e) => e.target.value && setCustom((c) => ({ ...c, to: e.target.value }))} />
+          </>
+        ) : (
+          <span className="muted small">{formatDay(p.from, false)} – {formatDay(p.to, false)}</span>
+        )}
       </div>
-      {children(days)}
+      {children(p)}
     </div>
+  );
+}
+
+/** Paise as rupees with two decimals, for a spreadsheet ("1234.50"). */
+export const csvRupees = (paise: number | null | undefined) => (paise === null || paise === undefined ? "" : (paise / 100).toFixed(2));
+
+/** Turns rows into CSV text. Starts with a byte-order mark so Excel reads ₹ and Indian scripts. */
+export function toCsv(rows: (string | number | null | undefined)[][]): string {
+  const cell = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return "\ufeff" + rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+}
+
+/** Downloads rows (the first is the header) as a CSV file. */
+export function downloadCsv(name: string, rows: (string | number | null | undefined)[][]): void {
+  const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name.endsWith(".csv") ? name : `${name}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** A small "Download CSV" button. */
+export function CsvButton({ name, rows }: { name: string; rows: () => (string | number | null | undefined)[][] }) {
+  const t = useSession().t;
+  return (
+    <button type="button" className="btn small" onClick={() => downloadCsv(name, rows())}>
+      {t("reports.download_csv")}
+    </button>
   );
 }
 

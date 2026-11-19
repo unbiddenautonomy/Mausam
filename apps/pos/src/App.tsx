@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { businessDate, changeDue, financialYear, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
+import { businessDate, changeDue, financialYear, formatINR, formatTime, LANGUAGES, setDateLang, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
 import { api, ApiError, fetchConfig, fetchDay, claimCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
+import { ordersDelay, usePolling } from "./polling";
 import {
   addItem, billNumbersFull, clockOffMinutes, DISCOUNT_REASONS, keepStorage, onStorageChange, serverNow, storageBroken, overDiscountLimit, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Approver, type Bill, type Choice, type DiscountReason, type PosSettings, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
@@ -25,15 +26,18 @@ type PrintJob =
   | { kind: "items"; date: string; bills: Bill[] };
 
 const SYNC_EVERY_MS = 20_000;
-/** How often a screen checks for the other screens' order changes. */
-const ORDERS_EVERY_MS = 4_000;
 const CONFIG_EVERY_MS = 10 * 60_000;
 
 export function App() {
-  const [lang, setLangState] = useState<Lang>(storage.lang());
+  const [lang, setLangState] = useState<Lang>(() => {
+    const l = storage.lang();
+    setDateLang(l);
+    return l;
+  });
   const t: T = useCallback((k, p) => translate(lang, k, p), [lang]);
   const setLang = (l: Lang) => {
     storage.setLang(l);
+    setDateLang(l);
     setLangState(l);
     document.documentElement.lang = l;
   };
@@ -202,11 +206,29 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
       storage.setOrders(next);
       return next;
     });
+  // When someone last tapped this screen or an order changed anywhere: a busy screen checks for orders every few
+  // seconds, an idle one every half minute or so.
+  const lastActive = useRef(Date.now());
+  const replanOrders = useRef<() => void>(() => {});
+  const markActive = useCallback(() => {
+    lastActive.current = Date.now();
+    replanOrders.current();
+  }, []);
+  useEffect(() => {
+    window.addEventListener("pointerdown", markActive);
+    window.addEventListener("keydown", markActive);
+    return () => {
+      window.removeEventListener("pointerdown", markActive);
+      window.removeEventListener("keydown", markActive);
+    };
+  }, [markActive]);
+
   /** Sends this screen's order changes and takes in the other screens'. */
   const shareOrders = useCallback(async () => {
     try {
       const remote = await syncOrders();
       if (!remote.length) return;
+      markActive();
       setOrdersState((prev) => {
         const next = mergeRemote(prev, remote);
         if (next !== prev) storage.setOrders(next);
@@ -215,7 +237,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onLogout();
     }
-  }, [onLogout]);
+  }, [onLogout, markActive]);
   const refreshBills = () => setBillsState(storage.bills());
 
   const loadConfig = useCallback(async () => {
@@ -248,19 +270,21 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     refreshBills();
   };
 
+  // Nothing polls while the screen is hidden; each check runs at once when it shows again. Bill sync only calls the
+  // server when a bill is waiting.
+  replanOrders.current = usePolling(shareOrders, () => ordersDelay(lastActive.current, Date.now()));
+  usePolling(sync, () => SYNC_EVERY_MS);
+  usePolling(loadConfig, () => CONFIG_EVERY_MS);
   useEffect(() => {
     void loadConfig();
     void sync();
-    const a = window.setInterval(() => void sync(), SYNC_EVERY_MS);
-    const d = window.setInterval(() => void shareOrders(), ORDERS_EVERY_MS);
-    const b = window.setInterval(() => void loadConfig(), CONFIG_EVERY_MS);
     const c = window.setInterval(() => setNow(Date.now()), 30_000);
     const on = () => (setOnline(true), void sync(), void shareOrders());
     const off = () => setOnline(false);
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
     return () => {
-      [a, b, c, d].forEach(window.clearInterval);
+      window.clearInterval(c);
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
     };
@@ -270,9 +294,10 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   useEffect(() => {
     const pushed = storage.pushed();
     if (!orders.some((o) => o.updated_at && pushed[o.id] !== o.updated_at) && !storage.closed().length) return;
+    markActive();
     const id = window.setTimeout(() => void shareOrders(), 400);
     return () => window.clearTimeout(id);
-  }, [orders, shareOrders]);
+  }, [orders, shareOrders, markActive]);
 
   // The order open here was paid or cancelled on another screen.
   useEffect(() => {
@@ -634,7 +659,10 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
   }
   function bill() {
     const b = onBill("Duplicate");
-    if (b && !printing) (setBillPreview(b), setDialog("bill"));
+    if (b && !printing) {
+      setBillPreview(b);
+      setDialog("bill");
+    }
   }
   const pay = () => setDialog(missingWaiter ? "waiter_then_pay" : "pay");
 
@@ -1124,7 +1152,7 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
   useEffect(() => {
     if (!online) return;
     let live = true;
-    const load = () => fetchDay(date).then((b) => live && setShared(b)).catch(() => {});
+    const load = () => !document.hidden && fetchDay(date).then((b) => live && setShared(b)).catch(() => {});
     load();
     const id = window.setInterval(load, 30_000);
     return () => {
@@ -1189,7 +1217,7 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
           <button className={`bill-row${b.status === "cancelled" ? " cancelled" : ""}`} onClick={() => onOpen(b)} title={printing ? t("reprint") : t("view_bill")}>
             <span className="num">{b.bill_no}</span>
             <span>{orderLabel({ type: b.order_type, table_name: b.table_name, token: b.token }, t)}</span>
-            <span className="muted">{new Date(b.closed_at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" })}</span>
+            <span className="muted">{formatTime(new Date(b.closed_at))}</span>
             <span className="muted">{b.status === "cancelled" ? `${t("cancelled")}: ${b.cancel_reason}` : b.payments.map((p) => t(p.mode as Key)).join(" + ")}</span>
             <strong className="num">{formatINR(b.total)}</strong>
             <span className={`sync ${b.synced ? "ok" : b.rejected ? "bad" : "wait"}`}>{b.synced ? "✓" : b.rejected ? "!" : "…"}</span>

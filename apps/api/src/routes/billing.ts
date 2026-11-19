@@ -980,7 +980,7 @@ billing.get("/waiters/report", async (c) => {
     `SELECT b.waiter_staff_id AS waiter_id, COALESCE(s.name, MAX(b.waiter_name)) AS name, s.waiter_code, b.business_date,
        COUNT(*) AS bills, SUM(b.total) AS sales, SUM(b.total - b.tax) AS before_tax, SUM(b.commission) AS commission
      FROM pos_bills b LEFT JOIN staff s ON s.id = b.waiter_staff_id
-     WHERE b.status = 'paid' AND b.business_date LIKE ? || '-%'
+     WHERE b.status = 'paid' AND b.business_date BETWEEN ?1 || '-01' AND ?1 || '-31'
      GROUP BY b.waiter_staff_id, b.business_date
      ORDER BY b.business_date`,
   ).bind(month).all();

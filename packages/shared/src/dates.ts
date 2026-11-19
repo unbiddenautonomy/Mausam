@@ -1,3 +1,4 @@
+import type { Lang } from "./types";
 // The restaurant closes around 1–1:30 am, so a "business day" runs from 5 am to 5 am India time.
 // Everything is stored against a business date string: "YYYY-MM-DD".
 
@@ -61,12 +62,65 @@ export function dateRange(from: string, to: string): string[] {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** "2026-11-12" -> "Thu, 12 Nov" */
-export function formatDay(date: string, withWeekday = true): string {
+const LOCALES: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", kn: "kn-IN" };
+let dateLang: Lang = "en";
+
+/** The language dates and times are written in when a caller does not name one. The admin app sets it with the screen language. */
+export function setDateLang(lang: Lang): void {
+  dateLang = lang;
+}
+
+/** The Intl locale for a language, e.g. "hi-IN". */
+export function dateLocale(lang: Lang = dateLang): string {
+  return LOCALES[lang] ?? "en-IN";
+}
+
+function intl(date: string, lang: Lang, opts: Intl.DateTimeFormatOptions): string | null {
+  try {
+    return new Intl.DateTimeFormat(LOCALES[lang], { ...opts, timeZone: "UTC" }).format(new Date(date + "T00:00:00Z"));
+  } catch {
+    return null; // no locale data: fall back to English
+  }
+}
+
+/** "2026-11-12" -> "Thu, 12 Nov" (or the same in Hindi or Kannada) */
+export function formatDay(date: string, withWeekday = true, lang: Lang = dateLang): string {
+  if (lang !== "en") {
+    const out = intl(date, lang, withWeekday ? { weekday: "short", day: "numeric", month: "short" } : { day: "numeric", month: "short" });
+    if (out) return out;
+  }
   const m = Number(date.slice(5, 7));
   const d = Number(date.slice(8, 10));
   const label = `${d} ${MONTHS[m - 1]}`;
   return withWeekday ? `${DAYS[dayOfWeek(date)]}, ${label}` : label;
+}
+
+/** "2026-11-12" -> "Thu" */
+export function weekdayShort(date: string, lang: Lang = dateLang): string {
+  return (lang !== "en" && intl(date, lang, { weekday: "short" })) || DAYS[dayOfWeek(date)];
+}
+
+/** Weekday names Sunday first, e.g. for a week grid. */
+export function weekdayNames(lang: Lang = dateLang): string[] {
+  // 2026-11-01 is a Sunday.
+  return [0, 1, 2, 3, 4, 5, 6].map((i) => weekdayShort(addDays("2026-11-01", i), lang));
+}
+
+/** A moment shown as India time of day, e.g. "4:21 pm". */
+export function formatTime(at: Date | string, lang: Lang = dateLang): string {
+  const d = typeof at === "string" ? new Date(at.includes("T") || at.endsWith("Z") ? at : at.replace(" ", "T") + "Z") : at;
+  return d.toLocaleTimeString(dateLocale(lang), { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+}
+
+/** An hour of the day (0 to 23) as a short label, e.g. "9 pm". */
+export function formatHour(hour: number, lang: Lang = dateLang): string {
+  return new Date(Date.UTC(2000, 0, 1, hour)).toLocaleTimeString(dateLocale(lang), { hour: "numeric", timeZone: "UTC" });
+}
+
+/** "01:45" -> "1:45 am" */
+export function formatClock(hhmm: string, lang: Lang = dateLang): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(Date.UTC(2000, 0, 1, h || 0, m || 0)).toLocaleTimeString(dateLocale(lang), { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
 }
 
 /** Month-close window: 27th to 3rd. Returns the month (YYYY-MM) being closed, or null outside the window. */

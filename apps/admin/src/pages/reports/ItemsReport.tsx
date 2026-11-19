@@ -2,7 +2,7 @@ import { formatINR } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Empty, ErrorNote, Loading, Stat } from "../../components/ui";
-import { BarList, ReportFrame, type Range } from "./common";
+import { BarList, ReportFrame, type Period } from "./common";
 
 interface Item { item: string; category: string | null; qty: number; amount: number; days: number }
 
@@ -10,16 +10,16 @@ export function ItemsReport() {
   const t = useSession().t;
   return (
     <ReportFrame title={t("reports.items")} desc={t("reports.items_desc")}>
-      {(days) => <Body days={days} />}
+      {(p) => <Body p={p} />}
     </ReportFrame>
   );
 }
 
 const qtyFmt = (q: number) => (Number.isInteger(q) ? String(q) : q.toFixed(1));
 
-function Body({ days }: { days: Range }) {
+function Body({ p }: { p: Period }) {
   const t = useSession().t;
-  const res = useApi<{ days_with_data: number; items: Item[]; categories: { category: string; amount: number }[] }>(`/analytics/items?days=${days}`);
+  const res = useApi<{ days_with_data: number; items: Item[]; categories: { category: string; amount: number }[] }>(`/analytics/items?${p.q}`);
   if (res.error) return <ErrorNote error={res.error} />;
   if (!res.data) return <Loading />;
   const { items, categories, days_with_data } = res.data;

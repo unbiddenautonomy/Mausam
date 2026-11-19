@@ -135,21 +135,23 @@ describe("pos import", () => {
 
 import * as fs from "node:fs";
 
-describe("Kannada", () => {
-  // Kannada is the third language: every admin and POS string has a Kannada version.
+describe("Hindi and Kannada", () => {
+  // Every admin and POS string has a Hindi and a Kannada version.
   // Printed bill labels on the POS stay English on purpose (GST bills).
   const keys = (src: string, name: string) => {
     const i = src.indexOf(`const ${name}`);
-    return new Set([...src.slice(i, src.indexOf("\n};", i)).matchAll(/^\s+"([\w.]+)":/gm)].map((m) => m[1]));
+    return new Set([...src.slice(i, src.indexOf("\n}", i)).matchAll(/^\s+"([\w.]+)":/gm)].map((m) => m[1]));
   };
-  it("covers every admin and POS string", () => {
-    const bill = ["app.name", "app.title", "bill_no", "date", "table", "qty", "rate", "amount", "gstin", "cgst", "sgst"];
-    for (const file of [new URL("./i18n.ts", import.meta.url), new URL("../../../apps/pos/src/i18n.ts", import.meta.url)]) {
-      const src = fs.readFileSync(file, "utf8");
-      const kn = keys(src, "kn");
-      expect([...keys(src, "en")].filter((k) => !kn.has(k) && !bill.includes(k))).toEqual([]);
-    }
-  });
+  const bill = ["app.name", "app.title", "bill_no", "date", "table", "qty", "rate", "amount", "gstin", "cgst", "sgst"];
+  for (const lang of ["hi", "kn"]) {
+    it(`covers every admin and POS string in ${lang}`, () => {
+      for (const file of [new URL("./i18n.ts", import.meta.url), new URL("../../../apps/pos/src/i18n.ts", import.meta.url)]) {
+        const src = fs.readFileSync(file, "utf8");
+        const have = keys(src, lang);
+        expect([...keys(src, "en")].filter((k) => !have.has(k) && !bill.includes(k))).toEqual([]);
+      }
+    });
+  }
 });
 
 import { percentToBp, waiterCommission } from "./billing";
@@ -181,5 +183,28 @@ describe("reminder recipients", () => {
     expect(parseUserList("3, 5,3,x,0,-1")).toEqual([3, 5]);
     expect(parseUserList("")).toEqual([]);
     expect(parseUserList(null)).toEqual([]);
+  });
+});
+
+import { formatClock, formatDay as fmtDay, formatHour, formatTime, setDateLang, weekdayNames } from "./dates";
+
+describe("dates in each language", () => {
+  it("keeps English as before and writes Hindi and Kannada with their own names", () => {
+    expect(fmtDay("2026-11-12")).toBe("Thu, 12 Nov");
+    expect(fmtDay("2026-11-12", false)).toBe("12 Nov");
+    expect(fmtDay("2026-11-12", true, "hi")).toMatch(/गुरु/);
+    expect(fmtDay("2026-11-12", true, "kn")).toMatch(/ಗುರು/);
+    expect(weekdayNames("en")).toEqual(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+  });
+  it("follows the screen language when none is given", () => {
+    setDateLang("hi");
+    expect(fmtDay("2026-11-12")).not.toMatch(/Thu/);
+    setDateLang("en");
+    expect(fmtDay("2026-11-12")).toBe("Thu, 12 Nov");
+  });
+  it("shows times in India time", () => {
+    expect(formatTime("2026-11-13 22:51:39", "en")).toBe("4:21 am");
+    expect(formatHour(21, "en")).toBe("9 pm");
+    expect(formatClock("01:45", "en")).toBe("1:45 am");
   });
 });
