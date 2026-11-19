@@ -18,7 +18,7 @@ export const billing = new Hono<AppEnv>();
 const POS_SETTING_KEYS = [
   "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
   "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required", "pos_bill_copies",
-  "pos_discount_limit_pct",
+  "pos_discount_limit_pct", "pos_discount_limit_paise",
 ] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
 
@@ -42,6 +42,8 @@ export interface PosSettings {
   bill_copies: number;
   /** The biggest discount staff may give on their own, as a % of the bill. More needs a manager's or the owner's PIN. 100 = no limit. */
   discount_limit_pct: number;
+  /** The biggest discount staff may give on their own, in paise (10000 = ₹100). 0 = no rupee limit. Over this or the % needs a PIN. */
+  discount_limit_paise: number;
 }
 
 async function loadPosSettings(db: D1Database): Promise<PosSettings> {
@@ -63,6 +65,7 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     waiter_required: (m.pos_waiter_required ?? "1") === "1",
     bill_copies: Math.min(Math.max(Number(m.pos_bill_copies ?? 2) || 2, 1), 3),
     discount_limit_pct: Math.min(Math.max(Number(m.pos_discount_limit_pct ?? 100) || 0, 0), 100),
+    discount_limit_paise: Math.max(Number(m.pos_discount_limit_paise ?? 0) || 0, 0),
   };
 }
 
@@ -143,7 +146,7 @@ const BILL_NO_RE = /^[A-Z0-9]{1,3}\d{4}-\d{5}$/;
 /** Checks one bill from the counter and returns the statements that save it, or a reason it's refused. */
 interface WaiterInfo { name: string; is_waiter: number; commission_bp: number | null }
 interface BillCtx {
-  waiters: Map<number, WaiterInfo>; defaultBp: number; discountLimitPct: number;
+  waiters: Map<number, WaiterInfo>; defaultBp: number; discountLimitPct: number; discountLimitPaise: number;
   /** Every price a menu item can be billed at today: its own or a variation's, with or without each add-on. */
   prices: Map<number, Set<number>>;
   /** The business day now, for spotting bills dated in the future or more than a week back. */
@@ -166,6 +169,7 @@ async function billCtx(db: D1Database): Promise<BillCtx> {
   }
   return {
     waiters: new Map(results.map((r) => [r.id, r])), defaultBp: settings.commission_bp, discountLimitPct: settings.discount_limit_pct,
+    discountLimitPaise: settings.discount_limit_paise,
     prices, today: businessDate(),
   };
 }
@@ -183,8 +187,9 @@ function billFlags(
   const flags: string[] = [];
   if (b.lines.some((l) => l.item_id !== null && ctx.prices.has(l.item_id) && !ctx.prices.get(l.item_id)!.has(l.price))) flags.push("price_changed");
   if (b.business_date > ctx.today || b.business_date < addDays(ctx.today, -7)) flags.push("odd_date");
-  const limit = Math.round((b.subtotal * ctx.discountLimitPct) / 100);
-  if (role === "staff" && ctx.discountLimitPct < 100 && b.discount > limit && b.approvedBy === null) flags.push("discount_over_limit");
+  const overPct = ctx.discountLimitPct < 100 && b.discount > Math.round((b.subtotal * ctx.discountLimitPct) / 100);
+  const overRupees = ctx.discountLimitPaise > 0 && b.discount > ctx.discountLimitPaise;
+  if (role === "staff" && (overPct || overRupees) && b.approvedBy === null) flags.push("discount_over_limit");
   return flags;
 }
 
@@ -902,6 +907,11 @@ billing.put("/settings", async (c) => {
     const r = int(b.discount_limit_pct, 0, 100);
     if (r === null) throw new HttpError(422, "invalid", { field: "discount_limit_pct" });
     updates.push(["pos_discount_limit_pct", String(r)]);
+  }
+  if (b.discount_limit_paise !== undefined) {
+    const r = int(b.discount_limit_paise, 0, 10_000_000);
+    if (r === null) throw new HttpError(422, "invalid", { field: "discount_limit_paise" });
+    updates.push(["pos_discount_limit_paise", String(r)]);
   }
   if (b.commission_bp !== undefined) {
     const r = int(b.commission_bp, 0, 10000);

@@ -17,7 +17,7 @@ let full = false;
   length: 0,
 };
 
-const { addItem, billNumbersFull, clockOffMinutes, readyToResend, noteServerTime, onStorageChange, overDiscountLimit, serverNow, storageBroken, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, billNumbersFull, clockOffMinutes, readyToResend, noteServerTime, onStorageChange, overDiscountLimit, discountLimit, serverNow, storageBroken, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -250,6 +250,17 @@ describe("discounts", () => {
     expect(overDiscountLimit(1000, 10000, { discount_limit_pct: 10 }, "staff")).toBe(false);
     expect(overDiscountLimit(5000, 10000, { discount_limit_pct: 10 }, "manager")).toBe(false);
     expect(overDiscountLimit(5000, 10000, {}, "staff")).toBe(false);
+  });
+
+  it("limits staff to a rupee amount too, whichever limit is lower", () => {
+    const s = { discount_limit_pct: 100, discount_limit_paise: 10000 };
+    expect(overDiscountLimit(10000, 50000, s, "staff")).toBe(false);
+    expect(overDiscountLimit(10100, 50000, s, "staff")).toBe(true);
+    expect(overDiscountLimit(20000, 50000, s, "manager")).toBe(false);
+    expect(discountLimit(50000, s)).toBe(10000);
+    expect(discountLimit(50000, { discount_limit_pct: 10, discount_limit_paise: 10000 })).toBe(5000);
+    expect(discountLimit(500000, { discount_limit_pct: 10, discount_limit_paise: 10000 })).toBe(10000);
+    expect(discountLimit(50000, { discount_limit_pct: 100, discount_limit_paise: 0 })).toBeNull();
   });
 
   it("carries the reason and who allowed it onto the bill, only when there is a discount", () => {

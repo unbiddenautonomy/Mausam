@@ -5,7 +5,7 @@ import { api, ApiError, fetchConfig, fetchDay, claimCounter, logout, nextToken, 
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
-  addItem, billNumbersFull, clockOffMinutes, DISCOUNT_REASONS, keepStorage, onStorageChange, serverNow, storageBroken, overDiscountLimit, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, billNumbersFull, clockOffMinutes, DISCOUNT_REASONS, keepStorage, onStorageChange, serverNow, storageBroken, overDiscountLimit, discountLimit, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Approver, type Bill, type Choice, type DiscountReason, type PosSettings, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -1090,7 +1090,7 @@ function DiscountDialog({ t, subtotal, current, currentReason, settings, approve
     return (
       <div className="overlay" role="dialog" aria-modal="true">
         <div className="dialog">
-          <h2>{t("discount_needs_pin", { pct: settings.discount_limit_pct ?? 100 })}</h2>
+          <h2>{t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })}</h2>
           {offline ? <p>{t("discount_offline")}</p> : (
             <>
               <p className="muted">{t("discount_who")}</p>
@@ -1126,7 +1126,7 @@ function DiscountDialog({ t, subtotal, current, currentReason, settings, approve
         <div className="reason-grid">
           {DISCOUNT_REASONS.map((r) => <button key={r} className={`chip${reason === r ? " on" : ""}`} onClick={() => setReason(r)}>{t(`dr.${r}`)}</button>)}
         </div>
-        {over && <p className="muted small">{t("discount_needs_pin", { pct: settings.discount_limit_pct ?? 100 })}</p>}
+        {over && <p className="muted small">{t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })}</p>}
         <div className="actions-row">
           <button className="btn big" onClick={() => onDone(0, null, null)}>{t("remove")}</button>
           <button className="btn big" onClick={onClose}>{t("close")}</button>
