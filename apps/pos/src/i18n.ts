@@ -97,6 +97,7 @@ const en = {
   "sgst": "SGST",
   "logged_out_note": "Open orders and unsent bills stay on this counter.",
   "rejected": "Bills refused by the server: {n}. Tell the owner.",
+  "numbers_full": "This counter has used all its bill numbers for this year, so it can't print more bills. Tell the owner.",
   "orders": "Orders",
   "new_table_order": "New table order",
   "open_orders": "Open orders",
@@ -268,6 +269,7 @@ const hi: Dict = {
   "bill_printed": "बिल प्रिंट हुआ",
   "cash_pay": "कैश / पेमेंट",
   "hold_count": "होल्ड ({n})",
+  "numbers_full": "इस काउंटर ने इस साल के सारे बिल नंबर इस्तेमाल कर लिए हैं, इसलिए और बिल नहीं बन सकते। मालिक को बताएं।",
 };
 
 const kn: Dict = {
@@ -355,6 +357,7 @@ const kn: Dict = {
   "items": "{n} ಐಟಂಗಳು",
   "logged_out_note": "ತೆರೆದ ಆರ್ಡರ್‌ಗಳು ಮತ್ತು ಕಳುಹಿಸದ ಬಿಲ್‌ಗಳು ಈ ಕೌಂಟರ್‌ನಲ್ಲೇ ಉಳಿಯುತ್ತವೆ.",
   "rejected": "ಸರ್ವರ್ ತಿರಸ್ಕರಿಸಿದ ಬಿಲ್‌ಗಳು: {n}. ಮಾಲೀಕರಿಗೆ ತಿಳಿಸಿ.",
+  "numbers_full": "ಈ ಕೌಂಟರ್ ಈ ವರ್ಷದ ಎಲ್ಲಾ ಬಿಲ್ ಸಂಖ್ಯೆಗಳನ್ನು ಬಳಸಿದೆ, ಹಾಗಾಗಿ ಇನ್ನು ಬಿಲ್ ಮಾಡಲು ಆಗುವುದಿಲ್ಲ. ಮಾಲೀಕರಿಗೆ ತಿಳಿಸಿ.",
   "orders": "ಆರ್ಡರ್‌ಗಳು",
   "new_table_order": "ಹೊಸ ಟೇಬಲ್ ಆರ್ಡರ್",
   "open_orders": "ತೆರೆದ ಆರ್ಡರ್‌ಗಳು",

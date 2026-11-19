@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { businessDate, changeDue, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
+import { businessDate, changeDue, financialYear, formatINR, LANGUAGES, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
 import { api, ApiError, fetchConfig, fetchDay, nextToken, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import {
-  addItem, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, billNumbersFull, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -115,7 +115,7 @@ function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
     } catch {
       /* offline: start from 0; the server refuses a repeated number, so nothing is lost silently */
     }
-    storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0 });
+    storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0, fy: financialYear(businessDate()) });
     onDone();
   }
   return (
@@ -364,6 +364,7 @@ function Counter({ t, lang, setLang, onLogout }: { t: T; lang: Lang; setLang: (l
         <span className="who">{storage.counter()?.code} · {user?.name}</span>
       </header>
       {rejected > 0 && <div className="banner bad">{t("rejected", { n: rejected })}</div>}
+      {billNumbersFull(storage.counter()) && <div className="banner bad">{t("numbers_full")}</div>}
 
       {screen === "tables" && (tablesOn ? (
         <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable} onParcel={newParcel} onNew={newTableOrder} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />

@@ -31,27 +31,47 @@ export async function fetchConfig(): Promise<Config> {
 type SyncResult = { client_id: string; status: "saved" | "duplicate" | "rejected"; error?: string };
 
 let syncing = false;
-/** Sends unsent bills, 50 at a time. Returns how many are still waiting. */
+/** Bills per request. The server saves up to 20 at a time; after a server error the batch is halved until one goes. */
+const BATCH = 20;
+let batchSize = BATCH;
+/** Refusals that are worth trying again later: the server couldn't save the bill just then. */
+const RETRY = new Set(["save_failed"]);
+
+/** Sends unsent bills, a batch at a time. Returns how many are still waiting. */
 export async function syncBills(): Promise<{ waiting: number; rejected: number }> {
   if (syncing) return count();
   syncing = true;
   try {
     for (;;) {
-      const pending = storage.bills().filter((b) => !b.synced && !b.rejected).slice(0, 50);
+      const pending = storage.bills().filter((b) => !b.synced && !b.rejected).slice(0, batchSize);
       if (!pending.length) break;
-      const { results } = await api<{ results: SyncResult[] }>("/billing/bills", {
-        method: "POST",
-        json: { counter: storage.counter()?.code, bills: pending.map(({ synced, rejected, ...b }) => b) },
-      });
+      let results: SyncResult[];
+      try {
+        ({ results } = await api<{ results: SyncResult[] }>("/billing/bills", {
+          method: "POST",
+          json: { counter: storage.counter()?.code, bills: pending.map(({ synced, rejected, ...b }) => b) },
+        }));
+      } catch (e) {
+        if (e instanceof ApiError && e.status >= 500) batchSize = Math.max(1, Math.floor(batchSize / 2));
+        throw e;
+      }
+      batchSize = BATCH;
       const byId = new Map(results.map((r) => [r.client_id, r]));
+      let retry = false;
       storage.setBills(
         storage.bills().map((b): Bill => {
           const r = byId.get(b.client_id);
           if (!r) return b;
-          return r.status === "rejected" ? { ...b, rejected: r.error ?? "rejected" } : { ...b, synced: true };
+          if (r.status !== "rejected") return { ...b, synced: true };
+          if (RETRY.has(r.error ?? "")) {
+            retry = true;
+            return b;
+          }
+          return { ...b, rejected: r.error ?? "rejected" };
         }),
       );
-      if (results.length < pending.length) break;
+      // Fewer answers than bills sent, or a bill to try again: the rest go on the next round.
+      if (retry || results.length < pending.length) break;
     }
   } finally {
     syncing = false;

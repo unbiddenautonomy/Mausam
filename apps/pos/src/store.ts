@@ -1,5 +1,5 @@
 // Everything the counter keeps on the device, so billing carries on with no internet and survives a reload.
-import { billNumber, DEFAULT_LANG, billTotals, businessDate, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
+import { billNumber, DEFAULT_LANG, billTotals, businessDate, financialYear, type BillPayMode, type BillTotals, type Lang } from "@mausam/shared";
 
 export interface Category { id: number; name: string; name_hi: string | null; name_kn: string | null; sort: number }
 /** A variation (pick one; its price is the item's price) or an add-on (pick at most one; its price is added). Paise. */
@@ -61,8 +61,27 @@ export interface Bill {
   synced?: boolean;
   rejected?: string;
 }
-/** This screen's counter code and bill number sequence, and the highest token number it has seen (tokens never restart). */
-export interface Counter { code: string; seq: number; tokenDate: string; token: number }
+/**
+ * This screen's counter code and bill number sequence, and the highest token number it has seen (tokens never restart).
+ * Bill numbers restart at 1 each financial year (`fy`, e.g. "2627"). A counter saved before this has no `fy`: it is
+ * taken to be the current year, so its numbers carry on.
+ */
+export interface Counter { code: string; seq: number; tokenDate: string; token: number; fy?: string }
+
+/** The highest running number a bill number can have (five digits). */
+export const MAX_BILL_SEQ = 99_999;
+
+/** Thrown when this counter has used every bill number for the year. */
+export class BillNumbersFull extends Error {
+  constructor() {
+    super("bill_numbers_full");
+  }
+}
+
+/** Is this counter out of bill numbers for the current financial year? */
+export function billNumbersFull(c: Counter | null, date = businessDate()): boolean {
+  return !!c && (c.fy ?? financialYear(date)) === financialYear(date) && c.seq >= MAX_BILL_SEQ;
+}
 /** An order closed on this screen (paid, cancelled or dropped) that the other screens haven't been told about yet. */
 export interface Closed { id: string; updated_at: string }
 
@@ -222,12 +241,18 @@ export function newOrder(type: Order["type"], table: Table | null, token: number
   };
 }
 
-/** Next bill number for this counter. Stored before it's used, so a crash can't hand it out twice. */
-export function takeBillNo(): string {
+/**
+ * Next bill number for this counter. Stored before it's used, so a crash can't hand it out twice.
+ * The running number restarts at 1 on 1 April, with the new financial year in the number.
+ */
+export function takeBillNo(now = new Date()): string {
   const c = storage.counter()!;
-  const next = { ...c, seq: c.seq + 1 };
-  storage.setCounter(next);
-  return billNumber(c.code, businessDate(), next.seq);
+  const date = businessDate(now);
+  const fy = financialYear(date);
+  const seq = (c.fy ?? fy) === fy ? c.seq + 1 : 1;
+  if (seq > MAX_BILL_SEQ) throw new BillNumbersFull();
+  storage.setCounter({ ...c, fy, seq });
+  return billNumber(c.code, date, seq);
 }
 
 /**

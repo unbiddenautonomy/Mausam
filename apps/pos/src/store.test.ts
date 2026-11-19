@@ -12,7 +12,7 @@ const mem = new Map<string, string>();
   length: 0,
 };
 
-const { addItem, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, billNumbersFull, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -49,6 +49,31 @@ describe("orders", () => {
     o = { ...o, lines: o.lines.map((l) => ({ ...l, sent: l.qty })) };
     o = addItem(o, bhaji, cats, settings);
     expect(unsent(o)).toEqual([expect.objectContaining({ name: "Bhaji", qty: 1 })]);
+  });
+
+  it("bill numbers restart at 1 on 1 April, with the new year in the number", () => {
+    const before = storage.counter();
+    storage.setCounter({ code: "B", seq: 41, tokenDate: "2027-03-31", token: 0, fy: "2627" });
+    expect(takeBillNo(new Date("2027-03-31T10:00:00Z"))).toBe("B2627-00042");
+    expect(takeBillNo(new Date("2027-04-01T10:00:00Z"))).toBe("B2728-00001");
+    expect(takeBillNo(new Date("2027-04-01T11:00:00Z"))).toBe("B2728-00002");
+    storage.setCounter(before);
+  });
+
+  it("a counter saved before the yearly restart keeps counting", () => {
+    const before = storage.counter();
+    storage.setCounter({ code: "C", seq: 120, tokenDate: "2026-11-19", token: 0 });
+    expect(takeBillNo(new Date("2026-11-19T10:00:00Z"))).toBe("C2627-00121");
+    storage.setCounter(before);
+  });
+
+  it("refuses to hand out a number past 99,999", () => {
+    const before = storage.counter();
+    storage.setCounter({ code: "D", seq: 99_999, tokenDate: "2026-11-19", token: 0, fy: "2627" });
+    expect(billNumbersFull(storage.counter(), "2026-11-19")).toBe(true);
+    expect(() => takeBillNo(new Date("2026-11-19T10:00:00Z"))).toThrow("bill_numbers_full");
+    expect(billNumbersFull(storage.counter(), "2027-04-02")).toBe(false);
+    storage.setCounter(before);
   });
 
   it("bill numbers and tokens run on", () => {

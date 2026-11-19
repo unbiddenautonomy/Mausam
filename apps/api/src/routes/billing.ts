@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { billTotals, businessDate, BILL_PAY_MODES, validCounter, waiterCommission, type BillPayMode } from "@mausam/shared";
+import { billTotals, businessDate, BILL_PAY_MODES, financialYear, validCounter, waiterCommission, type BillPayMode } from "@mausam/shared";
 import type { AppEnv } from "../env";
 import { requireRole } from "../lib/auth";
 import { audit, bool } from "../lib/db";
@@ -225,56 +225,91 @@ function prepareBill(db: D1Database, b: BillIn, userId: number, ctx: BillCtx): {
 }
 
 /**
- * Rebuilds a day's POS figures (pos_daily, pos_items) from Mausam POS bills, so the closing check
- * and the reports pick them up exactly as they do an Excel import.
+ * The statements that rebuild a day's POS figures (pos_daily, pos_items) from Mausam POS bills, so the closing
+ * check and the reports pick them up exactly as they do an Excel import. Rows that haven't changed are left alone,
+ * so a busy day doesn't rewrite every item row on every bill (the free plan allows 100,000 row writes a day).
  */
-export async function refreshPosDay(db: D1Database, date: string): Promise<void> {
-  await db.batch([
+function posDayStatements(db: D1Database, date: string): D1PreparedStatement[] {
+  return [
     db.prepare(
       `INSERT INTO pos_daily (business_date, total, cash, online, bills, dine_in, parcel, discount, cancelled, import_id, source)
-       SELECT ?,
+       SELECT ?1,
          COALESCE(SUM(CASE WHEN b.status = 'paid' THEN b.total END), 0),
-         COALESCE((SELECT SUM(p.amount) FROM pos_payments p JOIN pos_bills x ON x.id = p.bill_id WHERE x.business_date = ? AND x.status = 'paid' AND p.mode = 'cash'), 0),
-         COALESCE((SELECT SUM(p.amount) FROM pos_payments p JOIN pos_bills x ON x.id = p.bill_id WHERE x.business_date = ? AND x.status = 'paid' AND p.mode != 'cash'), 0),
+         COALESCE((SELECT SUM(p.amount) FROM pos_payments p JOIN pos_bills x ON x.id = p.bill_id WHERE x.business_date = ?1 AND x.status = 'paid' AND p.mode = 'cash'), 0),
+         COALESCE((SELECT SUM(p.amount) FROM pos_payments p JOIN pos_bills x ON x.id = p.bill_id WHERE x.business_date = ?1 AND x.status = 'paid' AND p.mode != 'cash'), 0),
          COUNT(CASE WHEN b.status = 'paid' THEN 1 END),
          COALESCE(SUM(CASE WHEN b.status = 'paid' AND b.order_type = 'dine_in' THEN b.total END), 0),
          COALESCE(SUM(CASE WHEN b.status = 'paid' AND b.order_type = 'parcel' THEN b.total END), 0),
          COALESCE(SUM(CASE WHEN b.status = 'paid' THEN b.discount END), 0),
          COALESCE(SUM(CASE WHEN b.status = 'cancelled' THEN b.total END), 0),
          NULL, 'pos'
-       FROM pos_bills b WHERE b.business_date = ?
+       FROM pos_bills b WHERE b.business_date = ?1
        ON CONFLICT (business_date) DO UPDATE SET total = excluded.total, cash = excluded.cash, online = excluded.online, bills = excluded.bills,
          dine_in = excluded.dine_in, parcel = excluded.parcel, discount = excluded.discount, cancelled = excluded.cancelled,
-         import_id = NULL, source = 'pos'`,
-    ).bind(date, date, date, date),
-    db.prepare("DELETE FROM pos_items WHERE business_date = ?").bind(date),
+         import_id = NULL, source = 'pos'
+       WHERE pos_daily.total IS NOT excluded.total OR pos_daily.cash IS NOT excluded.cash OR pos_daily.online IS NOT excluded.online
+         OR pos_daily.bills IS NOT excluded.bills OR pos_daily.dine_in IS NOT excluded.dine_in OR pos_daily.parcel IS NOT excluded.parcel
+         OR pos_daily.discount IS NOT excluded.discount OR pos_daily.cancelled IS NOT excluded.cancelled
+         OR pos_daily.import_id IS NOT NULL OR pos_daily.source IS NOT 'pos'`,
+    ).bind(date),
+    // Items no longer sold that day (an imported day, or a bill since cancelled) go; the rest are updated only if they changed.
+    db.prepare(
+      `DELETE FROM pos_items WHERE business_date = ?1 AND item NOT IN (
+         SELECT i.name || COALESCE(' [' || i.variation || ']', '') FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
+         WHERE b.business_date = ?1 AND b.status = 'paid')`,
+    ).bind(date),
     db.prepare(
       `INSERT INTO pos_items (business_date, item, category, qty, amount, import_id)
        SELECT b.business_date, i.name || COALESCE(' [' || i.variation || ']', ''), MAX(i.category), SUM(i.qty), SUM(i.amount), NULL
        FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
-       WHERE b.business_date = ? AND b.status = 'paid'
-       GROUP BY i.name, i.variation`,
+       WHERE b.business_date = ?1 AND b.status = 'paid'
+       GROUP BY i.name, i.variation
+       ON CONFLICT (business_date, item) DO UPDATE SET category = excluded.category, qty = excluded.qty, amount = excluded.amount, import_id = NULL
+       WHERE pos_items.qty IS NOT excluded.qty OR pos_items.amount IS NOT excluded.amount
+         OR pos_items.category IS NOT excluded.category OR pos_items.import_id IS NOT NULL`,
     ).bind(date),
-  ]);
+  ];
 }
 
-/** Send finished bills (up to 50 at a time). Each one is saved, recognised as already saved, or refused with a reason. */
+/**
+ * Bills saved per request. The free plan allows 50 database calls per request; saving all of them in one batch
+ * keeps a request to about 8 calls, and 20 keeps the batch small. Screens that send more get results for the
+ * first 20 and send the rest next time.
+ */
+const BILLS_PER_REQUEST = 20;
+
+/** Send finished bills. Each one is saved, recognised as already saved, or refused with a reason. */
 billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
   const body = await c.req.json<{ bills?: unknown; counter?: unknown }>();
   if (!Array.isArray(body.bills) || body.bills.length === 0 || body.bills.length > 50) throw new HttpError(422, "invalid", { field: "bills" });
   const db = c.env.DB;
   const user = c.get("user");
-  const results: Result[] = [];
-  const dates = new Set<string>();
-  const ctx = await billCtx(db);
+  const list = (body.bills as BillIn[]).slice(0, BILLS_PER_REQUEST);
+  const clientIds = list.map((b) => (typeof b?.client_id === "string" ? b.client_id : "")).filter(Boolean);
 
-  for (const raw of body.bills as BillIn[]) {
+  const [ctx, { results: found }] = await Promise.all([
+    billCtx(db),
+    db.prepare("SELECT client_id, bill_no, business_date FROM pos_bills WHERE client_id IN (SELECT value FROM json_each(?))")
+      .bind(JSON.stringify(clientIds))
+      .all<{ client_id: string; bill_no: string; business_date: string }>(),
+  ]);
+  const existing = new Map(found.map((r) => [r.client_id, r]));
+
+  const results: Result[] = [];
+  const toSave: { index: number; clientId: string; billNo: string; date: string; stmts: D1PreparedStatement[] }[] = [];
+  const seen = new Set<string>();
+  // Days to rebuild. Days of re-sent bills are included too, so a day whose totals were missed gets repaired.
+  const dates = new Set<string>();
+  for (const raw of list) {
     const clientId = typeof raw?.client_id === "string" ? raw.client_id : "";
-    const existing = clientId
-      ? await db.prepare("SELECT bill_no FROM pos_bills WHERE client_id = ?").bind(clientId).first<{ bill_no: string }>()
-      : null;
-    if (existing) {
-      results.push({ client_id: clientId, status: "duplicate", bill_no: existing.bill_no });
+    const had = existing.get(clientId);
+    if (had) {
+      results.push({ client_id: clientId, status: "duplicate", bill_no: had.bill_no });
+      dates.add(had.business_date);
+      continue;
+    }
+    if (clientId && seen.has(clientId)) {
+      results.push({ client_id: clientId, status: "duplicate", bill_no: String(raw.bill_no) });
       continue;
     }
     const prepared = prepareBill(db, raw ?? {}, user.id, ctx);
@@ -282,22 +317,36 @@ billing.post("/bills", requireRole("owner", "manager", "staff"), async (c) => {
       results.push({ client_id: clientId, status: "rejected", error: prepared.error });
       continue;
     }
+    seen.add(clientId);
+    toSave.push({ index: results.length, clientId, billNo: String(raw.bill_no), date: prepared.date, stmts: prepared.stmts });
+    results.push({ client_id: clientId, status: "saved", bill_no: String(raw.bill_no) });
+  }
+  for (const b of toSave) dates.add(b.date);
+  const dayStmts = [...dates].flatMap((d) => posDayStatements(db, d));
+
+  if (toSave.length) {
     try {
-      await db.batch(prepared.stmts);
-      dates.add(prepared.date);
-      results.push({ client_id: clientId, status: "saved", bill_no: String(raw.bill_no) });
-    } catch (e) {
-      const msg = String(e);
-      results.push({ client_id: clientId, status: "rejected", error: msg.includes("bill_no") ? "duplicate_number" : "save_failed" });
-      if (!msg.includes("UNIQUE")) console.error(JSON.stringify({ msg: "bill_save_failed", client_id: clientId, error: msg }));
+      // One batch is one transaction: the bills and the day totals are saved together, or not at all.
+      await db.batch([...toSave.flatMap((b) => b.stmts), ...dayStmts]);
+    } catch {
+      // Something in the batch was refused (usually a bill number already used): save the bills one by one.
+      for (const b of toSave) {
+        try {
+          await db.batch(b.stmts);
+        } catch (e) {
+          const msg = String(e);
+          results[b.index] = { client_id: b.clientId, status: "rejected", error: msg.includes("bill_no") ? "duplicate_number" : "save_failed" };
+          if (!msg.includes("UNIQUE")) console.error(JSON.stringify({ msg: "bill_save_failed", client_id: b.clientId, error: msg }));
+        }
+      }
+      await db.batch(dayStmts);
     }
+  } else if (dayStmts.length) {
+    await db.batch(dayStmts);
   }
 
-  for (const d of dates) await refreshPosDay(db, d);
-  if (dates.size) {
-    const sorted = [...dates].sort();
-    await applyPosToCloses(db, sorted[0], sorted.at(-1)!);
-  }
+  const savedDates = [...new Set(toSave.filter((b) => results[b.index].status === "saved").map((b) => b.date))].sort();
+  if (savedDates.length) await applyPosToCloses(db, savedDates[0], savedDates.at(-1)!);
   if (validCounter(body.counter)) {
     const last = results.filter((r) => r.status === "saved").at(-1)?.bill_no ?? null;
     await db
@@ -316,7 +365,9 @@ billing.get("/counters/:code/last", requireRole("owner", "manager", "staff"), as
   const code = c.req.param("code");
   if (!validCounter(code)) throw new HttpError(422, "invalid", { field: "code" });
   // By number, not by the counter that sent it: another screen may have taken payment for this counter's bill.
-  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE bill_no LIKE ? ORDER BY bill_no DESC LIMIT 1").bind(`${code}%`).first<{ bill_no: string }>();
+  // This financial year only, since numbers restart on 1 April ("A2627-%" also keeps counter A apart from AB).
+  const prefix = `${code}${financialYear(businessDate())}-`;
+  const row = await c.env.DB.prepare("SELECT bill_no FROM pos_bills WHERE bill_no LIKE ? ORDER BY bill_no DESC LIMIT 1").bind(`${prefix}%`).first<{ bill_no: string }>();
   return c.json({ last_bill_no: row?.bill_no ?? null });
 });
 
@@ -405,7 +456,7 @@ billing.post("/orders/sync", anyPosUser, async (c) => {
     .bind(since)
     .all<OrderRow>();
   const sent = ids.length
-    ? (await db.prepare(`SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<OrderRow>()).results
+    ? (await db.prepare("SELECT id, data, updated_at, closed, seq FROM pos_open_orders WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all<OrderRow>()).results
     : [];
   const top = since === 0 && changed.length < 500
     ? (await db.prepare("SELECT COALESCE(MAX(seq), 0) AS m FROM pos_open_orders").first<{ m: number }>())?.m ?? 0
@@ -466,13 +517,11 @@ billing.get("/bills", requireRole("owner", "manager"), async (c) => {
     )
     .bind(date)
     .all<Record<string, unknown> & { id: number }>();
-  const ids = bills.map((b) => b.id);
-  const [items, pays] = ids.length
-    ? await Promise.all([
-        db.prepare(`SELECT * FROM pos_bill_items WHERE bill_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).bind(...ids).all<{ bill_id: number }>(),
-        db.prepare(`SELECT * FROM pos_payments WHERE bill_id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).bind(...ids).all<{ bill_id: number }>(),
-      ])
-    : [{ results: [] as { bill_id: number }[] }, { results: [] as { bill_id: number }[] }];
+  // By date, not by a list of bill ids: D1 allows only 100 values in one query, and a busy day has more bills.
+  const [items, pays] = await Promise.all([
+    db.prepare("SELECT i.* FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date = ? ORDER BY i.id").bind(date).all<{ bill_id: number }>(),
+    db.prepare("SELECT p.* FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date = ? ORDER BY p.id").bind(date).all<{ bill_id: number }>(),
+  ]);
   const counters = await db.prepare("SELECT * FROM pos_counters ORDER BY code").all();
   return c.json({
     date,
