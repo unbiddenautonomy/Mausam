@@ -51,6 +51,10 @@ export function PosOptionsPage() {
             <span className="muted small">{t("posset.copies_help")}</span>
           </div>
         )}
+        <Field label={t("posset.discount_limit_rs")} help={t("posset.discount_limit_rs_help")} htmlFor="g-disc-rs">
+          <input id="g-disc-rs" className="input num" inputMode="numeric" value={String(Math.round((s.discount_limit_paise ?? 0) / 100))}
+            onChange={(e) => setF({ ...s, discount_limit_paise: Math.min(100000, Number(e.target.value.replace(/\D/g, "") || 0)) * 100 })} />
+        </Field>
         <Field label={t("posset.discount_limit")} help={t("posset.discount_limit_help")} htmlFor="g-disc">
           <input id="g-disc" className="input num" inputMode="numeric" value={String(s.discount_limit_pct ?? 100)}
             onChange={(e) => setF({ ...s, discount_limit_pct: Math.min(100, Number(e.target.value.replace(/\D/g, "") || 0)) })} />

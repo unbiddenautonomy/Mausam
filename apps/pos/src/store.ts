@@ -28,6 +28,8 @@ export interface PosSettings {
   bill_copies?: number;
   /** The biggest discount staff may give without a manager's PIN, as a % of the bill. 100 (or missing) = no limit. */
   discount_limit_pct?: number;
+  /** The same limit in paise (10000 = ₹100). 0 (or missing) = no rupee limit. Over either one needs a PIN. */
+  discount_limit_paise?: number;
 }
 /** Someone who can allow a discount above the staff limit with their PIN: a manager or the owner. */
 export interface Approver { id: number; name: string }
@@ -39,10 +41,20 @@ export interface Config {
 export const DISCOUNT_REASONS = ["regular", "staff", "complaint", "guest", "offer", "other"] as const;
 export type DiscountReason = (typeof DISCOUNT_REASONS)[number];
 
-/** Is this discount more than staff may give without a manager's PIN? Managers and the owner have no limit. */
-export function overDiscountLimit(paise: number, subtotal: number, s: Pick<PosSettings, "discount_limit_pct">, role: string | undefined): boolean {
+type DiscountLimits = Pick<PosSettings, "discount_limit_pct" | "discount_limit_paise">;
+
+/** The most staff may give on this bill without a PIN, in paise: the lower of the % and rupee limits. null = no limit. */
+export function discountLimit(subtotal: number, s: DiscountLimits): number | null {
   const pct = s.discount_limit_pct ?? 100;
-  return role === "staff" && pct < 100 && paise > Math.round((subtotal * pct) / 100);
+  const rupees = s.discount_limit_paise ?? 0;
+  const limits = [pct < 100 ? Math.round((subtotal * pct) / 100) : null, rupees > 0 ? rupees : null].filter((x): x is number => x !== null);
+  return limits.length ? Math.min(...limits) : null;
+}
+
+/** Is this discount more than staff may give without a manager's PIN? Managers and the owner have no limit. */
+export function overDiscountLimit(paise: number, subtotal: number, s: DiscountLimits, role: string | undefined): boolean {
+  const limit = discountLimit(subtotal, s);
+  return role === "staff" && limit !== null && paise > limit;
 }
 
 export interface Line {

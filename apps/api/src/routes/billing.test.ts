@@ -194,6 +194,19 @@ describe("discounts and flags", () => {
     await app.call(owner, "PUT", "/billing/settings", { discount_limit_pct: 100 });
   });
 
+  it("flags a staff discount above a rupee limit", async () => {
+    const today = businessDate();
+    expect((await app.call(owner, "PUT", "/billing/settings", { discount_limit_paise: 10000 })).json.settings.discount_limit_paise).toBe(10000);
+    expect((await app.call(owner, "PUT", "/billing/settings", { discount_limit_paise: -1 })).status).toBe(422);
+    const upTo = one(today, 50000, 10000, { discount_reason: "regular" });
+    const above = one(today, 50000, 10100, { discount_reason: "regular" });
+    const r = await send([upTo, above]);
+    expect(r.json.results.map((x: { status: string }) => x.status)).toEqual(["saved", "saved"]);
+    expect((await flagsOf(upTo.client_id))?.flags).toBeNull();
+    expect((await flagsOf(above.client_id))?.flags).toBe('["discount_over_limit"]');
+    await app.call(owner, "PUT", "/billing/settings", { discount_limit_paise: 0 });
+  });
+
   it("checks a manager's PIN for a discount above the limit", async () => {
     const config = await app.call(staff, "GET", "/billing/config");
     const approver = config.json.approvers[0];
