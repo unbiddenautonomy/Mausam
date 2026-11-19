@@ -640,6 +640,15 @@ const en = {
   "audit.created": "Created",
   "audit.updated": "Changed",
   "audit.deleted": "Deleted",
+  "unsent.banner": "{n} entries saved offline were refused by the server. Tap to see them.",
+  "unsent.title": "Entries not sent",
+  "unsent.help": "These were saved on this phone while offline, and the server refused them. Fix the reason and send again, or delete them.",
+  "unsent.expense": "Expense",
+  "unsent.close": "Day closing",
+  "unsent.retry": "Send again",
+  "unsent.empty": "Nothing waiting. Every entry was sent.",
+  "unsent.delete_confirm": "Delete this entry from the phone? It was never saved on the server.",
+  "alert.backup_missing": "Today's backup of the database ({date}) failed. It will keep trying; if this comes back tomorrow, tell whoever looks after the app.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1214,6 +1223,15 @@ const hi: Dict = {
   "menu.addons_help": "ज़रूरी नहीं, ज़्यादा से ज़्यादा एक, जैसे Kadak / Medium / Naram। दाम जुड़ता है (₹0 = कुछ नहीं)।",
   "menu.option_name": "नाम",
   "menu.add_option": "एक जोड़ें",
+  "unsent.banner": "ऑफ़लाइन सेव की गई {n} एंट्री सर्वर ने नहीं लीं। देखने के लिए टैप करें।",
+  "unsent.title": "जो एंट्री नहीं गईं",
+  "unsent.help": "ये एंट्री ऑफ़लाइन रहते इस फ़ोन में सेव हुई थीं, और सर्वर ने इन्हें नहीं लिया। कारण ठीक करके फिर भेजें, या हटा दें।",
+  "unsent.expense": "खर्च",
+  "unsent.close": "दिन की क्लोज़िंग",
+  "unsent.retry": "फिर भेजें",
+  "unsent.empty": "कुछ बाकी नहीं। सारी एंट्री भेज दी गईं।",
+  "unsent.delete_confirm": "यह एंट्री फ़ोन से हटाएँ? यह सर्वर पर कभी सेव नहीं हुई।",
+  "alert.backup_missing": "आज ({date}) का डेटाबेस बैकअप नहीं बन पाया। ऐप फिर कोशिश करता रहेगा; अगर कल भी यह दिखे, तो ऐप देखने वाले को बताएं।",
 };
 
 const kn: Dict = {
@@ -1840,6 +1858,15 @@ const kn: Dict = {
   "bills.parcel": "ಪಾರ್ಸೆಲ್",
   "bills.discount": "ಡಿಸ್ಕೌಂಟ್",
   "bills.counter_seen": "ಕೌಂಟರ್ {code} ಕೊನೆಯದಾಗಿ ಬಿಲ್ ಕಳುಹಿಸಿದ್ದು: {time}",
+  "unsent.banner": "ಆಫ್‌ಲೈನ್‌ನಲ್ಲಿ ಸೇವ್ ಮಾಡಿದ {n} ಎಂಟ್ರಿಗಳನ್ನು ಸರ್ವರ್ ತೆಗೆದುಕೊಳ್ಳಲಿಲ್ಲ. ನೋಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ.",
+  "unsent.title": "ಕಳುಹಿಸದ ಎಂಟ್ರಿಗಳು",
+  "unsent.help": "ಇವು ಆಫ್‌ಲೈನ್ ಇದ್ದಾಗ ಈ ಫೋನ್‌ನಲ್ಲಿ ಸೇವ್ ಆಗಿದ್ದವು, ಸರ್ವರ್ ಇವನ್ನು ತೆಗೆದುಕೊಳ್ಳಲಿಲ್ಲ. ಕಾರಣ ಸರಿಪಡಿಸಿ ಮತ್ತೆ ಕಳುಹಿಸಿ, ಅಥವಾ ಅಳಿಸಿ.",
+  "unsent.expense": "ಖರ್ಚು",
+  "unsent.close": "ದಿನದ ಕ್ಲೋಸಿಂಗ್",
+  "unsent.retry": "ಮತ್ತೆ ಕಳುಹಿಸಿ",
+  "unsent.empty": "ಏನೂ ಬಾಕಿ ಇಲ್ಲ. ಎಲ್ಲಾ ಎಂಟ್ರಿಗಳನ್ನು ಕಳುಹಿಸಲಾಗಿದೆ.",
+  "unsent.delete_confirm": "ಈ ಎಂಟ್ರಿಯನ್ನು ಫೋನ್‌ನಿಂದ ಅಳಿಸಬೇಕೇ? ಇದು ಸರ್ವರ್‌ನಲ್ಲಿ ಎಂದೂ ಸೇವ್ ಆಗಿಲ್ಲ.",
+  "alert.backup_missing": "ಇಂದಿನ ({date}) ಡೇಟಾಬೇಸ್ ಬ್ಯಾಕಪ್ ಆಗಲಿಲ್ಲ. ಆ್ಯಪ್ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸುತ್ತಲೇ ಇರುತ್ತದೆ; ನಾಳೆಯೂ ಇದು ಕಂಡರೆ, ಆ್ಯಪ್ ನೋಡಿಕೊಳ್ಳುವವರಿಗೆ ತಿಳಿಸಿ.",
 };
 
 /** English is the default for new users and for phones with no saved choice. Anyone can switch. */

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { DEFAULT_LANG, translate, type Lang, type MessageKey, type User } from "@mausam/shared";
-import { api, flushQueue, getToken, setToken, setUnauthorisedHandler } from "./api";
+import { api, flushQueue, getToken, setQueueOwner, setToken, setUnauthorisedHandler } from "./api";
 
 type T = (key: MessageKey, params?: Record<string, string | number>) => string;
 
@@ -52,13 +52,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .then((r) => {
         setUser(r.user);
         applyLang(r.user.language);
-        void flushQueue();
       })
       .catch(() => {
         /* offline or logged out: show login if token was cleared */
       })
       .finally(() => setReady(true));
   }, [applyLang]);
+
+  // Entries saved offline belong to whoever saved them; send them once that person is logged in.
+  useEffect(() => {
+    setQueueOwner(user?.id ?? null);
+    if (user) void flushQueue();
+  }, [user]);
 
   const value = useMemo<Session>(
     () => ({

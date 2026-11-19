@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { LANGUAGES, type Lang } from "@mausam/shared";
-import { onQueueChange, queueSize } from "../lib/api";
+import { failedEntries, onQueueChange, queueSize } from "../lib/api";
 import { useApi, useOnline } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { Icon, Logo, type IconName } from "./Icon";
@@ -19,7 +19,11 @@ export function Layout() {
   const online = useOnline();
   const location = useLocation();
   const [queued, setQueued] = useState(queueSize());
-  useEffect(() => { const off = onQueueChange(setQueued); return () => void off(); }, []);
+  const [failed, setFailed] = useState(failedEntries().length);
+  useEffect(() => {
+    const off = onQueueChange((n, f) => (setQueued(n), setFailed(f)));
+    return () => void off();
+  }, []);
   // Re-check alerts on every page change so the bell stays current.
   const alerts = useApi<{ alerts: { seen_at: string | null }[] }>(`/alerts?p=${encodeURIComponent(location.pathname)}`);
   const unseen = alerts.data?.alerts.filter((a) => !a.seen_at).length ?? 0;
@@ -95,6 +99,9 @@ export function Layout() {
         <main className="main">
           {!online && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.banner")}</div>}
           {online && queued > 0 && <div className="banner" style={{ marginBottom: 16 }}>{t("offline.queued")} ({queued})</div>}
+          {failed > 0 && location.pathname !== "/entries/unsent" && (
+            <Link to="/entries/unsent" className="banner bad" style={{ display: "block", marginBottom: 16 }}>{t("unsent.banner", { n: failed })}</Link>
+          )}
           <Outlet />
         </main>
       </div>

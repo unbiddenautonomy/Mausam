@@ -1,10 +1,13 @@
 import type { Env } from "../env";
+import { raise } from "../cron";
 import { deleteFiles, fileExists, listFiles, putFile } from "./files";
 
 /** Tables left out of backups: login tokens (people simply log in again) and the push de-duplication log. */
 const SKIP = new Set(["sessions", "notifications_sent", "d1_migrations"]);
 const PAGE = 2000;
 const BACKUP_HOUR_IST = 4; // after the night's closing, before the morning shopping
+/** If there is still no backup by this hour, the owner gets an alert (once a day). */
+const MISSING_ALERT_HOUR_IST = 10;
 
 export interface BackupFile {
   version: 1;
@@ -56,6 +59,8 @@ export async function runBackup(env: Env, now = new Date()): Promise<string | nu
   if (hour < BACKUP_HOUR_IST) return null;
   const key = `backups/${date}.json`;
   if (await fileExists(env, key)) return null;
+  // Still no backup by mid-morning: earlier tries failed. Say so first, while this run still has database calls to spare.
+  if (hour >= MISSING_ALERT_HOUR_IST) await raise(env, "backup_missing", date, { date }, "critical", "owner", "/alerts");
 
   const data = await snapshot(env.DB, now);
   const keep = Math.max(7, Number(env.BACKUP_DAYS) || 35);
