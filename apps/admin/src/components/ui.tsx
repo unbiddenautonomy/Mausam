@@ -187,7 +187,12 @@ export function Loading() {
   return <div className="empty">{t("common.loading")}</div>;
 }
 
-const KNOWN_ERRORS: Record<string, MessageKey> = { day_locked: "common.locked", month_closed: "error.month_closed", waiter_code_taken: "error.waiter_code_taken" };
+const KNOWN_ERRORS: Record<string, MessageKey> = {
+  day_locked: "common.locked",
+  month_closed: "error.month_closed",
+  month_not_over: "error.month_not_over",
+  waiter_code_taken: "error.waiter_code_taken",
+};
 
 /** The sentence for an error code the server sent, or the general "something went wrong". */
 export function errorKey(code: string | null | undefined): MessageKey {

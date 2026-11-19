@@ -770,10 +770,3 @@ billing.get("/waiters/report", async (c) => {
   ).bind(month).all();
   return c.json({ month, rows: results });
 });
-
-/** One waiter's commission for a month, for month-end pay. */
-export async function commissionFor(db: D1Database, staffId: number, month: string): Promise<number> {
-  const r = await db.prepare("SELECT COALESCE(SUM(commission), 0) AS t FROM pos_bills WHERE waiter_staff_id = ? AND status = 'paid' AND business_date LIKE ? || '-%'")
-    .bind(staffId, month).first<{ t: number }>();
-  return r?.t ?? 0;
-}

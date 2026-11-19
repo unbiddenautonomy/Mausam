@@ -9,28 +9,37 @@ export const owner = new Hono<AppEnv>();
 
 /* ---------- Alerts (owner and managers can see; only unseen count matters for badges) ---------- */
 
+/** The alert audiences each role sees. */
+const audienceFor = (role: string) => (role === "owner" ? ["owner", "manager", "all"] : ["manager", "all"]);
+
 owner.get("/alerts", requireRole("owner", "manager"), async (c) => {
   const user = c.get("user");
-  const audience = user.role === "owner" ? "('owner','manager','all')" : "('manager','all')";
   const { results } = await c.env.DB.prepare(
     `SELECT id, type, business_date, severity, params, created_at, seen_at FROM alerts
-     WHERE audience IN ${audience} ORDER BY seen_at IS NOT NULL, created_at DESC LIMIT 100`,
-  ).all<Record<string, unknown>>();
+     WHERE audience IN (SELECT value FROM json_each(?)) ORDER BY seen_at IS NOT NULL, created_at DESC LIMIT 100`,
+  )
+    .bind(JSON.stringify(audienceFor(user.role)))
+    .all<Record<string, unknown>>();
   return c.json({ alerts: results.map((r) => ({ ...r, params: JSON.parse(String(r.params)) })) });
 });
 
+/** Marks alerts seen: the ones listed, or all unseen ones. Only alerts this person can see: a manager can't clear the owner's. */
 owner.post("/alerts/seen", requireRole("owner", "manager"), async (c) => {
   const b = await c.req.json<{ ids?: number[] }>();
   const user = c.get("user");
+  const audience = JSON.stringify(audienceFor(user.role));
   if (Array.isArray(b.ids) && b.ids.length) {
     const ids = b.ids.map(Number).filter(Number.isInteger).slice(0, 200);
     await c.env.DB.prepare(
-      `UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE id IN (${ids.map(() => "?").join(",")}) AND seen_at IS NULL`,
+      `UPDATE alerts SET seen_at = datetime('now'), seen_by = ?1
+       WHERE id IN (SELECT value FROM json_each(?2)) AND audience IN (SELECT value FROM json_each(?3)) AND seen_at IS NULL`,
     )
-      .bind(user.id, ...ids)
+      .bind(user.id, JSON.stringify(ids), audience)
       .run();
   } else {
-    await c.env.DB.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ? WHERE seen_at IS NULL").bind(user.id).run();
+    await c.env.DB.prepare("UPDATE alerts SET seen_at = datetime('now'), seen_by = ?1 WHERE seen_at IS NULL AND audience IN (SELECT value FROM json_each(?2))")
+      .bind(user.id, audience)
+      .run();
   }
   return c.json({ ok: true });
 });

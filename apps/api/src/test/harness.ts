@@ -10,7 +10,7 @@ import { createSession, hashPin } from "../lib/auth";
 const API_DIR = new URL("../../", import.meta.url);
 
 /** Splits a migration file into statements (statements end with ";" at the end of a line). */
-function statements(sql: string): string[] {
+export function statements(sql: string): string[] {
   return sql
     .split(/;[ \t]*(?:--[^\n]*)?\r?\n/)
     .map((s) => s.replace(/^\s*--[^\n]*$/gm, "").trim())
@@ -74,6 +74,8 @@ export interface TestApp {
   user(role: Role, name?: string): Promise<{ id: number; token: string }>;
   call<T = any>(token: string | null, method: string, path: string, body?: unknown, opts?: { limit?: number }): Promise<Reply<T>>;
   cron(time: Date, opts?: { limit?: number }): Promise<{ calls: number; errors: string[] }>;
+  /** Runs a file of SQL statements, for example the demo data from scripts/demo-seed.mjs. */
+  sql(text: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -136,6 +138,10 @@ export async function startApp(): Promise<TestApp> {
       } finally {
         console.error = orig;
       }
+    },
+    async sql(text) {
+      const list = statements(text).map((s) => db.prepare(s));
+      for (let i = 0; i < list.length; i += 200) await db.batch(list.slice(i, i + 200));
     },
     dispose: () => proxy.dispose(),
   };

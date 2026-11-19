@@ -5,7 +5,6 @@ import { requireRole } from "../lib/auth";
 import { addCounterExpense, removeCounterExpense } from "../lib/counter";
 import { assertDayOpen, audit, bool } from "../lib/db";
 import { HttpError, optionalText, requireDate, requirePaise } from "../lib/http";
-import { commissionFor } from "./billing";
 
 const STATUSES: AttendanceStatus[] = ["present", "half", "absent", "leave", "off"];
 const isMonth = (v: unknown): v is string => typeof v === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(v);
@@ -128,25 +127,50 @@ interface PayrollRow {
   gross: number; advances: number; adjustment: number; net: number; commission: number; status: "draft" | "paid"; paid_on: string | null; note: string | null;
 }
 
+/** A month's attendance, advances and waiter commission for everyone, loaded in three queries. */
+interface MonthData { marks: Map<number, Map<string, AttendanceStatus>>; advances: Map<number, number>; commission: Map<number, number> }
+
+async function loadMonth(db: D1Database, month: string, staffId?: number): Promise<MonthData> {
+  const [from, to] = [`${month}-01`, `${month}-31`];
+  const one = staffId === undefined ? "" : " AND staff_id = ?3";
+  const bind = (sql: string) => (staffId === undefined ? db.prepare(sql).bind(from, to) : db.prepare(sql).bind(from, to, staffId));
+  const [att, adv, comm] = await Promise.all([
+    bind(`SELECT staff_id, business_date, status FROM attendance WHERE business_date BETWEEN ?1 AND ?2${one}`).all<{ staff_id: number; business_date: string; status: AttendanceStatus }>(),
+    bind(`SELECT staff_id, COALESCE(SUM(amount), 0) AS t FROM advances WHERE deleted_at IS NULL AND business_date BETWEEN ?1 AND ?2${one} GROUP BY staff_id`).all<{ staff_id: number; t: number }>(),
+    // Commission is counted for anyone who served bills, even if they're no longer marked as a waiter.
+    bind(
+      `SELECT waiter_staff_id AS staff_id, COALESCE(SUM(commission), 0) AS t FROM pos_bills
+       WHERE status = 'paid' AND business_date BETWEEN ?1 AND ?2${one.replace("staff_id", "waiter_staff_id")} GROUP BY waiter_staff_id`,
+    ).all<{ staff_id: number; t: number }>(),
+  ]);
+  const marks = new Map<number, Map<string, AttendanceStatus>>();
+  for (const r of att.results) {
+    if (!marks.has(r.staff_id)) marks.set(r.staff_id, new Map());
+    marks.get(r.staff_id)!.set(r.business_date, r.status);
+  }
+  return {
+    marks,
+    advances: new Map(adv.results.map((r) => [r.staff_id, r.t])),
+    commission: new Map(comm.results.map((r) => [r.staff_id, r.t])),
+  };
+}
+
 /** Works out one person's pay for a month from attendance and advances. */
-async function computeFor(db: D1Database, month: string, s: StaffRow, adjustment: number) {
+function payFor(month: string, s: StaffRow, adjustment: number, data: MonthData) {
   const today = businessDate();
   const all = monthDates(month);
   const dates = all.filter((d) => d <= today && (!s.joined_on || d >= s.joined_on));
   const notEmployed = s.joined_on ? all.filter((d) => d < s.joined_on!).length : 0;
-  const { results } = await db
-    .prepare("SELECT business_date, status FROM attendance WHERE staff_id = ? AND business_date LIKE ? || '-%'")
-    .bind(s.id, month)
-    .all<{ business_date: string; status: AttendanceStatus }>();
-  const counts = countDays(dates, new Map(results.map((r) => [r.business_date, r.status])));
-  const adv = await db
-    .prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM advances WHERE staff_id = ? AND deleted_at IS NULL AND business_date LIKE ? || '-%'")
-    .bind(s.id, month)
-    .first<{ t: number }>();
-  // Commission is counted for anyone who served bills, even if they're no longer marked as a waiter.
-  const commission = await commissionFor(db, s.id, month);
-  const pay = computePay({ pay_type: s.pay_type, rate: s.pay_rate, days: counts, days_not_employed: notEmployed, advances: adv?.t ?? 0, adjustment, commission });
-  return { ...pay, counts, commission, advances: adv?.t ?? 0, partial: dates.length < all.length - notEmployed };
+  const counts = countDays(dates, data.marks.get(s.id) ?? new Map());
+  const advances = data.advances.get(s.id) ?? 0;
+  const commission = data.commission.get(s.id) ?? 0;
+  const pay = computePay({ pay_type: s.pay_type, rate: s.pay_rate, days: counts, days_not_employed: notEmployed, advances, adjustment, commission });
+  return { ...pay, counts, commission, advances, partial: dates.length < all.length - notEmployed };
+}
+
+/** One person's pay for a month (loads just their data). */
+async function computeFor(db: D1Database, month: string, s: StaffRow, adjustment: number) {
+  return payFor(month, s, adjustment, await loadMonth(db, month, s.id));
 }
 
 people.get("/payroll/:month", requireRole("owner"), async (c) => {
@@ -159,6 +183,7 @@ people.get("/payroll/:month", requireRole("owner"), async (c) => {
     .all<StaffRow>();
   const { results: saved } = await c.env.DB.prepare("SELECT * FROM payroll WHERE month = ?").bind(month).all<PayrollRow>();
   const byStaff = new Map(saved.map((r) => [r.staff_id, r]));
+  const data = await loadMonth(c.env.DB, month);
   const rows = [];
   for (const s of staff) {
     if (s.joined_on && s.joined_on > `${month}-31`) continue;
@@ -167,7 +192,7 @@ people.get("/payroll/:month", requireRole("owner"), async (c) => {
       rows.push({ ...row, name: s.name, role: s.role, partial: false });
       continue;
     }
-    const p = await computeFor(c.env.DB, month, s, row?.adjustment ?? 0);
+    const p = payFor(month, s, row?.adjustment ?? 0, data);
     rows.push({
       staff_id: s.id, name: s.name, role: s.role, pay_type: s.pay_type, rate: s.pay_rate,
       days_worked: p.days_worked, days_absent: p.days_absent, days_unmarked: p.counts.unmarked,

@@ -61,44 +61,53 @@ export async function rangeTotals(db: D1Database, from: string, to: string, wage
   };
 }
 
+interface StaffWage { id: number; pay_type: PayType | null; pay_rate: number; joined_on: string | null; active: number }
+interface Mark { staff_id: number; business_date: string; status: AttendanceStatus }
+
+/** What wages are worked out from, for a date range: staff with a pay rate, attendance, and waiter commission per day. */
+export interface WageData { staff: StaffWage[]; marks: Mark[]; commission: Map<string, number> }
+
+/** Loads the wage inputs for a range in three queries, so several sub-ranges (weeks) can be worked out from one load. */
+export async function loadWageData(db: D1Database, from: string, to: string): Promise<WageData> {
+  const [staff, comm, marks] = await Promise.all([
+    db
+      .prepare("SELECT id, pay_type, pay_rate, joined_on, active FROM staff WHERE pay_rate IS NOT NULL AND (active = 1 OR id IN (SELECT staff_id FROM attendance WHERE business_date BETWEEN ? AND ?))")
+      .bind(from, to)
+      .all<StaffWage>(),
+    // Waiter commission on POS bills counts as wages too.
+    db
+      .prepare("SELECT business_date, COALESCE(SUM(commission), 0) AS t FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ? GROUP BY business_date")
+      .bind(from, to)
+      .all<{ business_date: string; t: number }>()
+      .catch(() => ({ results: [] as { business_date: string; t: number }[] })),
+    db
+      .prepare("SELECT staff_id, business_date, status FROM attendance WHERE business_date BETWEEN ? AND ?")
+      .bind(from, to)
+      .all<Mark>(),
+  ]);
+  return { staff: staff.results, marks: marks.results, commission: new Map(comm.results.map((r) => [r.business_date, r.t])) };
+}
+
 /**
- * Wages earned in a date range. For a whole calendar month this is the month-end pay rule
- * (saved pay when it was marked paid). For other ranges, monthly pay is counted as 1/30 per day.
+ * Wages earned from `from` to `to`, worked out from data loaded for a range that covers it. `paid` is the saved
+ * month-end pay per person, used only for a whole calendar month.
  */
-export async function wagesEarned(db: D1Database, from: string, to: string): Promise<number> {
+export function wagesFrom(data: WageData, from: string, to: string, paid = new Map<number, number>()): number {
   // Only count days that have happened; future days aren't earned yet.
   const today = businessDate();
   if (from > today) return 0;
   if (to > today) to = today;
   const month = from.slice(0, 7);
   const wholeMonth = from === `${month}-01` && to === monthDates(month).at(-1);
-  const { results: staff } = await db
-    .prepare("SELECT id, pay_type, pay_rate, joined_on FROM staff WHERE pay_rate IS NOT NULL AND (active = 1 OR id IN (SELECT staff_id FROM attendance WHERE business_date BETWEEN ? AND ?))")
-    .bind(from, to)
-    .all<{ id: number; pay_type: PayType | null; pay_rate: number; joined_on: string | null }>();
-  // Waiter commission on POS bills counts as wages too.
-  const comm = await db
-    .prepare("SELECT COALESCE(SUM(commission), 0) AS t FROM pos_bills WHERE status = 'paid' AND business_date BETWEEN ? AND ?")
-    .bind(from, to)
-    .first<{ t: number }>()
-    .catch(() => null);
-  const commission = comm?.t ?? 0;
-  if (staff.length === 0) return commission;
-  const { results: marks } = await db
-    .prepare("SELECT staff_id, business_date, status FROM attendance WHERE business_date BETWEEN ? AND ?")
-    .bind(from, to)
-    .all<{ staff_id: number; business_date: string; status: AttendanceStatus }>();
-  const paid = wholeMonth
-    ? new Map(
-        (await db.prepare("SELECT staff_id, gross FROM payroll WHERE month = ? AND status = 'paid'").bind(month).all<{ staff_id: number; gross: number }>()).results.map(
-          (r) => [r.staff_id, r.gross],
-        ),
-      )
-    : new Map<number, number>();
+  const inRange = (d: string) => d >= from && d <= to;
+  let total = 0;
+  for (const [d, t] of data.commission) if (inRange(d)) total += t;
+  const marks = data.marks.filter((m) => inRange(m.business_date));
+  // Everyone still on staff, plus anyone who has left but worked in this range.
+  const staff = data.staff.filter((s) => s.active === 1 || marks.some((m) => m.staff_id === s.id));
   const dates = dateRange(from, to);
-  let total = commission;
   for (const s of staff) {
-    if (paid.has(s.id)) {
+    if (wholeMonth && paid.has(s.id)) {
       total += paid.get(s.id)!;
       continue;
     }
@@ -114,4 +123,74 @@ export async function wagesEarned(db: D1Database, from: string, to: string): Pro
     }
   }
   return total;
+}
+
+/**
+ * Wages earned in a date range. For a whole calendar month this is the month-end pay rule
+ * (saved pay when it was marked paid). For other ranges, monthly pay is counted as 1/30 per day.
+ */
+export async function wagesEarned(db: D1Database, from: string, to: string): Promise<number> {
+  const today = businessDate();
+  if (from > today) return 0;
+  const end = to > today ? today : to;
+  const month = from.slice(0, 7);
+  const wholeMonth = from === `${month}-01` && end === monthDates(month).at(-1);
+  const [data, paid] = await Promise.all([
+    loadWageData(db, from, end),
+    wholeMonth
+      ? db.prepare("SELECT staff_id, gross FROM payroll WHERE month = ? AND status = 'paid'").bind(month).all<{ staff_id: number; gross: number }>()
+      : Promise.resolve({ results: [] as { staff_id: number; gross: number }[] }),
+  ]);
+  return wagesFrom(data, from, end, new Map(paid.results.map((r) => [r.staff_id, r.gross])));
+}
+
+/**
+ * The same totals as rangeTotals, for each of several date ranges inside [from, to] (for example the weeks of a
+ * report), from one set of queries grouped by day. A report of many weeks makes 9 database calls, not 9 per week.
+ */
+export async function totalsByRange(db: D1Database, from: string, to: string, ranges: { from: string; to: string }[]): Promise<RangeTotals[]> {
+  const placeholders = NOT_DAY_TO_DAY.map(() => "?").join(",");
+  type Day = { business_date: string; t: number; n?: number };
+  const byDay = (sql: string, ...extra: string[]) => db.prepare(sql).bind(from, to, ...extra).all<Day>().then((r) => r.results);
+  const [sales, pos, exp, bills, food, del, wages] = await Promise.all([
+    byDay("SELECT business_date, COALESCE(SUM(total_counter),0) AS t, COUNT(*) AS n FROM day_closes WHERE business_date BETWEEN ? AND ? GROUP BY business_date"),
+    byDay(
+      "SELECT business_date, COALESCE(SUM(total),0) AS t, COUNT(*) AS n FROM pos_daily WHERE business_date BETWEEN ? AND ? AND business_date NOT IN (SELECT business_date FROM day_closes) GROUP BY business_date",
+    ),
+    byDay(
+      `SELECT e.business_date, COALESCE(SUM(e.amount),0) AS t FROM expenses e JOIN expense_categories c ON c.id = e.category_id
+       WHERE e.deleted_at IS NULL AND e.business_date BETWEEN ? AND ? AND c.key NOT IN (${placeholders}) GROUP BY e.business_date`,
+      ...NOT_DAY_TO_DAY,
+    ),
+    byDay(
+      `SELECT e.business_date, COALESCE(SUM(e.amount),0) AS t FROM expenses e JOIN expense_categories c ON c.id = e.category_id
+       WHERE e.deleted_at IS NULL AND e.business_date BETWEEN ? AND ? AND c.key IN (${BILL_KEYS.map(() => "?").join(",")}) GROUP BY e.business_date`,
+      ...BILL_KEYS,
+    ),
+    byDay(
+      `SELECT e.business_date, COALESCE(SUM(e.amount),0) AS t FROM expenses e JOIN expense_categories c ON c.id = e.category_id
+       WHERE e.deleted_at IS NULL AND e.business_date BETWEEN ? AND ? AND c.key IN (${FOOD_KEYS.map(() => "?").join(",")}) GROUP BY e.business_date`,
+      ...FOOD_KEYS,
+    ),
+    byDay("SELECT business_date, COALESCE(SUM(amount),0) AS t FROM deliveries WHERE deleted_at IS NULL AND business_date BETWEEN ? AND ? GROUP BY business_date"),
+    loadWageData(db, from, to),
+  ]);
+  const sum = (rows: Day[], a: string, b: string, k: "t" | "n" = "t") => rows.reduce((s, r) => (r.business_date >= a && r.business_date <= b ? s + Number(r[k] ?? 0) : s), 0);
+  return ranges.map(({ from: a, to: b }) => {
+    const s = sum(sales, a, b) + sum(pos, a, b);
+    const e = sum(exp, a, b);
+    const bl = sum(bills, a, b);
+    const d = sum(del, a, b);
+    const w = wagesFrom(wages, a, b);
+    return {
+      sales: s,
+      days_with_sales: sum(sales, a, b, "n") + sum(pos, a, b, "n"),
+      expenses: e,
+      food: sum(food, a, b) + d,
+      bills: bl,
+      deliveries: d,
+      wages: w,
+      left: s - e - bl - d - w,
+    };
+  });
 }
