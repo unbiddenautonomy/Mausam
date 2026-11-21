@@ -250,7 +250,9 @@ entries.post("/shopping", async (c) => {
     .bind(date)
     .first<{ id: number }>();
   if (open) throw new HttpError(409, "trip_already_open", { id: open.id });
-  const floatOut = requirePaise(b.float_out, "float_out");
+  // The cash taken from the counter is asked when the trip is finished. Older phones may still send it at the start.
+  // 0 means "not entered yet": a real amount was always more than 0 before.
+  const floatOut = b.float_out === undefined || b.float_out === null || b.float_out === "" ? 0 : requirePaise(b.float_out, "float_out");
   const res = await c.env.DB.prepare("INSERT INTO shopping_trips (business_date, manager_id, float_out) VALUES (?, ?, ?)")
     .bind(date, user.id, floatOut)
     .run();
@@ -273,18 +275,22 @@ entries.post("/shopping/:id/close", async (c) => {
   } else {
     await assertDayOpen(c.env.DB, user, String(trip.business_date));
   }
+  // Cash taken from the counter is entered here, at the end. A trip started on an older phone already has it.
+  const givenOut = b.float_out === undefined || b.float_out === null || b.float_out === "" ? null : requirePaise(b.float_out, "float_out", { allowZero: true });
+  if (givenOut === null && trip.status === "open" && !Number(trip.float_out)) throw new HttpError(422, "invalid", { field: "float_out" });
+  const floatOut = givenOut ?? Number(trip.float_out);
   const floatBack = requirePaise(b.float_back, "float_back", { allowZero: true });
   const spent = await sumCashExpenses(c.env.DB, String(trip.business_date), id);
   const settings = await loadSettings(c.env.DB);
-  const gap = Number(trip.float_out) - spent.s - floatBack;
+  const gap = floatOut - spent.s - floatBack;
   const note = optionalText(b.note);
   if (Math.abs(gap) > settings.shopping_tolerance && !note) throw new HttpError(422, "note_required", { gap });
   await c.env.DB.prepare(
-    "UPDATE shopping_trips SET float_back = ?, note = ?, status = 'closed', closed_at = datetime('now') WHERE id = ?",
+    "UPDATE shopping_trips SET float_out = ?, float_back = ?, note = ?, status = 'closed', closed_at = datetime('now') WHERE id = ?",
   )
-    .bind(floatBack, note, id)
+    .bind(floatOut, floatBack, note, id)
     .run();
-  await audit(c.env.DB, "shopping_trips", id, "update", trip, { float_back: floatBack, note, gap }, user.id);
+  await audit(c.env.DB, "shopping_trips", id, "update", trip, { float_out: floatOut, float_back: floatBack, note, gap }, user.id);
   return c.json({ ok: true, gap });
 });
 

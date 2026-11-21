@@ -73,7 +73,7 @@ const vendors = [
 ];
 let itemId = 0;
 vendors.forEach((v, vi) => {
-  const vid = vi + 1;
+  const vid = 100 + vi + 1; // clear of the vendors the migrations add
   out.push(`INSERT INTO vendors (id, name, payment_terms, opening_due, category_id) VALUES (${vid}, ${q(v.name)}, ${q(v.terms)}, ${v.opening}, ${vi === 0 ? 7 : vi === 1 ? 3 : 2});`);
   for (const [item, unit, rate, usual, days] of v.items) {
     itemId++;

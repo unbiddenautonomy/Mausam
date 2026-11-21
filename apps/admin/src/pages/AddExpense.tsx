@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router";
-import { formatINR, rupeesToPaise } from "@mausam/shared";
+import { formatINR, MORNING_ITEMS, MORNING_OTHERS, morningItemOf, morningItemText, rupeesToPaise } from "@mausam/shared";
 import { api, sendOrQueue } from "../lib/api";
 import { useApi, useDraft } from "../lib/hooks";
 import { useSession } from "../lib/session";
@@ -41,6 +41,9 @@ const blank = () => ({
   no_receipt: false,
   note: "",
   item: "",
+  // Morning shopping: the item tile picked, and the text typed for Others.
+  pick: "",
+  other: "",
   qty: "",
   unit: "kg",
   client_id: newClientId(),
@@ -70,6 +73,7 @@ export function EditExpense() {
         no_receipt: !e.has_receipt && !e.photo_key,
         note: e.note ?? "",
         item: e.item ?? "",
+        ...(e.trip_id ? morningItemOf(e.item) : { pick: "", other: "" }),
         qty: e.qty ? String(e.qty) : "",
         unit: e.unit ?? "kg",
         client_id: "",
@@ -110,7 +114,7 @@ function ExpenseForm({ editing, initial }: { editing?: Saved; initial?: Draft })
       photo_key: draft.photo_key,
       has_receipt: !draft.no_receipt,
       note: draft.note,
-      item: draft.item || null,
+      item: tripId ? morningItemText(draft.pick ?? "", draft.other ?? "") : draft.item || null,
       qty: draft.qty ? Number(draft.qty) : null,
       unit: draft.qty ? draft.unit : null,
     };
@@ -147,6 +151,35 @@ function ExpenseForm({ editing, initial }: { editing?: Saved; initial?: Draft })
           </label>
         )}
 
+        {tripId && (
+          <div className="field">
+            <span className="label">{t("shopping.what")}</span>
+            <div className="tiles">
+              {[...MORNING_ITEMS, MORNING_OTHERS].map((i) => (
+                <button
+                  type="button"
+                  key={i.name}
+                  className={`tile${draft.pick === i.name ? " on" : ""}`}
+                  aria-pressed={draft.pick === i.name}
+                  onClick={() => setDraft((d) => {
+                    const pick = d.pick === i.name ? "" : i.name;
+                    // A vegetable bill: file it under Vegetables unless a category is already picked.
+                    const veg = cats.data?.categories.find((c) => c.key === "vegetables");
+                    return { ...d, pick, category_id: d.category_id || (pick && veg ? veg.id : 0) };
+                  })}
+                >
+                  <span aria-hidden="true" style={{ fontSize: "1.4em", marginRight: 6 }}>{i.emoji}</span>
+                  {i.name}
+                </button>
+              ))}
+            </div>
+            {draft.pick === MORNING_OTHERS.name && (
+              <input id="other" className="input" style={{ marginTop: 8 }} aria-label={t("shopping.others_what")} placeholder={t("shopping.others_what")}
+                value={draft.other ?? ""} onChange={(e) => set("other", e.target.value)} />
+            )}
+          </div>
+        )}
+
         <Field label={t("common.amount")} htmlFor="amount">
           <MoneyInput id="amount" value={draft.amount} onChange={(v) => set("amount", v)} />
         </Field>
@@ -173,9 +206,11 @@ function ExpenseForm({ editing, initial }: { editing?: Saved; initial?: Draft })
         <details>
           <summary className="muted" style={{ cursor: "pointer", padding: "6px 0" }}>{t("expense.qty_toggle")} · {t("common.optional")}</summary>
           <div className="form" style={{ marginTop: 12 }}>
-            <Field label={t("expense.item")} htmlFor="item">
-              <input id="item" className="input" value={draft.item} placeholder={t("expense.item_eg")} onChange={(e) => set("item", e.target.value)} />
-            </Field>
+            {!tripId && (
+              <Field label={t("expense.item")} htmlFor="item">
+                <input id="item" className="input" value={draft.item} placeholder={t("expense.item_eg")} onChange={(e) => set("item", e.target.value)} />
+              </Field>
+            )}
             <div className="grid-2">
               <Field label={t("delivery.qty")} htmlFor="qty">
                 <input id="qty" className="input" inputMode="decimal" value={draft.qty} onChange={(e) => set("qty", e.target.value.replace(/[^\d.]/g, ""))} />

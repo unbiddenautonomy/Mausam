@@ -62,6 +62,7 @@ export interface ShoppingTrip {
   business_date: string;
   manager_id: number;
   manager_name?: string;
+  /** Cash taken from the counter. Entered when the trip is finished; 0 while an open trip has none yet. */
   float_out: Paise;
   float_back: Paise | null;
   status: "open" | "closed";

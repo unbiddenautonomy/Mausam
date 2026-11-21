@@ -8,11 +8,19 @@ import { newClientId } from "../../lib/format";
 import { Icon } from "../../components/Icon";
 import { Empty, ErrorNote, Field, Loading, MoneyInput, NavCard, PageHead, PhotoInput, Pill, Segmented, useToast } from "../../components/ui";
 
-type Terms = "per_delivery" | "weekly" | "monthly";
-interface VendorRow { id: number; name: string; phone: string | null; payment_terms: Terms; opening_due: number; note: string | null; active: number; due: number; last_delivery: string | null; items: number }
+type Terms = "daily" | "every_2_days" | "per_delivery" | "weekly" | "times_month" | "monthly";
+const TERMS: Terms[] = ["daily", "every_2_days", "per_delivery", "weekly", "times_month", "monthly"];
+type T = ReturnType<typeof useSession>["t"];
+/** "Daily", "3 times a month", "Lump sum or on delivery"… */
+function termsLabel(t: T, v: { payment_terms: Terms; bills_per_month: number | null }) {
+  if (v.payment_terms === "times_month") return t("terms.times_month_n", { count: v.bills_per_month ?? 1 });
+  return t(`terms.${v.payment_terms}` as const);
+}
+interface VendorRow { id: number; name: string; phone: string | null; payment_terms: Terms; bills_per_month: number | null; opening_due: number; note: string | null; active: number; due: number; last_delivery: string | null; items: number }
 interface Item { id: number; item: string; unit: string; agreed_rate: number; usual_qty: number | null; delivery_days: string | null; active: number }
 interface Expected { id: number; item: string; unit: string; usual_qty: number | null; vendor_id: number; vendor_name: string; logged: boolean }
-interface HistoryRow { kind: "delivery" | "payment"; id: number; business_date: string; label: string; qty: number | null; unit: string | null; rate: number | null; agreed_rate: number | null; amount: number; photo_key: string | null; note: string | null; by_name: string | null }
+interface HistoryRow { kind: "delivery" | "payment"; id: number; business_date: string; label: string; qty: number | null; unit: string | null; rate: number | null; agreed_rate: number | null; amount: number; photo_key: string | null; note: string | null; by_name: string | null; balance: number }
+interface Totals { opening: number; bought: number; paid: number; due: number }
 
 const LOCALE: Record<Lang, string> = { en: "en-IN", hi: "hi-IN", kn: "kn-IN" };
 function weekdays(lang: Lang) {
@@ -64,7 +72,7 @@ export function VendorList() {
               to={`/vendors/${v.id}`}
               icon="truck"
               title={v.name}
-              desc={[t(`terms.${v.payment_terms}` as const), v.last_delivery ? formatDay(v.last_delivery) : null, v.active ? null : "—"].filter(Boolean).join(" · ")}
+              desc={[termsLabel(t, v), v.last_delivery ? formatDay(v.last_delivery) : null, v.active ? null : "—"].filter(Boolean).join(" · ")}
               right={owner && v.due !== 0 ? <span className="amount">{formatINR(v.due)}</span> : undefined}
             />
           ))}
@@ -80,6 +88,7 @@ function VendorForm({ vendor, onDone }: { vendor?: VendorRow; onDone: (id: numbe
     name: vendor?.name ?? "",
     phone: vendor?.phone ?? "",
     payment_terms: (vendor?.payment_terms ?? "monthly") as Terms,
+    bills_per_month: vendor?.bills_per_month ? String(vendor.bills_per_month) : "2",
     opening_due: vendor?.opening_due ? String(vendor.opening_due / 100) : "",
     note: vendor?.note ?? "",
     active: vendor ? Boolean(vendor.active) : true,
@@ -88,7 +97,7 @@ function VendorForm({ vendor, onDone }: { vendor?: VendorRow; onDone: (id: numbe
   async function save() {
     setError(null);
     try {
-      const body = { ...f, opening_due: rupeesToPaise(f.opening_due) ?? 0 };
+      const body = { ...f, bills_per_month: f.payment_terms === "times_month" ? Number(f.bills_per_month) : null, opening_due: rupeesToPaise(f.opening_due) ?? 0 };
       if (vendor) {
         await api(`/vendors/${vendor.id}`, { method: "PATCH", json: body });
         onDone(vendor.id);
@@ -106,10 +115,18 @@ function VendorForm({ vendor, onDone }: { vendor?: VendorRow; onDone: (id: numbe
         <Field label={t("vendor.name")} htmlFor="v-name"><input id="v-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label={t("vendor.phone")} htmlFor="v-phone"><input id="v-phone" className="input" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
       </div>
-      <Field label={t("vendor.terms")}>
-        <Segmented<Terms> value={f.payment_terms} onChange={(v) => setF({ ...f, payment_terms: v })}
-          options={(["per_delivery", "weekly", "monthly"] as const).map((v) => ({ value: v, label: t(`terms.${v}`) }))} />
-      </Field>
+      <div className="grid-2">
+        <Field label={t("vendor.terms")} htmlFor="v-terms">
+          <select id="v-terms" className="select" value={f.payment_terms} onChange={(e) => setF({ ...f, payment_terms: e.target.value as Terms })}>
+            {TERMS.map((v) => <option key={v} value={v}>{t(`terms.${v}` as const)}</option>)}
+          </select>
+        </Field>
+        {f.payment_terms === "times_month" && (
+          <Field label={t("vendor.bills_per_month")} htmlFor="v-per-month">
+            <input id="v-per-month" className="input" inputMode="numeric" value={f.bills_per_month} onChange={(e) => setF({ ...f, bills_per_month: e.target.value.replace(/\D/g, "").slice(0, 2) })} />
+          </Field>
+        )}
+      </div>
       <Field label={t("vendor.opening_due")} htmlFor="v-due"><MoneyInput id="v-due" value={f.opening_due} onChange={(v) => setF({ ...f, opening_due: v })} /></Field>
       <Field label={t("common.note_optional")} htmlFor="v-note"><input id="v-note" className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
       {vendor && (
@@ -118,7 +135,7 @@ function VendorForm({ vendor, onDone }: { vendor?: VendorRow; onDone: (id: numbe
       <ErrorNote error={error} />
       <div className="btn-row">
         <button className="btn" onClick={() => onDone(null)}>{t("common.cancel")}</button>
-        <button className="btn primary" disabled={!f.name.trim()} onClick={save}>{t("common.save")}</button>
+        <button className="btn primary" disabled={!f.name.trim() || (f.payment_terms === "times_month" && !(Number(f.bills_per_month) >= 1 && Number(f.bills_per_month) <= 31))} onClick={save}>{t("common.save")}</button>
       </div>
     </div>
   );
@@ -134,11 +151,11 @@ export function VendorDetail() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
   const preItem = new URLSearchParams(window.location.search).get("item");
-  const res = useApi<{ vendor: VendorRow; items: Item[]; history: HistoryRow[] }>(`/vendors/${id}`);
+  const res = useApi<{ vendor: VendorRow; items: Item[]; history: HistoryRow[]; totals: Totals }>(`/vendors/${id}`);
   const [tab, setTab] = useState<Tab>("delivery");
   const [editing, setEditing] = useState(false);
   if (!res.data) return res.error ? <ErrorNote error={res.error} /> : <Loading />;
-  const { vendor, items, history } = res.data;
+  const { vendor, items, history, totals } = res.data;
   const tabs: { value: Tab; label: string }[] = [
     { value: "delivery", label: t("delivery.add") },
     { value: "payment", label: t("payment.add") },
@@ -149,26 +166,28 @@ export function VendorDetail() {
     <div className="page">
       <PageHead
         title={vendor.name}
-        subtitle={[t(`terms.${vendor.payment_terms}` as const), vendor.phone].filter(Boolean).join(" · ")}
+        subtitle={[termsLabel(t, vendor), vendor.phone].filter(Boolean).join(" · ")}
         back="/vendors"
         action={owner && !editing ? <button className="btn small" onClick={() => setEditing(true)}>{t("common.edit")}</button> : undefined}
       />
       {editing && <VendorForm vendor={vendor} onDone={() => (setEditing(false), res.reload())} />}
       {owner && (
         <div className="stats">
-          <div className="card stat hero"><span className="label">{t("vendor.due")}</span><span className="value">{formatINR(vendor.due)}</span></div>
+          <div className="card stat hero"><span className="label">{t("vendor.due")}</span><span className="value">{formatINR(totals.due)}</span></div>
+          <div className="card stat"><span className="label">{t("vendor.bought")}</span><span className="value">{formatINR(totals.bought)}</span>{totals.opening ? <span className="muted small">{t("vendor.plus_opening", { amount: formatINR(totals.opening) })}</span> : null}</div>
+          <div className="card stat"><span className="label">{t("vendor.paid")}</span><span className="value">{formatINR(totals.paid)}</span></div>
         </div>
       )}
       <Segmented<Tab> value={tab} onChange={setTab} options={tabs} />
-      {tab === "delivery" && <DeliveryForm vendorId={id} items={items.filter((i) => i.active)} preItem={preItem ? Number(preItem) : null} onDone={() => (res.reload(), navigate(`/vendors/${id}`, { replace: true }))} />}
+      {tab === "delivery" && <DeliveryForm vendorId={id} paysDaily={vendor.payment_terms === "daily"} items={items.filter((i) => i.active)} preItem={preItem ? Number(preItem) : null} onDone={() => (res.reload(), navigate(`/vendors/${id}`, { replace: true }))} />}
       {tab === "payment" && <PaymentForm vendorId={id} due={owner ? vendor.due : null} onDone={() => (res.reload(), setTab("history"))} />}
       {tab === "items" && owner && <Items vendorId={id} items={items} lang={lang} onChange={res.reload} />}
-      {tab === "history" && <History rows={history} onChange={res.reload} />}
+      {tab === "history" && <History rows={history} showBalance={owner} onChange={res.reload} />}
     </div>
   );
 }
 
-function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; items: Item[]; preItem: number | null; onDone: () => void }) {
+function DeliveryForm({ vendorId, paysDaily, items, preItem, onDone }: { vendorId: number; paysDaily: boolean; items: Item[]; preItem: number | null; onDone: () => void }) {
   const t = useSession().t;
   const toast = useToast();
   const first = items.find((i) => i.id === preItem) ?? items[0];
@@ -182,10 +201,14 @@ function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; 
     photo: null as string | null,
     note: "",
   });
+  // Vendors billed and paid daily: record the payment with the delivery, in one go.
+  const [paidNow, setPaidNow] = useState(paysDaily);
+  const [fromCounter, setFromCounter] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  // One id per delivery being entered, so a double tap or a retry saves it once.
+  // One id per delivery (and its payment) being entered, so a double tap or a retry saves it once.
   const [clientId, setClientId] = useState(newClientId);
+  const [payClientId, setPayClientId] = useState(newClientId);
   const qty = Number(f.qty);
   const rate = rupeesToPaise(f.rate);
   const amount = qty > 0 && rate ? Math.round(qty * rate) : null;
@@ -205,9 +228,15 @@ function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; 
         method: "POST",
         json: { item_id: item?.id ?? null, item: item ? undefined : f.other, unit: item ? undefined : f.unit, qty, rate, photo_key: f.photo, note: f.note, business_date: businessDate(), client_id: clientId },
       });
+      if (paidNow) {
+        await api(`/vendors/${vendorId}/payments`, {
+          method: "POST", json: { amount, mode: "cash", from_counter: fromCounter, note: f.note, business_date: businessDate(), client_id: payClientId },
+        });
+      }
       toast(t("delivery.logged"));
       setF({ other: "", unit: "", qty: "", rate: "", photo: null, note: "" });
       setClientId(newClientId());
+      setPayClientId(newClientId());
       if (r.mismatch) toast(t("delivery.rate_differs", { rate: formatINR(rate!), agreed: formatINR(item!.agreed_rate) }));
       onDone();
     } catch (e) {
@@ -242,6 +271,10 @@ function DeliveryForm({ vendorId, items, preItem, onDone }: { vendorId: number; 
         <div className="check warn"><Icon name="alert" /><span className="t">{t("delivery.rate_differs", { rate: formatINR(rate!), agreed: formatINR(item!.agreed_rate) })}</span></div>
       )}
       {amount !== null && <div className="section-head"><span className="muted">{t("common.total")}</span><strong className="num">{formatINR(amount)}</strong></div>}
+      <label className="checkbox"><input type="checkbox" checked={paidNow} onChange={(e) => setPaidNow(e.target.checked)} /><span>{t("delivery.paid_now")}</span></label>
+      {paidNow && (
+        <label className="checkbox"><input type="checkbox" checked={fromCounter} onChange={(e) => setFromCounter(e.target.checked)} /><span>{t("payment.from_counter")}</span></label>
+      )}
       <PhotoInput label={t("delivery.photo")} kind="delivery" value={f.photo} onChange={(k) => setF({ ...f, photo: k })} />
       <Field label={t("common.note_optional")} htmlFor="d-note"><input id="d-note" className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
       <ErrorNote error={error} />
@@ -370,7 +403,7 @@ function ItemForm({ vendorId, item, days, onDone }: { vendorId: number; item?: I
   );
 }
 
-function History({ rows, onChange }: { rows: HistoryRow[]; onChange: () => void }) {
+function History({ rows, showBalance, onChange }: { rows: HistoryRow[]; showBalance: boolean; onChange: () => void }) {
   const { t, user } = useSession();
   const [error, setError] = useState<unknown>(null);
   async function remove(r: HistoryRow) {
@@ -403,7 +436,10 @@ function History({ rows, onChange }: { rows: HistoryRow[]; onChange: () => void 
                 <span><Pill tone="warn">{t("delivery.rate_differs", { rate: formatINR(r.rate!), agreed: formatINR(r.agreed_rate) })}</Pill></span>
               )}
             </span>
-            <span className="amount">{r.kind === "payment" ? "− " : ""}{formatINR(r.amount)}</span>
+            <span style={{ display: "grid", justifyItems: "end" }}>
+              <span className="amount">{r.kind === "payment" ? "− " : ""}{formatINR(r.amount)}</span>
+              {showBalance && <span className="muted small num">{t("vendor.balance_after", { amount: formatINR(r.balance) })}</span>}
+            </span>
             {user!.role === "owner" && <button className="btn small danger" aria-label={t("common.delete")} onClick={() => remove(r)}><Icon name="trash" /></button>}
           </div>
         ))}

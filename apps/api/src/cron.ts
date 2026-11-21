@@ -72,7 +72,7 @@ export async function runChecks(env: Env, now = new Date()): Promise<void> {
   }
   // Shopping still open at the escalation time (default 1 pm).
   if (t >= dueAt(today, s.shopping_escalate) && trip?.status === "open") {
-    await raise(env, "shopping_open", today, { date: today, amount: trip.float_out }, "warn", "all", "/entries/shopping");
+    await raise(env, "shopping_open", today, { date: today }, "warn", "all", "/entries/shopping");
   }
 
   // Nobody marked attendance yesterday (only once staff are set up).

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { formatDay, formatINR, rupeesToPaise, shoppingGap } from "@mausam/shared";
+import { formatDay, formatINR, MORNING_ITEMS, MORNING_OTHERS, rupeesToPaise, shoppingGap } from "@mausam/shared";
 import { api, ApiError } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
@@ -28,6 +28,7 @@ interface Exp {
   category_name: string;
   category_name_hi: string | null;
   category_name_kn: string | null;
+  item: string | null;
 }
 
 export function Shopping() {
@@ -58,15 +59,13 @@ export function Shopping() {
 
 function StartTrip({ onStarted }: { onStarted: () => void }) {
   const t = useSession().t;
-  const [amount, setAmount] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const paise = rupeesToPaise(amount);
+  // The cash taken from the counter is asked at the end, when shopping is finished.
   async function start() {
-    if (!paise) return;
     setBusy(true);
     try {
-      await api("/shopping", { method: "POST", json: { float_out: paise } });
+      await api("/shopping", { method: "POST", json: {} });
       onStarted();
     } catch (e) {
       if (e instanceof ApiError && e.code === "trip_already_open") onStarted();
@@ -77,11 +76,9 @@ function StartTrip({ onStarted }: { onStarted: () => void }) {
   }
   return (
     <div className="card form">
-      <Field label={t("shopping.float_out")} help={t("shopping.float_out_help")} htmlFor="float">
-        <MoneyInput id="float" value={amount} onChange={setAmount} autoFocus />
-      </Field>
+      <p className="muted">{t("shopping.start_help")}</p>
       <ErrorNote error={error} />
-      <button className="btn primary block" disabled={!paise || busy} onClick={start}>
+      <button className="btn primary block" disabled={busy} onClick={start}>
         <Icon name="cart" /> {t("shopping.start")}
       </button>
     </div>
@@ -92,23 +89,26 @@ function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
   const { t, lang } = useSession();
   const toast = useToast();
   const res = useApi<{ trip: Trip; expenses: Exp[]; tolerance: number }>(`/shopping/${id}`);
+  const [out, setOut] = useState<string | null>(null);
   const [back, setBack] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   if (!res.data) return res.error ? <ErrorNote error={res.error} /> : <Loading />;
   const { trip, expenses } = res.data;
-  const expected = trip.float_out - trip.spent;
+  // A trip started on an older phone already has the cash taken; otherwise it is entered here, at the end.
+  const outText = out ?? (trip.float_out ? String(trip.float_out / 100) : "");
+  const outPaise = rupeesToPaise(outText);
   const backPaise = rupeesToPaise(back);
-  const gap = backPaise === null ? null : shoppingGap(trip.float_out, trip.spent, backPaise);
+  const gap = backPaise === null || outPaise === null ? null : shoppingGap(outPaise, trip.spent, backPaise);
   const needsNote = gap !== null && Math.abs(gap) > (res.data.tolerance ?? 5000);
 
   async function finish() {
-    if (backPaise === null) return;
+    if (backPaise === null || outPaise === null) return;
     setBusy(true);
     setError(null);
     try {
-      await api(`/shopping/${id}/close`, { method: "POST", json: { float_back: backPaise, note } });
+      await api(`/shopping/${id}/close`, { method: "POST", json: { float_out: outPaise, float_back: backPaise, note } });
       toast(t("shopping.closed"));
       if (onClosed) onClosed();
       else res.reload();
@@ -122,12 +122,12 @@ function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
   return (
     <>
       <div className="stats">
-        <Stat label={t("shopping.float_out")} value={<Money paise={trip.float_out} />} />
         <Stat label={t("shopping.spent_cash")} value={<Money paise={trip.spent} />} />
-        {trip.status === "closed" ? (
-          <Stat label={t("shopping.float_back")} value={<Money paise={trip.float_back} />} />
-        ) : (
-          <Stat label={t("shopping.expected_back")} value={<Money paise={expected} />} />
+        {trip.status === "closed" && (
+          <>
+            <Stat label={t("shopping.float_out")} value={<Money paise={trip.float_out} />} />
+            <Stat label={t("shopping.float_back")} value={<Money paise={trip.float_back} />} />
+          </>
         )}
       </div>
 
@@ -146,7 +146,7 @@ function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
             <div className="row" key={e.id}>
               {e.photo_key ? <Photo className="thumb" photoKey={e.photo_key} /> : <span className="thumb" style={{ display: "grid", placeItems: "center" }}><Icon name="receipt" /></span>}
               <span className="grow">
-                <strong className="ellipsis">{catName(e, lang)}{e.shop ? ` · ${e.shop}` : ""}</strong>
+                <strong className="ellipsis">{e.item ? `${(MORNING_ITEMS.find((i) => i.name === e.item) ?? MORNING_OTHERS).emoji} ${e.item}` : catName(e, lang)}{e.shop ? ` · ${e.shop}` : ""}</strong>
                 <span className="muted small">
                   {timeIST(e.created_at)} {!e.has_receipt && <Pill tone="warn">{t("expense.no_receipt")}</Pill>}
                 </span>
@@ -160,6 +160,14 @@ function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
       {trip.status === "open" ? (
         <section className="card form">
           <h2>{t("shopping.finish")}</h2>
+          <Field label={t("shopping.float_out")} help={t("shopping.float_out_help")} htmlFor="out">
+            <MoneyInput id="out" value={outText} onChange={setOut} />
+          </Field>
+          {outPaise !== null && (
+            <div className="muted small">
+              {t("shopping.expected_back")}: {formatINR(outPaise - trip.spent)}
+            </div>
+          )}
           <Field label={t("shopping.float_back")} htmlFor="back">
             <MoneyInput id="back" value={back} onChange={setBack} />
           </Field>
@@ -175,7 +183,7 @@ function TripView({ id, onClosed }: { id: number; onClosed?: () => void }) {
             </Field>
           )}
           <ErrorNote error={error} />
-          <button className="btn primary block" disabled={backPaise === null || busy || (needsNote && !note.trim())} onClick={finish}>
+          <button className="btn primary block" disabled={backPaise === null || outPaise === null || busy || (needsNote && !note.trim())} onClick={finish}>
             <Icon name="check" /> {t("shopping.finish")}
           </button>
         </section>

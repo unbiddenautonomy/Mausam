@@ -7,7 +7,8 @@ import { assertDayOpen, audit, auditStmt, bool, clientIdOf, isClientIdClash } fr
 import { HttpError, optionalPaise, optionalText, requireDate, requirePaise, requireText } from "../lib/http";
 import { raise } from "../cron";
 
-const TERMS = ["per_delivery", "weekly", "monthly"] as const;
+/** How often a vendor bills us. "times_month" goes with bills_per_month (e.g. 3 times a month). */
+const TERMS = ["daily", "every_2_days", "per_delivery", "weekly", "times_month", "monthly"] as const;
 
 export const vendors = new Hono<AppEnv>();
 vendors.use("*", requireRole("owner", "manager"));
@@ -27,7 +28,7 @@ export async function vendorDues(db: D1Database) {
 
 vendors.get("/", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT v.id, v.name, v.phone, v.payment_terms, v.opening_due, v.note, v.active, c.key AS category_key,
+    `SELECT v.id, v.name, v.phone, v.payment_terms, v.bills_per_month, v.opening_due, v.note, v.active, c.key AS category_key,
             ${DUE_SQL} AS due,
             (SELECT MAX(business_date) FROM deliveries d WHERE d.vendor_id = v.id AND d.deleted_at IS NULL) AS last_delivery,
             (SELECT COUNT(*) FROM vendor_items i WHERE i.vendor_id = v.id AND i.active = 1) AS items
@@ -53,6 +54,12 @@ vendors.get("/expected", async (c) => {
   return c.json({ date, items: due.map((r) => ({ ...r, logged: r.logged > 0 })) });
 });
 
+function perMonth(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 31) throw new HttpError(422, "invalid", { field: "bills_per_month" });
+  return n;
+}
+
 function readVendor(b: Record<string, unknown>) {
   const terms = TERMS.includes(b.payment_terms as (typeof TERMS)[number]) ? (b.payment_terms as string) : "monthly";
   return {
@@ -60,6 +67,7 @@ function readVendor(b: Record<string, unknown>) {
     phone: optionalText(b.phone, 20),
     category_id: b.category_id ? Number(b.category_id) : null,
     payment_terms: terms,
+    bills_per_month: terms === "times_month" ? perMonth(b.bills_per_month) : null,
     opening_due: optionalPaise(b.opening_due, "opening_due") ?? 0,
     note: optionalText(b.note),
     active: b.active === undefined ? 1 : bool(b.active) ? 1 : 0,
@@ -69,9 +77,9 @@ function readVendor(b: Record<string, unknown>) {
 vendors.post("/", requireRole("owner"), async (c) => {
   const v = readVendor(await c.req.json());
   const res = await c.env.DB.prepare(
-    "INSERT INTO vendors (name, phone, category_id, payment_terms, opening_due, note, active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO vendors (name, phone, category_id, payment_terms, bills_per_month, opening_due, note, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(v.name, v.phone, v.category_id, v.payment_terms, v.opening_due, v.note, v.active)
+    .bind(v.name, v.phone, v.category_id, v.payment_terms, v.bills_per_month, v.opening_due, v.note, v.active)
     .run();
   const id = Number(res.meta.last_row_id);
   await audit(c.env.DB, "vendors", id, "create", null, v, c.get("user").id);
@@ -83,8 +91,8 @@ vendors.patch("/:id{[0-9]+}", requireRole("owner"), async (c) => {
   const before = await c.env.DB.prepare("SELECT * FROM vendors WHERE id = ?").bind(id).first();
   if (!before) throw new HttpError(404, "not_found");
   const v = readVendor({ ...before, ...(await c.req.json()) });
-  await c.env.DB.prepare("UPDATE vendors SET name = ?, phone = ?, category_id = ?, payment_terms = ?, opening_due = ?, note = ?, active = ? WHERE id = ?")
-    .bind(v.name, v.phone, v.category_id, v.payment_terms, v.opening_due, v.note, v.active, id)
+  await c.env.DB.prepare("UPDATE vendors SET name = ?, phone = ?, category_id = ?, payment_terms = ?, bills_per_month = ?, opening_due = ?, note = ?, active = ? WHERE id = ?")
+    .bind(v.name, v.phone, v.category_id, v.payment_terms, v.bills_per_month, v.opening_due, v.note, v.active, id)
     .run();
   await audit(c.env.DB, "vendors", id, "update", before, v, c.get("user").id);
   return c.json({ ok: true });
@@ -92,20 +100,31 @@ vendors.patch("/:id{[0-9]+}", requireRole("owner"), async (c) => {
 
 vendors.get("/:id{[0-9]+}", async (c) => {
   const id = Number(c.req.param("id"));
-  const vendor = await c.env.DB.prepare(`SELECT v.*, ${DUE_SQL} AS due FROM vendors v WHERE v.id = ?`).bind(id).first();
+  const vendor = await c.env.DB.prepare(`SELECT v.*, ${DUE_SQL} AS due FROM vendors v WHERE v.id = ?`).bind(id).first<Record<string, unknown> & { opening_due: number }>();
   if (!vendor) throw new HttpError(404, "not_found");
   const items = await c.env.DB.prepare("SELECT * FROM vendor_items WHERE vendor_id = ? ORDER BY active DESC, item").bind(id).all();
-  const history = await c.env.DB.prepare(
+  // Every delivery and payment, oldest first, so each row can carry the running balance after it.
+  const { results: all } = await c.env.DB.prepare(
     `SELECT 'delivery' AS kind, d.id AS id, d.business_date AS business_date, d.item AS label, d.qty AS qty, d.unit AS unit, d.rate AS rate, d.agreed_rate AS agreed_rate, d.amount AS amount, d.photo_key AS photo_key, d.note AS note, u.name AS by_name, d.created_at AS created_at
        FROM deliveries d LEFT JOIN users u ON u.id = d.created_by WHERE d.vendor_id = ? AND d.deleted_at IS NULL
      UNION ALL
      SELECT 'payment', p.id, p.business_date, p.mode, NULL, NULL, NULL, NULL, p.amount, NULL, p.note, u.name, p.created_at
        FROM vendor_payments p LEFT JOIN users u ON u.id = p.created_by WHERE p.vendor_id = ? AND p.deleted_at IS NULL
-     ORDER BY business_date DESC, created_at DESC LIMIT 100`,
+     ORDER BY business_date ASC, created_at ASC, kind ASC, id ASC`,
   )
     .bind(id, id)
-    .all();
-  return c.json({ vendor, items: items.results, history: history.results });
+    .all<{ kind: "delivery" | "payment"; amount: number }>();
+  let balance = Number(vendor.opening_due) || 0;
+  let bought = 0;
+  let paid = 0;
+  const withBalance = all.map((r) => {
+    if (r.kind === "delivery") bought += r.amount;
+    else paid += r.amount;
+    balance += r.kind === "delivery" ? r.amount : -r.amount;
+    return { ...r, balance };
+  });
+  const history = withBalance.slice(-100).reverse();
+  return c.json({ vendor, items: items.results, history, totals: { opening: Number(vendor.opening_due) || 0, bought, paid, due: balance } });
 });
 
 /* ---------- Items (the deal) ---------- */

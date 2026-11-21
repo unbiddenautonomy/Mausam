@@ -102,6 +102,52 @@ describe("expenses and shopping trips", () => {
     expect(late.status).toBe(409);
     expect(late.json.error).toBe("trip_closed");
   });
+
+  it("asks for the cash taken from the counter when shopping is finished, not when it starts", async () => {
+    const vegId = (await app.db.prepare("SELECT id FROM expense_categories WHERE key = 'vegetables'").first<{ id: number }>())!.id;
+    const started = await app.call(manager, "POST", "/shopping", {});
+    expect(started.status).toBe(201);
+    const id = started.json.id;
+    const bill = await app.call(manager, "POST", "/expenses", { category_id: vegId, amount: 30000, has_receipt: false, trip_id: id, item: "Kanda / Onion" });
+    expect(bill.status).toBe(201);
+    expect(bill.json.expense.item).toBe("Kanda / Onion");
+    // Finishing without the cash taken is refused.
+    const missing = await app.call(manager, "POST", `/shopping/${id}/close`, { float_back: 20000 });
+    expect(missing.status).toBe(422);
+    expect(missing.json.detail).toMatchObject({ field: "float_out" });
+    // ₹500 out, ₹300 spent, ₹200 back: it adds up.
+    const done = await app.call(manager, "POST", `/shopping/${id}/close`, { float_out: 50000, float_back: 20000 });
+    expect(done.status).toBe(200);
+    expect(done.json.gap).toBe(0);
+    const trip = (await app.call(manager, "GET", `/shopping/${id}`)).json.trip;
+    expect(trip).toMatchObject({ status: "closed", float_out: 50000, float_back: 20000, spent: 30000 });
+  });
+});
+
+describe("vendors", () => {
+  it("starts with Mausam's vendors and how often each one bills", async () => {
+    const list = (await app.call(owner, "GET", "/vendors")).json.vendors as { name: string; payment_terms: string; bills_per_month: number | null }[];
+    const by = (n: string) => list.find((v) => v.name === n);
+    expect(by("Water")).toMatchObject({ payment_terms: "times_month", bills_per_month: 3 });
+    expect(by("Karyanu / Grain")).toMatchObject({ payment_terms: "times_month", bills_per_month: 5 });
+    expect(by("Mukhwas")).toMatchObject({ payment_terms: "per_delivery" });
+    expect(by("Butter + Cheese + Paneer")).toMatchObject({ payment_terms: "every_2_days" });
+    for (const n of ["Gas", "Pau", "Chaas / Butter Milk", "Sukka Lasan / Dry Garlic", "Cleaners"]) expect(by(n)).toMatchObject({ payment_terms: "daily" });
+  });
+
+  it("keeps a running tally of what was bought and what was paid", async () => {
+    const v = await app.call(owner, "POST", "/vendors", { name: "Tally test", payment_terms: "times_month", bills_per_month: 4, opening_due: 10000 });
+    expect(v.status).toBe(201);
+    const id = v.json.id;
+    expect((await app.call(owner, "POST", "/vendors", { name: "Bad", payment_terms: "times_month", bills_per_month: 0 })).status).toBe(422);
+    await app.call(manager, "POST", `/vendors/${id}/deliveries`, { item: "Oil tin", unit: "tin", qty: 2, rate: 150000 });
+    await app.call(manager, "POST", `/vendors/${id}/payments`, { amount: 200000, mode: "online" });
+    const res = (await app.call(owner, "GET", `/vendors/${id}`)).json;
+    expect(res.totals).toEqual({ opening: 10000, bought: 300000, paid: 200000, due: 110000 });
+    expect(res.vendor).toMatchObject({ due: 110000, bills_per_month: 4 });
+    // Newest first, each row with what was owed after it.
+    expect(res.history.map((r: { kind: string; balance: number }) => [r.kind, r.balance])).toEqual([["payment", 110000], ["delivery", 310000]]);
+  });
 });
 
 describe("closing alerts", () => {
