@@ -7,6 +7,7 @@ import { audit, auditStmt, bool } from "../lib/db";
 import { HttpError, isDate, optionalText, requireText } from "../lib/http";
 import { managersCanSee } from "./analytics";
 import { applyPosToCloses } from "./entries";
+import { alertParams, notify } from "../lib/notify";
 
 /**
  * The touchscreen POS: menu and tables for the counter, and bill sync.
@@ -753,6 +754,54 @@ billing.get("/bills", requireRole("owner", "manager"), async (c) => {
     counters: counters.results,
     rejects: rejects.results,
   });
+});
+
+/* ---------------- New items from the counter (owner, manager, staff) ---------------- */
+
+/**
+ * Adds a menu item from the POS, so a dish that isn't on the menu yet can be billed straight away. It goes on the
+ * menu at once; the owner and the managers get a reminder and an alert, so they can check the name and the price.
+ */
+billing.post("/items", anyPosUser, async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const db = c.env.DB;
+  const user = c.get("user");
+  const f = itemFields({ category_id: b.category_id, name: b.name, short_name: b.short_name, price: b.price, veg: b.veg });
+  const cat = await db.prepare("SELECT id, name FROM menu_categories WHERE id = ? AND active = 1").bind(f.category_id).first<{ id: number; name: string }>();
+  if (!cat) throw new HttpError(422, "invalid", { field: "category_id" });
+  const same = await db.prepare("SELECT id FROM menu_items WHERE active = 1 AND lower(name) = lower(?)").bind(f.name).first();
+  if (same) throw new HttpError(409, "item_exists");
+  const res = await db.prepare(
+    "INSERT INTO menu_items (category_id, name, short_name, price, veg, favourite, sort, active) VALUES (?, ?, ?, ?, ?, 0, ?, 1)",
+  ).bind(f.category_id, f.name, f.short_name, f.price, f.veg, f.sort).run();
+  const id = Number(res.meta.last_row_id);
+  await audit(db, "menu_items", id, "create", null, { ...f, from: "pos" }, user.id);
+  const item = await db
+    .prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort, variations, addons FROM menu_items WHERE id = ?")
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  // Tell the owner and the managers, but not the person who added it.
+  const today = businessDate();
+  const params = { name: f.name, amount: f.price, category: cat.name, by: user.name, item_id: id };
+  await db.prepare("INSERT INTO alerts (type, business_date, severity, params, audience) VALUES (?, ?, 'info', ?, 'all') ON CONFLICT (type, business_date) DO NOTHING")
+    .bind(`item_added:${id}`, today, JSON.stringify(params))
+    .run();
+  const { results: tell } = await db
+    .prepare("SELECT id FROM users WHERE active = 1 AND role IN ('owner', 'manager') AND id != ?")
+    .bind(user.id)
+    .all<{ id: number }>();
+  if (tell.length) {
+    c.executionCtx.waitUntil(
+      notify(
+        c.env,
+        { users: tell.map((u) => u.id) },
+        { title: "push.item_added_title", body: "alert.item_added", params: alertParams("item_added", today, params) },
+        { url: "/manage/menu", dedupeKey: `alert:item_added:${id}` },
+      ).catch((e) => console.error("item added push failed", e)),
+    );
+  }
+  return c.json({ item: withOptions([item!])[0] }, 201);
 });
 
 /* ---------------- Owner: menu, tables and POS settings ---------------- */

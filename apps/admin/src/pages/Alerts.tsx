@@ -16,9 +16,12 @@ interface AlertRow {
 }
 
 /** Where tapping an alert goes: the screen that fixes it. */
-export function alertLink(a: { type: string; business_date: string; params: Record<string, string | number> }): string {
+export function alertLink(a: { type: string; business_date: string; params: Record<string, string | number> }, role?: string): string {
   const base = a.type.split(":")[0];
   switch (base) {
+    case "item_added":
+      // The menu is the owner's page; a manager just sees the alert.
+      return role === "owner" ? "/manage/menu" : "/alerts";
     case "backup_missing":
       return "/alerts";
     case "login_locked":
@@ -39,7 +42,7 @@ export function alertLink(a: { type: string; business_date: string; params: Reco
 }
 
 export function Alerts() {
-  const t = useSession().t;
+  const { t, user } = useSession();
   const res = useApi<{ alerts: AlertRow[] }>("/alerts");
 
   function text(a: AlertRow): string {
@@ -54,9 +57,10 @@ export function Alerts() {
       name: String(p.name ?? ""),
       vendor: String(p.vendor ?? ""),
       month: String(p.month ?? ""),
+      by: String(p.by ?? ""),
     });
   }
-  const link = (a: AlertRow) => alertLink(a);
+  const link = (a: AlertRow) => alertLink(a, user?.role);
 
   async function markSeen(ids?: number[]) {
     await api("/alerts/seen", { method: "POST", json: { ids } }).catch(() => {});
@@ -76,7 +80,7 @@ export function Alerts() {
           {res.data.alerts.map((a) => (
             <div className="row" key={a.id} style={{ opacity: a.seen_at ? 0.55 : 1 }}>
               <span className={`check ${a.severity === "critical" ? "bad" : a.severity === "warn" ? "warn" : ""}`} style={{ padding: 8 }}>
-                <Icon name={a.type === "shopping_open" ? "cart" : a.type.startsWith("expense") ? "receipt" : "alert"} />
+                <Icon name={a.type === "shopping_open" ? "cart" : a.type.startsWith("item_added") ? "plus" : a.type.startsWith("expense") ? "receipt" : "alert"} />
               </span>
               <Link to={link(a)} className="grow">
                 <strong>{text(a)}</strong>

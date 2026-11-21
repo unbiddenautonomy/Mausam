@@ -134,5 +134,6 @@ export function alertParams(type: string, date: string, params: Record<string, u
     name: String(params.name ?? ""),
     vendor: String(params.vendor ?? ""),
     month: String(params.month ?? ""),
+    by: String(params.by ?? ""),
   };
 }
