@@ -669,37 +669,56 @@ billing.post("/orders/sync", anyPosUser, async (c) => {
   });
 });
 
-/** Every bill of a day from all screens, for the day summary on any screen (and reprints). */
-billing.get("/day", anyPosUser, async (c) => {
-  const date = c.req.query("date") ?? businessDate();
-  if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
-  const db = c.env.DB;
+/** Every bill between two business dates (inclusive), with its lines and payments, as the POS shows them. */
+async function billsBetween(db: D1Database, from: string, to: string) {
   const { results: bills } = await db
     .prepare(
       `SELECT id, client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
-              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at
-       FROM pos_bills WHERE business_date = ? ORDER BY closed_at`,
+              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at, commission
+       FROM pos_bills WHERE business_date BETWEEN ? AND ? ORDER BY closed_at`,
     )
-    .bind(date)
+    .bind(from, to)
     .all<Record<string, unknown> & { id: number }>();
   const [items, pays] = await Promise.all([
     db.prepare(
       `SELECT i.bill_id, i.item_id, i.name, i.category, i.qty, i.price, i.tax_rate, i.note, i.variation, i.modifier
-       FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date = ? ORDER BY i.id`,
-    ).bind(date).all<{ bill_id: number }>(),
-    db.prepare("SELECT p.bill_id, p.mode, p.amount FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date = ? ORDER BY p.id")
-      .bind(date).all<{ bill_id: number }>(),
+       FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id WHERE b.business_date BETWEEN ? AND ? ORDER BY i.id`,
+    ).bind(from, to).all<{ bill_id: number }>(),
+    db.prepare("SELECT p.bill_id, p.mode, p.amount FROM pos_payments p JOIN pos_bills b ON b.id = p.bill_id WHERE b.business_date BETWEEN ? AND ? ORDER BY p.id")
+      .bind(from, to).all<{ bill_id: number }>(),
   ]);
   const strip = <R extends { bill_id: number }>(r: R) => { const { bill_id: _b, ...rest } = r; return rest; };
-  return c.json({
-    date,
-    bills: bills.map(({ id, ...b }) => ({
-      ...b,
-      prices_include_tax: bool(b.prices_include_tax),
-      lines: items.results.filter((i) => i.bill_id === id).map(strip),
-      payments: pays.results.filter((p) => p.bill_id === id).map(strip),
-    })),
-  });
+  const linesOf = new Map<number, unknown[]>();
+  for (const i of items.results) linesOf.set(i.bill_id, [...(linesOf.get(i.bill_id) ?? []), strip(i)]);
+  const paysOf = new Map<number, unknown[]>();
+  for (const p of pays.results) paysOf.set(p.bill_id, [...(paysOf.get(p.bill_id) ?? []), strip(p)]);
+  return bills.map(({ id, ...b }) => ({
+    ...b,
+    prices_include_tax: bool(b.prices_include_tax),
+    lines: linesOf.get(id) ?? [],
+    payments: paysOf.get(id) ?? [],
+  }));
+}
+
+/** Every bill of a day from all screens, for the day summary on any screen (and reprints). */
+billing.get("/day", anyPosUser, async (c) => {
+  const date = c.req.query("date") ?? businessDate();
+  if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
+  return c.json({ date, bills: await billsBetween(c.env.DB, date, date) });
+});
+
+/** The longest stretch the POS reports ask for at once. */
+const RANGE_MAX_DAYS = 92;
+
+/** Bills from a date to a date, for the POS's Report's menu (owner and managers, like the old POS's super user). */
+billing.get("/range", requireRole("owner", "manager"), async (c) => {
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  if (!isDate(from)) throw new HttpError(422, "invalid", { field: "from" });
+  if (!isDate(to) || to < from) throw new HttpError(422, "invalid", { field: "to" });
+  const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
+  if (days > RANGE_MAX_DAYS) throw new HttpError(422, "range_too_long", { max_days: RANGE_MAX_DAYS });
+  return c.json({ from, to, bills: await billsBetween(c.env.DB, from, to) });
 });
 
 /* ---------------- For the owner and managers: looking at bills ---------------- */

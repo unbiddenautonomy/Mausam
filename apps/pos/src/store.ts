@@ -101,6 +101,8 @@ export interface Bill {
   discount_approved_by?: number | null;
   /** The number on the paper copy, when the bill was given a new one because that number was already used. */
   printed_no?: string;
+  /** The waiter's commission on this bill, in paise, worked out by the server (reports only). */
+  commission?: number;
   synced?: boolean;
   /** Why the server refused it (an error code). Such a bill isn't sent again until someone taps Send again. */
   rejected?: string;

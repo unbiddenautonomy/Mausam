@@ -173,7 +173,7 @@ On an iPhone, use **Safari**: **Share → Add to Home Screen**, then open the ap
    ```
    Open the POS from that shortcut. Bills print straight away on 80 mm paper. Press Alt+F4 to leave. The full printer setup is in [pos-printing.md](pos-printing.md).
 
-If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day summary** shows anything not sent yet.
+If the internet drops, keep billing. Bills are saved on the counter and sent when it's back. **Day End** shows anything not sent yet.
 
 ### Step 13. In the first week
 
@@ -198,7 +198,7 @@ The `.workers.dev` address works permanently. A domain is only if you want a nic
 1. Buy the domain. The easiest place is Cloudflare itself: **Domain Registration → Register Domains**. If you buy it somewhere else, add it under **Add a domain** (Free plan) and change the nameservers at the seller to the two Cloudflare shows. That can take a few hours.
 2. **mausam-admin → Settings → Domains & Routes → + Add → Custom domain**, type `admin.mausam.in`, and click **Add domain**. Cloudflare sets up the address and its certificate itself.
 
-**If you can, do this before the restaurant starts using the app.** To phones and browsers, a new address is a new site. After a switch, everyone logs in again, managers turn reminders on again and re-add the home-screen icon, and the counter PC uses the new `/pos/` address. Before switching the counter, check **Day summary** on the old address shows nothing unsent.
+**If you can, do this before the restaurant starts using the app.** To phones and browsers, a new address is a new site. After a switch, everyone logs in again, managers turn reminders on again and re-add the home-screen icon, and the counter PC uses the new `/pos/` address. Before switching the counter, check **Day End** on the old address shows nothing unsent.
 
 ### Backups
 

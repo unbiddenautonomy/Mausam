@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { businessDate, changeDue, financialYear, formatINR, formatTime, LANGUAGES, setDateLang, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
-import { api, ApiError, fetchConfig, fetchDay, claimCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
+import { api, ApiError, fetchConfig, fetchDay, fetchRange, claimCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
@@ -23,7 +23,8 @@ type Copy = "Original" | "Duplicate";
 type PrintJob =
   | { kind: "bill"; bill: Bill; copy: Copy }
   | { kind: "summary"; date: string; bills: Bill[] }
-  | { kind: "items"; date: string; bills: Bill[] };
+  | { kind: "items"; date: string; bills: Bill[] }
+  | { kind: "table"; title: string; sub: string; cols: string; head: string[]; rows: string[][]; foot?: string[] };
 
 const SYNC_EVERY_MS = 20_000;
 const CONFIG_EVERY_MS = 10 * 60_000;
@@ -169,8 +170,39 @@ function CounterSetup({ t, taken, onDone }: { t: T; taken: string | null; onDone
 
 /** What's shown on screen in place of a printout (when no printer is connected), or after payment. */
 type View =
-  | { kind: "bill"; bill: Bill }
+  | { kind: "bill"; bill: Bill; orderId?: string }
   | { kind: "paid"; bill: Bill; change: number };
+
+/** The screens of the menu bar, like the old POS. Billing (the menu and the order) is home. */
+type ReportKind = "sales_summary" | "sales_details" | "item_sales" | "waiter_commission";
+type Screen =
+  | { kind: "billing" }
+  | { kind: "dashboard" }
+  | { kind: "dayend" }
+  | { kind: "items" }
+  | { kind: "report"; report: ReportKind };
+const HOME: Screen = { kind: "billing" };
+const sameScreen = (a: Screen, b: Screen) => a.kind === b.kind && (a.kind !== "report" || (b.kind === "report" && a.report === b.report));
+const REPORTS: { kind: ReportKind; key: Key }[] = [
+  { kind: "sales_summary", key: "r.sales_summary" },
+  { kind: "sales_details", key: "r.sales_details" },
+  { kind: "item_sales", key: "r.item_sales" },
+  { kind: "waiter_commission", key: "r.waiter_commission" },
+];
+/** The old POS's Master's menu. Menus, tables and waiters are kept in the admin app, so these open its pages. */
+const MASTERS: { key: Key; href: string }[] = [
+  { key: "m.waiter", href: "/manage/waiters" },
+  { key: "m.table", href: "/manage/tables" },
+  { key: "m.category", href: "/manage/menu" },
+  { key: "m.menu", href: "/manage/menu" },
+];
+
+/** "01-04-2026 – 31-03-2027": the financial year the counter is billing in, shown at the top like the old POS. */
+function periodOf(date: string): string {
+  const [y, m] = date.split("-").map(Number);
+  const start = m >= 4 ? y : y - 1;
+  return `01-04-${start} – 31-03-${start + 1}`;
+}
 
 function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   t: T; lang: Lang; setLang: (l: Lang) => void; onLogout: () => void; onCounterTaken: () => void;
@@ -179,23 +211,31 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   const [configError, setConfigError] = useState(false);
   const [orders, setOrdersState] = useState<Order[]>(storage.orders());
   const [bills, setBillsState] = useState<Bill[]>(storage.bills());
+  /** The open order on the Billing screen; null = the fresh bill (`draft`), which isn't shared until an item is added. */
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [screen, setScreen] = useState<"tables" | "order" | "summary">("tables");
+  const [draft, setDraft] = useState<Order>(() => newOrder("dine_in", null, null));
+  /** Where the counter has been, for Back. Home is the Billing screen. */
+  const [history, setHistory] = useState<Screen[]>([HOME]);
+  const screen = history[history.length - 1];
+  /** A pop-up to open on the Billing screen as it shows an order (Pay from the dashboard). */
+  const [openWith, setOpenWith] = useState<"pay" | null>(null);
+  const [menu, setMenu] = useState<"masters" | "reports" | "user" | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [print, setPrint] = useState<PrintJob | null>(null);
   const [view, setView] = useState<View | null>(null);
-  const [starting, setStarting] = useState<{ table: Table | null } | null>(null);
+  const [starting, setStarting] = useState<Table | null>(null);
   const [askLogout, setAskLogout] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [cantSave, setCantSave] = useState(storageBroken());
+  const tokenAsked = useRef(new Set<string>());
   useEffect(() => {
     keepStorage();
     return onStorageChange(setCantSave);
   }, []);
 
   /** A change made on this screen: changed orders get a new version time, and removed ones are closed for every screen. */
-  const setOrders = (fn: (o: Order[]) => Order[]) =>
+  const setOrders = useCallback((fn: (o: Order[]) => Order[]) =>
     setOrdersState((prev) => {
       const raw = fn(prev);
       const at = serverNow().toISOString();
@@ -205,7 +245,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
       noteClosed(prev.filter((o) => !kept.has(o.id)).map((o) => ({ id: o.id, updated_at: at })));
       storage.setOrders(next);
       return next;
-    });
+    }), []);
   // When someone last tapped this screen or an order changed anywhere: a busy screen checks for orders every few
   // seconds, an idle one every half minute or so.
   const lastActive = useRef(Date.now());
@@ -299,14 +339,13 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     return () => window.clearTimeout(id);
   }, [orders, shareOrders, markActive]);
 
-  // The order open here was paid or cancelled on another screen.
+  // The order open here was paid or cancelled on another screen: show a fresh bill.
   useEffect(() => {
-    if (screen === "order" && activeId && !orders.some((o) => o.id === activeId)) {
+    if (activeId && !orders.some((o) => o.id === activeId)) {
       setActiveId(null);
-      setScreen("tables");
       setToast(t("closed_elsewhere"));
     }
-  }, [orders, activeId, screen, t]);
+  }, [orders, activeId, t]);
 
   useEffect(() => {
     if (!toast) return;
@@ -314,7 +353,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  const active = orders.find((o) => o.id === activeId) ?? null;
+  const active = activeId ? orders.find((o) => o.id === activeId) ?? null : draft;
   const waiting = bills.filter((b) => !b.synced && !b.rejected).length;
   const rejected = bills.filter((b) => b.rejected).length;
 
@@ -331,15 +370,14 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   const s = config.settings;
   const printing = !!s.printing;
   const tablesOn = usesTables(config);
+  const user = storage.user();
+  const canReport = user?.role === "owner" || user?.role === "manager";
+  const isOwner = user?.role === "owner";
 
-  function open(o: Order) {
-    setOrders((os) => [...os, o]);
-    setActiveId(o.id);
-    setScreen("order");
-    void giveToken(o.id);
-  }
   /** Every order gets the next token number. It comes from the server so two screens never share one; offline, from this screen. */
   async function giveToken(id: string) {
+    if (tokenAsked.current.has(id)) return;
+    tokenAsked.current.add(id);
     let token: number;
     try {
       token = await nextToken();
@@ -350,59 +388,109 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   }
   /** An order about to print must have its token; if the server hasn't answered yet, this screen gives one. */
   const withToken = (o: Order): Order => (o.token == null ? { ...o, token: takeToken() } : o);
+
+  /** An open order with nothing in it doesn't keep a table busy or sit in the held list. */
+  function dropIfEmpty() {
+    const o = activeId ? orders.find((x) => x.id === activeId) : null;
+    if (o && o.lines.length === 0 && !o.bill_no) {
+      setOrders((os) => os.filter((x) => x.id !== o.id));
+      setActiveId(null);
+    }
+  }
+  /** A clean bill on the Billing screen. The order that was there stays open (held) if it has anything in it. */
+  function freshBill(type: Order["type"] = "dine_in") {
+    dropIfEmpty();
+    setActiveId(null);
+    setOpenWith(null);
+    setDraft(newOrder(type, null, null));
+  }
+  /** Moves to a screen of the menu bar. Leaving Billing drops an empty order, so it doesn't hold a table. */
+  function go(next: Screen) {
+    setMenu(null);
+    if (sameScreen(screen, next)) return;
+    if (screen.kind === "billing") dropIfEmpty();
+    setHistory((h) => [...h.filter((x) => !sameScreen(x, next)), next].slice(-12));
+  }
+  /** Home: the Billing screen with a fresh bill, like opening the old POS. */
+  function home() {
+    setMenu(null);
+    if (screen.kind === "billing" && !activeId && !draft.lines.length) return;
+    freshBill();
+    setHistory([HOME]);
+  }
+  function back() {
+    setMenu(null);
+    if (history.length < 2) return home();
+    if (screen.kind === "billing") dropIfEmpty();
+    setHistory((h) => h.slice(0, -1));
+  }
+  /** Shows an order on the Billing screen; `then` opens a pop-up straight away (Pay from the dashboard). */
+  function showOrder(o: Order, then: "pay" | null = null) {
+    if (activeId !== o.id) dropIfEmpty();
+    setActiveId(o.id);
+    setOpenWith(then);
+    if (screen.kind !== "billing") setHistory((h) => [...h.filter((x) => x.kind !== "billing"), HOME]);
+  }
   function openTable(table: Table) {
     const existing = orders.find((o) => o.table_id === table.id);
-    if (existing) return (setActiveId(existing.id), setScreen("order"));
+    if (existing) return showOrder(existing);
     // Ask who is serving first; with no waiters set up, go straight in.
-    if (config!.waiters.length) setStarting({ table });
-    else open(newOrder("dine_in", table, null));
+    if (config!.waiters.length) setStarting(table);
+    else startTable(table, null);
   }
-  function newTableOrder() {
-    setStarting({ table: null });
-  }
-  function startOrder(table: Table | null, waiter: number | null, tableName: string | null) {
+  function startTable(table: Table, waiter: number | null) {
     setStarting(null);
-    // Every order gets a token number for the day, printed at the top of the bill.
-    open(newOrder("dine_in", table, null, { waiter, tableName }));
-  }
-  function newParcel() {
-    open(newOrder("parcel", null, null));
+    const o = newOrder("dine_in", table, null, { waiter });
+    setOrders((os) => [...os, o]);
+    void giveToken(o.id);
+    showOrder(o);
   }
   function update(fn: (o: Order) => Order) {
     if (!active) return;
+    if (activeId === null) {
+      // The fresh bill becomes an open order (shared with the other screens) once it has an item.
+      const next = fn(draft);
+      if (next.lines.length) {
+        setOrders((os) => [...os, next]);
+        setActiveId(next.id);
+        setDraft(newOrder("dine_in", null, null));
+        void giveToken(next.id);
+      } else setDraft(next);
+      return;
+    }
     setOrders((os) => os.map((o) => (o.id === active.id ? fn(o) : o)));
   }
-  function leaveOrder() {
-    // An order with nothing in it doesn't keep the table busy.
-    if (active && active.lines.length === 0 && !active.bill_no) setOrders((os) => os.filter((o) => o.id !== active.id));
-    setActiveId(null);
-    setScreen("tables");
-  }
-  /** Gives the order its bill number (once) and returns the bill as it stands, to print or show. */
-  function billNow(copy: Copy = "Original"): Bill | null {
-    if (!active || !active.lines.length) return null;
-    const withNo = withToken(active.bill_no ? active : { ...active, bill_no: takeBillNo() });
-    update(() => withNo);
+  /** Gives an order its bill number (once) and returns the bill as it stands, to print or show. */
+  function billFor(o: Order, copy: Copy): Bill | null {
+    if (!o.lines.length) return null;
+    const withNo = withToken(o.bill_no ? o : { ...o, bill_no: takeBillNo() });
+    setOrders((os) => os.map((x) => (x.id === o.id ? withNo : x)));
     const bill = toBill(withNo, s, "paid", [], null);
     if (printing) setPrint({ kind: "bill", bill, copy });
     return bill;
   }
-  /** Save & Print: the order is saved (everything on it counts as sent to the kitchen) and its bill prints. */
+  /** Save & Print: the order is saved (everything on it counts as sent to the kitchen), its bill prints, and a fresh bill opens. */
   function saveAndPrint() {
-    if (!active || !active.lines.length) return;
+    if (!active || !active.lines.length || activeId === null) return;
     const withNo = withToken({ ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) });
     setOrders((os) => os.map((o) => (o.id === active.id ? withNo : o)));
     const bill = toBill(withNo, s, "paid", [], null);
     if (printing) {
       setPrint({ kind: "bill", bill, copy: "Original" });
       setToast(t("bill_printed"));
-    } else setView({ kind: "bill", bill });
+    } else setView({ kind: "bill", bill, orderId: withNo.id });
     setActiveId(null);
-    setScreen("tables");
+    setDraft(newOrder("dine_in", null, null));
   }
   function hold() {
-    setToast(t("held"));
-    leaveOrder();
+    if (active?.lines.length) setToast(t("held"));
+    freshBill();
+  }
+  /** CLOSE: back to the screen before (the dashboard), or a fresh bill. An order with items stays open. */
+  function closeBill() {
+    if (active?.lines.length) setToast(t("held"));
+    if (history.length > 1) back();
+    else freshBill();
   }
   function setType(type: Order["type"]) {
     update((o) => ({ ...o, type, ...(type === "parcel" ? { table_id: null, table_name: null } : {}) }));
@@ -413,42 +501,91 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     refreshBills();
     setOrders((os) => os.filter((o) => o.id !== order.id));
     setActiveId(null);
-    setScreen("tables");
+    setOpenWith(null);
+    setDraft(newOrder("dine_in", null, null));
     void sync();
     return bill;
   }
   const showBill = (b: Bill) => (printing ? setPrint({ kind: "bill", bill: b, copy: "Duplicate" }) : setView({ kind: "bill", bill: b }));
+  /** The bill icon on a dashboard card: prints the bill (or shows it on screen). */
+  function cardBill(o: Order) {
+    const b = billFor(o, "Duplicate");
+    if (b && !printing) setView({ kind: "bill", bill: b, orderId: o.id });
+  }
+  const held = orders.filter((o) => o.id !== activeId);
+  const counter = storage.counter();
+  const restaurant = (s.bill_header || "").split("\n")[0] || t("app.title");
 
-  const user = storage.user();
   return (
     <div className="app">
-      <header className="topbar">
-        <button className={`tab${screen !== "summary" ? " on" : ""}`} onClick={() => (active ? leaveOrder() : setScreen("tables"))}>{tablesOn ? t("tables") : t("orders")}</button>
-        <button className={`tab${screen === "summary" ? " on" : ""}`} onClick={() => (active && leaveOrder(), setScreen("summary"))}>{t("summary")}</button>
+      <header className="titlebar">
+        <strong className="rname">{restaurant}</strong>
+        <span className="period">{t("period")}: {periodOf(businessDate())}</span>
         <span className="grow" />
         <span className={`net ${online ? "on" : "off"}`}>
           <span className="dot" /> {online ? t("online") : t("offline")}
           {waiting > 0 && <> · {t("waiting", { n: waiting })}</>}
         </span>
-        <select className="lang" value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label="Language">
-          {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-        </select>
-        <span className="who">{storage.counter()?.code} · {user?.name}</span>
+        <div className="mb-wrap">
+          <button className="user-btn" onClick={() => setMenu(menu === "user" ? null : "user")} aria-expanded={menu === "user"}>
+            👤 {user?.name} · {counter?.code} ▾
+          </button>
+          {menu === "user" && (
+            <Dropdown align="right" onClose={() => setMenu(null)}>
+              <div className="dd-note">{user?.name} · {t("counter_code", { code: counter?.code ?? "" })}</div>
+              <div className="dd-langs">
+                {LANGUAGES.map((l) => <button key={l.code} className={`chip${lang === l.code ? " on" : ""}`} onClick={() => (setLang(l.code), setMenu(null))}>{l.label}</button>)}
+              </div>
+              <button className="dd-item danger" onClick={() => (setMenu(null), setAskLogout(true))}>{t("logout")}</button>
+            </Dropdown>
+          )}
+        </div>
       </header>
+      <nav className="menubar" aria-label={t("menu_bar")}>
+        <button className="mb icon" onClick={home} aria-label={t("home")}><span aria-hidden="true">🏠</span>{t("home")}</button>
+        <button className="mb icon" onClick={back} disabled={history.length < 2} aria-label={t("go_back")}><span aria-hidden="true">←</span>{t("go_back")}</button>
+        <span className="mb-sep" />
+        <button className={`mb${screen.kind === "billing" ? " on" : ""}`} onClick={() => (screen.kind === "billing" ? home() : go(HOME))}>{t("billing")}</button>
+        <div className="mb-wrap">
+          <button className={`mb${menu === "masters" ? " on" : ""}`} onClick={() => setMenu(menu === "masters" ? null : "masters")} aria-expanded={menu === "masters"}>{t("masters")} ▾</button>
+          {menu === "masters" && (
+            <Dropdown onClose={() => setMenu(null)}>
+              {MASTERS.map((m) => isOwner
+                ? <a key={m.key} className="dd-item" href={m.href} target="_blank" rel="noopener" onClick={() => setMenu(null)}>{t(m.key)} <span className="muted small">↗</span></a>
+                : <span key={m.key} className="dd-item off">{t(m.key)}</span>)}
+              <div className="dd-note">{isOwner ? t("opens_admin") : t("owner_only")}</div>
+            </Dropdown>
+          )}
+        </div>
+        <div className="mb-wrap">
+          <button className={`mb${menu === "reports" || screen.kind === "report" ? " on" : ""}`} onClick={() => setMenu(menu === "reports" ? null : "reports")} aria-expanded={menu === "reports"}>{t("reports")} ▾</button>
+          {menu === "reports" && (
+            <Dropdown onClose={() => setMenu(null)}>
+              {REPORTS.map((r) => (
+                <button key={r.kind} className="dd-item" disabled={!canReport} onClick={() => go({ kind: "report", report: r.kind })}>{t(r.key)}</button>
+              ))}
+              {!canReport && <div className="dd-note">{t("manager_only")}</div>}
+            </Dropdown>
+          )}
+        </div>
+        <button className={`mb${screen.kind === "dashboard" ? " on" : ""}`} onClick={() => go({ kind: "dashboard" })}>
+          {t("dashboard")}{orders.length > 0 && <span className="mb-count">{orders.length}</span>}
+        </button>
+        <button className={`mb${screen.kind === "dayend" ? " on" : ""}`} onClick={() => go({ kind: "dayend" })}>{t("summary")}</button>
+        <button className={`mb${screen.kind === "items" ? " on" : ""}`} onClick={() => go({ kind: "items" })}>{t("item_master")}</button>
+      </nav>
       {rejected > 0 && <div className="banner bad">{t("rejected", { n: rejected })}</div>}
-      {billNumbersFull(storage.counter()) && <div className="banner bad">{t("numbers_full")}</div>}
+      {billNumbersFull(counter) && <div className="banner bad">{t("numbers_full")}</div>}
       {cantSave && <div className="banner bad" role="alert">{t("storage_broken")}</div>}
       {clockOffMinutes() > 0 && <div className="banner bad">{t("clock_off", { n: clockOffMinutes() })}</div>}
 
-      {screen === "tables" && (tablesOn ? (
-        <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable} onParcel={newParcel} onNew={newTableOrder} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
-      ) : (
-        <OrdersScreen t={t} config={config} orders={orders} now={now} onNew={newTableOrder} onParcel={newParcel} onOrder={(o) => (setActiveId(o.id), setScreen("order"))} />
-      ))}
-      {screen === "order" && active && (
+      {screen.kind === "billing" && active && (
         <OrderScreen
-          t={t} lang={lang} config={config} order={active} update={update} onHold={hold} held={orders.length - 1}
-          onSavePrint={saveAndPrint} onBill={billNow} onType={setType}
+          key={active.id}
+          t={t} lang={lang} config={config} order={active} update={update} held={held} online={online} bills={bills}
+          openWith={openWith}
+          onHold={hold} onClose={closeBill} onPickHeld={(o) => showOrder(o)} onShowBill={showBill}
+          onSavePrint={saveAndPrint} onBill={(copy) => billFor(active, copy)} onType={setType}
           onPaid={(payments, change) => {
             const bill = finish(active, "paid", payments, null);
             setToast(t("paid_done", { no: bill.bill_no }));
@@ -458,15 +595,22 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           }}
           onCancel={(reason) => {
             // Nothing reached the kitchen or the guest: just drop it. Otherwise keep a cancelled bill.
+            if (activeId === null) return setDraft(newOrder("dine_in", null, null));
             if (!active.bill_no && active.lines.every((l) => l.sent === 0)) {
               setOrders((os) => os.filter((o) => o.id !== active.id));
               setActiveId(null);
-              setScreen("tables");
             } else finish(active, "cancelled", [], reason);
           }}
         />
       )}
-      {screen === "summary" && (
+      {screen.kind === "dashboard" && (tablesOn ? (
+        <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable}
+          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} />
+      ) : (
+        <OrdersScreen t={t} config={config} orders={orders} now={now} onNew={() => go(HOME)}
+          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} />
+      ))}
+      {screen.kind === "dayend" && (
         <Summary
           t={t} config={config} bills={bills} waiting={waiting} online={online} printing={printing}
           onSync={() => void sync()} onPrint={(date, list) => setPrint({ kind: "summary", date, bills: list })}
@@ -476,25 +620,35 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           onLogout={() => setAskLogout(true)}
         />
       )}
+      {screen.kind === "items" && <ItemMaster t={t} lang={lang} config={config} isOwner={isOwner} />}
+      {screen.kind === "report" && (
+        <Report key={screen.report} t={t} config={config} kind={screen.report} printing={printing} online={online}
+          onOpen={showBill} onPrint={(job) => setPrint(job)} />
+      )}
       {starting && (
-        <StartDialog t={t} config={config} table={starting.table} onClose={() => setStarting(null)}
-          onStart={(waiter, tableName) => startOrder(starting.table, waiter, tableName)} />
+        <StartDialog t={t} config={config} table={starting} onClose={() => setStarting(null)}
+          onStart={(waiter) => startTable(starting, waiter)} />
       )}
       {(view?.kind === "bill" || view?.kind === "paid") && (
         <BillDialog t={t} config={config} bill={view.bill} paid={view.kind === "paid"} change={view.kind === "paid" ? view.change : 0}
-          onPrint={printing ? () => setPrint({ kind: "bill", bill: view.bill, copy: "Duplicate" }) : undefined} onClose={() => setView(null)} />
+          onPrint={printing ? () => setPrint({ kind: "bill", bill: view.bill, copy: "Duplicate" }) : undefined}
+          onPay={view.kind === "bill" && view.orderId && orders.some((o) => o.id === view.orderId)
+            ? () => {
+              const o = orders.find((x) => x.id === view.orderId)!;
+              setView(null);
+              showOrder(o, "pay");
+            }
+            : undefined}
+          onClose={() => setView(null)} />
       )}
       {askLogout && (
-        <div className="overlay" role="dialog" aria-modal="true">
-          <div className="dialog">
-            <h2>{t("logout_confirm")}</h2>
-            {(orders.length > 0 || waiting > 0) && <p className="muted">{t("logged_out_note")}</p>}
-            <div className="actions-row">
-              <button className="btn big" onClick={() => setAskLogout(false)}>{t("close")}</button>
-              <button className="btn big danger-solid" onClick={onLogout}>{t("logout")}</button>
-            </div>
+        <Modal t={t} title={t("logout_confirm")} onClose={() => setAskLogout(false)}>
+          {(orders.length > 0 || waiting > 0) && <p className="muted">{t("logged_out_note")}</p>}
+          <div className="actions-row">
+            <button className="btn big" onClick={() => setAskLogout(false)}>{t("close")}</button>
+            <button className="btn big danger-solid" onClick={onLogout}>{t("logout")}</button>
           </div>
-        </div>
+        </Modal>
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
       <PrintArea t={t} job={print} settings={s} config={config} onDone={() => setPrint(null)} />
@@ -502,7 +656,66 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   );
 }
 
-/* ---------------- Tables (only when the table map is on) ---------------- */
+/* ---------------- Pop-ups and menus: every one has ✕, closes on Esc and on a tap outside it ---------------- */
+
+/** Open pop-ups, newest last: Esc closes only the top one. */
+const openModals: object[] = [];
+
+function Modal({ t, title, onClose, className = "", children }: {
+  t: T; title?: React.ReactNode; onClose: () => void; className?: string; children: React.ReactNode;
+}) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  // Closes on a tap that starts and ends on the dark backdrop (not a drag that ends there).
+  const downOnBackdrop = useRef(false);
+  useEffect(() => {
+    const me = {};
+    openModals.push(me);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && openModals[openModals.length - 1] === me) {
+        e.preventDefault();
+        close.current();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("keydown", key);
+      openModals.splice(openModals.indexOf(me), 1);
+    };
+  }, []);
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined}
+      onPointerDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => e.target === e.currentTarget && downOnBackdrop.current && close.current()}>
+      <div className={`dialog ${className}`}>
+        <div className="dialog-head">
+          {title ? <h2>{title}</h2> : <span />}
+          <button className="x-btn" onClick={onClose} aria-label={t("close")} title={t("close")}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A menu that drops down from the menu bar. A tap anywhere else, or Esc, closes it. */
+function Dropdown({ align = "left", onClose, children }: { align?: "left" | "right"; onClose: () => void; children: React.ReactNode }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close.current();
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+  return (
+    <>
+      <div className="dd-backdrop" onClick={onClose} />
+      <div className={`dd ${align}`} role="menu">{children}</div>
+    </>
+  );
+}
+
+/* ---------------- Dashboard: open orders, and the tables when the table map is on ---------------- */
 
 function minutesSince(iso: string, now: number) {
   return Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
@@ -518,98 +731,126 @@ function orderState(o: Order): "running" | "billed" {
   return o.bill_no && unsent(o).length === 0 ? "billed" : "running";
 }
 
-function TablesScreen({ t, config, orders, now, onTable, onParcel, onNew, onOrder }: {
-  t: T; config: Config; orders: Order[]; now: number; onTable: (t: Table) => void; onParcel: () => void; onNew: () => void; onOrder: (o: Order) => void;
+/** A card on the dashboard. An open order has the old POS's three buttons: bill, pay and open. */
+function OrderCard({ t, state, className = "", onOpen, onBill, onPay, children }: {
+  t: T; state: "running" | "billed" | "vacant"; className?: string; onOpen: () => void; onBill?: () => void; onPay?: () => void; children: React.ReactNode;
 }) {
+  return (
+    <div className={`table-card ${state} ${className}`}>
+      <button className="tc-main" onClick={onOpen}>{children}</button>
+      {state !== "vacant" && (
+        <div className="tc-icons">
+          <button onClick={onBill}><span aria-hidden="true">🖨</span>{t("bill")}</button>
+          <button onClick={onPay}><span aria-hidden="true">₹</span>{t("pay_short")}</button>
+          <button onClick={onOpen}><span aria-hidden="true">👁</span>{t("open")}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay }: {
+  t: T; config: Config; orders: Order[]; now: number; onTable: (t: Table) => void; onOrder: (o: Order) => void; onBill: (o: Order) => void; onPay: (o: Order) => void;
+}) {
+  const [find, setFind] = useState("");
+  const [only, setOnly] = useState<"all" | "running" | "billed" | "vacant">("all");
   const areas = [...new Set(config.tables.map((x) => x.area))];
-  // Parcels and orders without a table are listed below the tables.
+  // Parcels and orders without a table are listed above the tables.
   const loose = orders.filter((o) => o.table_id === null).sort((a, b) => a.opened_at.localeCompare(b.opened_at));
   const s = config.settings;
+  const stateOf = (table: Table) => {
+    const o = orders.find((x) => x.table_id === table.id);
+    return o ? orderState(o) : "vacant";
+  };
+  const shown = (table: Table) => (only === "all" || stateOf(table) === only) && (!find.trim() || table.name.toLowerCase().includes(find.trim().toLowerCase()));
+  const count = (st: "running" | "billed" | "vacant") => config.tables.filter((x) => stateOf(x) === st).length;
   return (
     <main className="tables-screen">
       <div className="area-tabs">
-        <button className="btn primary" onClick={onParcel}>＋ {t("new_parcel")}</button>
-        <button className="btn" onClick={onNew}>＋ {t("new_counter_order")}</button>
+        <label className="find">
+          <input className="search" inputMode="numeric" placeholder={t("enter_table_no")} value={find} onChange={(e) => setFind(e.target.value)} />
+        </label>
+        {find && <button className="x-btn" onClick={() => setFind("")} aria-label={t("clear")}>✕</button>}
         <span className="grow" />
         <span className="legend">
-          <b className="state running">{t("running")}</b><b className="state billed">{t("billed")}</b><b className="state vacant">{t("vacant")}</b>
+          <button className={`chip${only === "all" ? " on" : ""}`} onClick={() => setOnly("all")}>{t("all")}</button>
+          {(["running", "billed", "vacant"] as const).map((st) => (
+            <button key={st} className={`state-chip ${st}${only === st ? " on" : ""}`} onClick={() => setOnly(only === st ? "all" : st)}>{t(st)} · {count(st)}</button>
+          ))}
         </span>
       </div>
-      {loose.length > 0 && (
+      {loose.length > 0 && only !== "vacant" && !find && (
         <div className="table-grid">
-          {loose.map((o) => {
-            const st = orderState(o);
-            return (
-              <button key={o.id} className={`table-card ${st}`} onClick={() => onOrder(o)}>
-                <span className="tc-top"><span className="name">{o.type === "parcel" ? t("parcel") : o.table_name ? `${t("table")} ${o.table_name}` : t("dine_in")}</span><b className={`state ${st}`}>{t(st)}</b></span>
-                <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
-                <span className="meta">{t("token", { n: o.token ?? "" })} · {t("min", { n: minutesSince(o.opened_at, now) })}</span>
-              </button>
-            );
-          })}
+          {loose.filter((o) => only === "all" || orderState(o) === only).map((o) => (
+            <OrderCard key={o.id} t={t} state={orderState(o)} onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)}>
+              <span className="tc-top"><span className="name">{orderLabel(o, t)}</span><b className={`state ${orderState(o)}`}>{t(orderState(o))}</b></span>
+              <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
+              <span className="meta">{t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
+            </OrderCard>
+          ))}
         </div>
       )}
-      {areas.map((area) => (
-        <section key={area} className="area">
-          <h2 className="area-name">{area || t("tables")}</h2>
-          <div className="table-grid">
-            {config.tables.filter((x) => x.area === area).map((table) => {
-              const o = orders.find((x) => x.table_id === table.id);
-              const st = o ? orderState(o) : "vacant";
-              return (
-                <button key={table.id} className={`table-card ${st}`} onClick={() => onTable(table)}>
-                  <span className="tc-top"><span className="name">{table.name}</span><b className={`state ${st}`}>{t(st)}</b></span>
-                  {o ? (
-                    <>
-                      <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
-                      <span className="meta">{t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
-                    </>
-                  ) : (
-                    <span className="meta">👥 {t("seats", { n: table.seats })}</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+      {areas.map((area) => {
+        const list = config.tables.filter((x) => x.area === area && shown(x));
+        if (!list.length) return null;
+        return (
+          <section key={area} className="area">
+            <h2 className="area-name">{area || t("tables")}</h2>
+            <div className="table-grid">
+              {list.map((table) => {
+                const o = orders.find((x) => x.table_id === table.id);
+                const st = o ? orderState(o) : "vacant";
+                return (
+                  <OrderCard key={table.id} t={t} state={st} onOpen={() => onTable(table)} onBill={o && (() => onBill(o))} onPay={o && (() => onPay(o))}>
+                    <span className="tc-top"><span className="name">{table.name}</span><b className={`state ${st}`}>{t(st)}</b></span>
+                    {o ? (
+                      <>
+                        <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
+                        <span className="meta">👥 {t("seats", { n: table.seats })} · {t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
+                      </>
+                    ) : (
+                      <span className="meta">👥 {t("seats", { n: table.seats })}</span>
+                    )}
+                  </OrderCard>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </main>
   );
 }
 
-/* ---------------- Open orders (the default: no table map) ---------------- */
-
-function OrdersScreen({ t, config, orders, now, onNew, onParcel, onOrder }: {
-  t: T; config: Config; orders: Order[]; now: number; onNew: () => void; onParcel: () => void; onOrder: (o: Order) => void;
+/** The dashboard without the table map: every open order (held or billed), oldest first. */
+function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }: {
+  t: T; config: Config; orders: Order[]; now: number; onNew: () => void; onOrder: (o: Order) => void; onBill: (o: Order) => void; onPay: (o: Order) => void;
 }) {
   const s = config.settings;
-  // Oldest first, so the table that has waited longest is at the top.
   const list = [...orders].sort((a, b) => a.opened_at.localeCompare(b.opened_at));
   return (
     <main className="tables-screen">
-      <div className="start-row">
-        <button className="btn primary huge" onClick={onNew}>＋ {t("new_table_order")}</button>
-        <button className="btn huge parcel-btn" onClick={onParcel}>＋ {t("new_parcel")}</button>
-      </div>
       <div className="area-tabs">
         <h2>{t("open_orders")} {list.length > 0 && <span className="pill">{list.length}</span>}</h2>
         <span className="grow" />
         <span className="legend"><b className="state running">{t("running")}</b><b className="state billed">{t("billed")}</b></span>
       </div>
       {list.length === 0 ? (
-        <p className="muted center empty-note">{t("no_open_orders")}</p>
+        <div className="empty-note center">
+          <p className="muted">{t("no_open_orders")}</p>
+          <button className="btn primary big" onClick={onNew}>{t("billing")}</button>
+        </div>
       ) : (
         <div className="order-grid">
           {list.map((o) => (
-            <button key={o.id} className={`table-card order-card ${orderState(o)}`} onClick={() => onOrder(o)}>
-              <span className="name">{o.type === "parcel" ? `${t("parcel")} #${o.token ?? ""}` : o.table_name ? `${t("table")} ${o.table_name}` : t("order_no", { n: o.token ?? "" })}</span>
-              {o.type === "dine_in" && o.table_name && o.token && <span className="meta">{t("order_no", { n: o.token })}</span>}
+            <OrderCard key={o.id} t={t} state={orderState(o)} className="order-card" onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)}>
+              <span className="tc-top"><span className="name">{orderLabel(o, t)}</span><b className={`state ${orderState(o)}`}>{t(orderState(o))}</b></span>
               <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
               <span className="meta">
                 {t("min", { n: minutesSince(o.opened_at, now) })}
                 {o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : o.type === "dine_in" && needsWaiter(o, config) ? ` · ⚠ ${t("waiter_needed")}` : ""}
               </span>
-            </button>
+            </OrderCard>
           ))}
         </div>
       )}
@@ -617,19 +858,23 @@ function OrdersScreen({ t, config, orders, now, onNew, onParcel, onOrder }: {
   );
 }
 
-/* ---------------- Order ---------------- */
+/* ---------------- Billing: the menu and the order, like the old POS's Billing screen ---------------- */
 
-function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint, onBill, onType, onPaid, onCancel }: {
-  t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: number; onHold: () => void;
-  onSavePrint: () => void; onBill: (copy?: Copy) => Bill | null; onType: (type: Order["type"]) => void;
+type OrderDialog = "pay" | "cancel" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
+
+function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel }: {
+  t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: Order[]; online: boolean; bills: Bill[];
+  openWith: "pay" | null; onHold: () => void; onClose: () => void; onPickHeld: (o: Order) => void; onShowBill: (b: Bill) => void;
+  onSavePrint: () => void; onBill: (copy: Copy) => Bill | null; onType: (type: Order["type"]) => void;
   onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void;
 }) {
   const s = config.settings;
   const printing = !!s.printing;
   const favourites = config.items.filter((i) => i.favourite);
+  const missingWaiter = needsWaiter(order, config);
   const [cat, setCat] = useState<number | "fav">(config.categories[0]?.id ?? "fav");
   const [query, setQuery] = useState("");
-  const [dialog, setDialog] = useState<"pay" | "cancel" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | null>(null);
+  const [dialog, setDialog] = useState<OrderDialog | null>(() => (openWith === "pay" && order.lines.length ? (missingWaiter ? "waiter_then_pay" : "pay") : null));
   const [choosing, setChoosing] = useState<Item | null>(null);
   const [billPreview, setBillPreview] = useState<Bill | null>(null);
   const [noteFor, setNoteFor] = useState<string | null>(null);
@@ -640,8 +885,8 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
   // Item names follow the counter's language when the owner has filled them in; bills and the kitchen keep the English name.
   const localName = (i: Item | undefined) => (i && ((lang === "hi" && i.name_hi) || (lang === "kn" && i.name_kn))) || null;
   const itemById = useMemo(() => new Map(config.items.map((i) => [i.id, i])), [config.items]);
-  const missingWaiter = needsWaiter(order, config);
   const today = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, "-");
+  const empty = order.lines.length === 0;
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -665,6 +910,8 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
     }
   }
   const pay = () => setDialog(missingWaiter ? "waiter_then_pay" : "pay");
+  // An order with nothing sent to the kitchen and no bill is simply cleared; anything else asks why.
+  const cancel = () => (!order.bill_no && order.lines.every((l) => l.sent === 0) ? onCancel("") : setDialog("cancel"));
 
   return (
     <main className="order-screen">
@@ -676,11 +923,8 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
       </nav>
 
       <section className="items">
-        <div className="search-row">
-          <input className="search" placeholder={`🔍 ${t("search")}`} value={query} onChange={(e) => setQuery(e.target.value)} />
-          {query && <button className="btn" onClick={() => setQuery("")} aria-label={t("clear")}>✕</button>}
-        </div>
         <div className="item-grid">
+          {items.length === 0 && <p className="muted center">{t("no_items_found")}</p>}
           {items.map((i) => {
             const inOrder = order.lines.filter((l) => l.item_id === i.id).reduce((n, l) => n + l.qty, 0);
             return (
@@ -704,24 +948,32 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
             <button className={order.type === "dine_in" ? "on" : ""} onClick={() => order.type !== "dine_in" && onType("dine_in")}><span aria-hidden="true">🍴</span>{t("dine_in")}</button>
             <button className={order.type === "parcel" ? "on" : ""} onClick={() => order.type !== "parcel" && onType("parcel")}><span aria-hidden="true">🛍</span>{t("parcel")}</button>
           </div>
-          <span className="date num">{today}</span>
-          <button className="btn hold-btn" onClick={onHold}>{t("hold_count", { n: held })}</button>
+          <span className="grow" />
+          <button className="btn hold-btn" onClick={() => setDialog("held")}>{t("hold_count", { n: held.length })}</button>
+          <button className="btn hold-btn" onClick={() => setDialog("invoices")}>☰ {t("invoice")}</button>
         </div>
         <div className="ticket-fields">
+          <div className="field"><span className="muted small">{t("date")}</span><strong className="num date">{today}</strong></div>
           <div className="field"><span className="muted small">{t("token_no")}</span><strong className="num">{order.token ?? "—"}</strong></div>
           {order.type === "dine_in" && (
             <button className="field" onClick={() => order.table_id === null && setDialog("table")} disabled={order.table_id !== null}>
               <span className="muted small">{t("table")}</span><strong>{order.table_name ?? "—"}</strong>
             </button>
           )}
-          <button className={`field grow${missingWaiter ? " need" : ""}`} onClick={() => setDialog("waiter")} disabled={!config.waiters.length}>
+          <button className={`field grow${missingWaiter && !empty ? " need" : ""}`} onClick={() => setDialog("waiter")} disabled={!config.waiters.length}>
             <span className="muted small">{t("waiter_short")}</span>
-            <strong>{order.waiter_staff_id ? waiterName(config, order.waiter_staff_id) : config.waiters.length ? (missingWaiter ? `⚠ ${t("waiter_needed")}` : t("no_waiter")) : "—"}</strong>
+            <strong>{order.waiter_staff_id ? waiterName(config, order.waiter_staff_id) : config.waiters.length ? (missingWaiter && !empty ? `⚠ ${t("waiter_needed")}` : t("no_waiter")) : "—"}</strong>
           </button>
+        </div>
+        <div className="select-product">
+          <span className="muted small">{t("select_product")}</span>
+          <input className="search" placeholder={`🔍 ${t("search")}`} value={query} onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && items.length === 1 && (tap(items[0]), setQuery(""))} />
+          {query && <button className="x-btn" onClick={() => setQuery("")} aria-label={t("clear")}>✕</button>}
         </div>
         <div className="grid-head"><span>{t("item_name")} · {t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
         <div className="lines" ref={listRef}>
-          {order.lines.length === 0 && <p className="muted center">{t("order_empty")}</p>}
+          {empty && <p className="muted center">{t("order_empty")}</p>}
           {order.lines.map((l) => (
             <div key={l.key} className={`line${l.sent >= l.qty ? " sent" : ""}`}>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
@@ -753,19 +1005,21 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
             </div>
           )}
           <div className="grand">
-            <button className="link" disabled={!order.lines.length} onClick={() => setDialog("discount")}>{t("discount")}</button>
+            <button className="link" disabled={empty} onClick={() => setDialog("discount")}>{t("discount")}</button>
             <span className="qty-total num">{totalQty}</span>
             <span className="num">{formatINR(totals.total)}</span>
           </div>
         </div>
+        {/* The old POS's buttons, in its order: Bill, Save & Print, Cash; then HOLD, CLOSE, Cancel. */}
         <div className="actions">
-          <button className="btn" disabled={!order.lines.length} onClick={bill}>🧾 {t("bill")}</button>
-          <button className="btn save-print" disabled={!order.lines.length} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_show")}</button>
-          <button className="btn primary cash" disabled={!order.lines.length || totals.total <= 0} onClick={pay}>
-            <span>💵 {t("cash_pay")}</span><strong className="num">{formatINR(totals.total)}</strong>
+          <button className="btn bill-btn" disabled={empty} onClick={bill}><span aria-hidden="true">✔</span> {t("bill")}</button>
+          <button className="btn save-print" disabled={empty} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_show")}</button>
+          <button className="btn primary cash" disabled={empty || totals.total <= 0} onClick={pay}>
+            <span>💵 {t("cash")}</span><strong className="num">{formatINR(totals.total)}</strong>
           </button>
-          <button className="btn hold" onClick={onHold}>{t("hold")}</button>
-          <button className="btn cancel" onClick={() => setDialog("cancel")}>✕ {t("cancel_order")}</button>
+          <button className="btn hold" onClick={onHold}>❚❚ {t("hold").toUpperCase()}</button>
+          <button className="btn close-btn" onClick={onClose}>✕ {t("close").toUpperCase()}</button>
+          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={cancel}>{t("cancel_short")}</button>
         </div>
       </aside>
 
@@ -792,7 +1046,78 @@ function OrderScreen({ t, lang, config, order, update, held, onHold, onSavePrint
       {dialog === "bill" && billPreview && (
         <BillDialog t={t} config={config} bill={billPreview} onClose={() => setDialog(null)} onPay={() => setDialog(missingWaiter ? "waiter_then_pay" : "pay")} />
       )}
+      {dialog === "held" && (
+        <HeldDialog t={t} config={config} orders={held} onClose={() => setDialog(null)} onPick={(o) => (setDialog(null), onPickHeld(o))} />
+      )}
+      {dialog === "invoices" && (
+        <InvoiceDialog t={t} bills={bills} online={online} onClose={() => setDialog(null)} onOpen={(b) => (setDialog(null), onShowBill(b))} />
+      )}
     </main>
+  );
+}
+
+/** HOLD (n): the bills kept open on hold (and printed bills waiting for payment), to pick one up again. */
+function HeldDialog({ t, config, orders, onClose, onPick }: { t: T; config: Config; orders: Order[]; onClose: () => void; onPick: (o: Order) => void }) {
+  const list = [...orders].sort((a, b) => a.opened_at.localeCompare(b.opened_at));
+  return (
+    <Modal t={t} title={`${t("held_bills")} (${list.length})`} onClose={onClose} className="wide">
+      {list.length === 0 ? <p className="muted center">{t("no_held")}</p> : (
+        <div className="pick-list">
+          {list.map((o) => (
+            <button key={o.id} className={`pick-row ${orderState(o)}`} onClick={() => onPick(o)}>
+              <span className="pr-name">{orderLabel(o, t)}</span>
+              <b className={`state ${orderState(o)}`}>{t(orderState(o))}</b>
+              <span className="muted">{formatTime(new Date(o.opened_at))}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
+              <span className="muted">{t("items", { n: o.lines.reduce((n, l) => n + l.qty, 0) })}</span>
+              <strong className="num">{formatINR(totalsOf(o, config.settings).total)}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Today's bills from every screen, the newest on top, as the old POS's Invoice list. Tap one to see or reprint it. */
+function useDayBills(date: string, online: boolean, mine: Bill[]): Bill[] {
+  const [shared, setShared] = useState<Bill[]>([]);
+  useEffect(() => {
+    if (!online) return;
+    let live = true;
+    const load = () => !document.hidden && fetchDay(date).then((b) => live && setShared(b)).catch(() => {});
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
+  }, [date, online]);
+  const own = mine.filter((b) => b.business_date === date);
+  const ownIds = new Set(own.map((b) => b.client_id));
+  return [...own, ...shared.filter((b) => !ownIds.has(b.client_id))].sort((a, b) => a.closed_at.localeCompare(b.closed_at));
+}
+
+function InvoiceDialog({ t, bills, online, onClose, onOpen }: { t: T; bills: Bill[]; online: boolean; onClose: () => void; onOpen: (b: Bill) => void }) {
+  const today = useDayBills(businessDate(), online, bills);
+  const [find, setFind] = useState("");
+  const list = [...today].reverse().filter((b) => !find || b.bill_no.toLowerCase().includes(find.toLowerCase()) || String(b.token ?? "") === find);
+  return (
+    <Modal t={t} title={`${t("invoice")} · ${t("today_bills")}: ${today.length}`} onClose={onClose} className="wide">
+      <input className="search" inputMode="numeric" placeholder={t("find_bill")} value={find} onChange={(e) => setFind(e.target.value)} />
+      {list.length === 0 ? <p className="muted center">{t("no_invoices")}</p> : (
+        <div className="pick-list">
+          {list.map((b) => (
+            <button key={b.client_id} className={`pick-row${b.status === "cancelled" ? " cancelled" : ""}`} onClick={() => onOpen(b)}>
+              <span className="pr-name num">{b.bill_no}</span>
+              <span>{orderLabel({ type: b.order_type, table_name: b.table_name, token: b.token }, t)}</span>
+              <span className="muted">{formatTime(new Date(b.closed_at))}</span>
+              <span className="muted">{b.status === "cancelled" ? t("cancelled") : b.payments.map((p) => t(p.mode as Key)).join(" + ")}</span>
+              <strong className="num">{formatINR(b.total)}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -805,46 +1130,43 @@ function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; nam
   const [qty, setQty] = useState(1);
   const unit = (variation?.price ?? item.price) + (addon?.price ?? 0);
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={name}>
-      <div className="dialog wide choice-dialog">
-        <div className="dialog-head"><h2>{name}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
-        {variations.length > 0 && (
-          <section>
-            <h3>{t("variation")} <span className="muted small">({t("pick_one")})</span></h3>
-            <div className="choice-grid">
-              {variations.map((v) => (
-                <button key={v.name} className={`choice${variation?.name === v.name ? " on" : ""}`} onClick={() => setVariation(v)}>
-                  <span>{v.name}</span><span className="num">{formatINR(v.price)}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-        {addons.length > 0 && (
-          <section>
-            <h3>{t("addon")} <span className="muted small">({t("pick_one")})</span></h3>
-            <div className="choice-grid">
-              {addons.map((a) => (
-                <button key={a.name} className={`choice${addon?.name === a.name ? " on" : ""}`} onClick={() => setAddon(addon?.name === a.name ? null : a)}>
-                  <span>{a.name}</span><span className="num">{a.price ? `+${formatINR(a.price)}` : formatINR(0)}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-        <div className="choice-foot">
-          <div className="stepper big">
-            <button onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="−">−</button>
-            <span className="num">{qty}</span>
-            <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="+">+</button>
+    <Modal t={t} title={name} onClose={onClose} className="wide choice-dialog">
+      {variations.length > 0 && (
+        <section>
+          <h3>{t("variation")} <span className="muted small">({t("pick_one")})</span></h3>
+          <div className="choice-grid">
+            {variations.map((v) => (
+              <button key={v.name} className={`choice${variation?.name === v.name ? " on" : ""}`} onClick={() => setVariation(v)}>
+                <span>{v.name}</span><span className="num">{formatINR(v.price)}</span>
+              </button>
+            ))}
           </div>
-          <button className="btn big" onClick={onClose}>{t("close")}</button>
-          <button className="btn big primary grow" disabled={variations.length > 0 && !variation} onClick={() => onAdd({ variation, addon }, qty)}>
-            {t("add")} · {formatINR(unit * qty)}
-          </button>
+        </section>
+      )}
+      {addons.length > 0 && (
+        <section>
+          <h3>{t("addon")} <span className="muted small">({t("pick_one")})</span></h3>
+          <div className="choice-grid">
+            {addons.map((a) => (
+              <button key={a.name} className={`choice${addon?.name === a.name ? " on" : ""}`} onClick={() => setAddon(addon?.name === a.name ? null : a)}>
+                <span>{a.name}</span><span className="num">{a.price ? `+${formatINR(a.price)}` : formatINR(0)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      <div className="choice-foot">
+        <div className="stepper big">
+          <button onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="−">−</button>
+          <span className="num">{qty}</span>
+          <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="+">+</button>
         </div>
+        <button className="btn big" onClick={onClose}>{t("cancel_short")}</button>
+        <button className="btn big primary grow" disabled={variations.length > 0 && !variation} onClick={() => onAdd({ variation, addon }, qty)}>
+          {t("save")} · {formatINR(unit * qty)}
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -872,72 +1194,37 @@ function WaiterDialog({ t, config, current, optional, onClose, onPick }: {
   t: T; config: Config; current: number | null; optional: boolean; onClose: () => void; onPick: (id: number | null) => void;
 }) {
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={t("pick_waiter")}>
-      <div className="dialog wide">
-        <div className="dialog-head"><h2>{t("pick_waiter")}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
-        <WaiterGrid config={config} current={current} onPick={onPick} />
-        {optional && current !== null && <button className="btn big" onClick={() => onPick(null)}>{t("no_waiter")}</button>}
-      </div>
-    </div>
+    <Modal t={t} title={t("pick_waiter")} onClose={onClose} className="wide">
+      <WaiterGrid config={config} current={current} onPick={onPick} />
+      {optional && current !== null && <button className="btn big" onClick={() => onPick(null)}>{t("no_waiter")}</button>}
+    </Modal>
   );
 }
 
-/** Starting a table order: who's serving, and (without the table map) an optional table number. */
+/** Opening a vacant table on the dashboard: who's serving it. A tap starts the order. */
 function StartDialog({ t, config, table, onClose, onStart }: {
-  t: T; config: Config; table: Table | null; onClose: () => void; onStart: (waiter: number | null, tableName: string | null) => void;
+  t: T; config: Config; table: Table; onClose: () => void; onStart: (waiter: number | null) => void;
 }) {
-  const [waiter, setWaiter] = useState<number | null>(null);
-  const [tableNo, setTableNo] = useState("");
   const required = config.settings.waiter_required !== false && config.waiters.length > 0;
-  // With the table map, picking the waiter is the only question, so a tap starts the order.
-  if (table) {
-    return (
-      <div className="overlay" role="dialog" aria-modal="true">
-        <div className="dialog wide">
-          <div className="dialog-head"><h2>{t("table")} {table.name} · {t("pick_waiter")}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
-          <WaiterGrid config={config} current={null} onPick={(id) => onStart(id, null)} />
-          {!required && <button className="btn big" onClick={() => onStart(null, null)}>{t("no_waiter")}</button>}
-        </div>
-      </div>
-    );
-  }
   return (
-    <div className="overlay" role="dialog" aria-modal="true">
-      <div className="dialog wide start-dialog">
-        <div className="dialog-head"><h2>{t("new_table_order")}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
-        <div className="start-cols">
-          <div className="start-waiters">
-            <h3>{t("pick_waiter")}</h3>
-            {config.waiters.length ? <WaiterGrid config={config} current={waiter} onPick={setWaiter} /> : <p className="muted">{t("no_waiters_setup")}</p>}
-          </div>
-          <div className="start-table">
-            <h3>{t("table_optional")}</h3>
-            <div className="display num">{tableNo || "—"}</div>
-            <Keypad onKey={(k) => setTableNo((v) => (k === "⌫" ? v.slice(0, -1) : (v + k).slice(0, 6)))} keys={["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]} />
-          </div>
-        </div>
-        <button className="btn primary big block" disabled={required && waiter === null} onClick={() => onStart(waiter, tableNo || null)}>
-          {required && waiter === null ? t("waiter_needed") : t("start_order")}
-        </button>
-      </div>
-    </div>
+    <Modal t={t} title={`${t("table")} ${table.name} · ${t("pick_waiter")}`} onClose={onClose} className="wide">
+      <WaiterGrid config={config} current={null} onPick={(id) => onStart(id)} />
+      {!required && <button className="btn big" onClick={() => onStart(null)}>{t("no_waiter")}</button>}
+    </Modal>
   );
 }
 
 function TableNoDialog({ t, current, onClose, onDone }: { t: T; current: string | null; onClose: () => void; onDone: (name: string | null) => void }) {
   const [v, setV] = useState(current ?? "");
   return (
-    <div className="overlay" role="dialog" aria-modal="true">
-      <div className="dialog">
-        <div className="dialog-head"><h2>{t("table_optional")}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
-        <div className="display num">{v || "—"}</div>
-        <Keypad onKey={(k) => setV((x) => (k === "⌫" ? x.slice(0, -1) : (x + k).slice(0, 6)))} keys={["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]} />
-        <div className="actions-row">
-          <button className="btn big" onClick={() => onDone(null)}>{t("no_table")}</button>
-          <button className="btn big primary" onClick={() => onDone(v || null)}>{t("done")}</button>
-        </div>
+    <Modal t={t} title={t("table_optional")} onClose={onClose}>
+      <div className="display num">{v || "—"}</div>
+      <Keypad onKey={(k) => setV((x) => (k === "⌫" ? x.slice(0, -1) : (x + k).slice(0, 6)))} keys={["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]} />
+      <div className="actions-row">
+        <button className="btn big" onClick={() => onDone(null)}>{t("no_table")}</button>
+        <button className="btn big primary" onClick={() => onDone(v || null)}>{t("done")}</button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -946,8 +1233,7 @@ function BillDialog({ t, config, bill, paid, change = 0, onClose, onPay, onPrint
   t: T; config: Config; bill: Bill; paid?: boolean; change?: number; onClose: () => void; onPay?: () => void; onPrint?: () => void;
 }) {
   return (
-    <div className="overlay" role="dialog" aria-modal="true">
-      <div className="dialog bill-dialog">
+    <Modal t={t} title={paid ? undefined : `${t("bill")} ${bill.bill_no}`} onClose={onClose} className="bill-dialog">
         {paid && (
           <div className="paid-banner">
             <strong>✓ {t("paid_title")} · {formatINR(bill.total)}</strong>
@@ -962,8 +1248,7 @@ function BillDialog({ t, config, bill, paid, change = 0, onClose, onPay, onPrint
           <button className="btn big" onClick={onClose}>{paid ? t("done") : t("close")}</button>
           {onPay && <button className="btn big primary" onClick={onPay}>{t("pay")} · {formatINR(bill.total)}</button>}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1000,9 +1285,7 @@ function PayDialog({ t, due, onClose, onDone }: { t: T; due: number; onClose: ()
   const notes = [...new Set([10000, 50000, 100000, 200000].map((step) => Math.ceil(remaining / step) * step))].filter((n) => n > remaining).slice(0, 3);
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={t("pay_title")}>
-      <div className="dialog pay-dialog">
-        <div className="dialog-head"><h2>{t("pay_title")}</h2><button className="btn" onClick={onClose}>{t("close")}</button></div>
+    <Modal t={t} title={t("pay_title")} onClose={onClose} className="pay-dialog">
         <div className="due">
           <span>{payments.length ? t("remaining") : t("due")}</span>
           <strong className="num">{formatINR(remaining)}</strong>
@@ -1029,17 +1312,14 @@ function PayDialog({ t, due, onClose, onDone }: { t: T; due: number; onClose: ()
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
 function CancelDialog({ t, onClose, onDone }: { t: T; onClose: () => void; onDone: (reason: string) => void }) {
   const [reason, setReason] = useState("");
   return (
-    <div className="overlay" role="dialog" aria-modal="true">
-      <div className="dialog">
-        <h2>{t("cancel_reason")}</h2>
+    <Modal t={t} title={t("cancel_reason")} onClose={onClose}>
         <div className="reason-grid">
           {t("cancel_reasons").split("|").map((r) => <button key={r} className={`chip big${reason === r ? " on" : ""}`} onClick={() => setReason(r)}>{r}</button>)}
         </div>
@@ -1047,8 +1327,7 @@ function CancelDialog({ t, onClose, onDone }: { t: T; onClose: () => void; onDon
           <button className="btn big" onClick={onClose}>{t("keep")}</button>
           <button className="btn big danger-solid" disabled={!reason} onClick={() => onDone(reason)}>{t("cancel_confirm")}</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1088,9 +1367,7 @@ function DiscountDialog({ t, subtotal, current, currentReason, settings, approve
   if (asking) {
     const offline = problem === "offline" || !navigator.onLine || approvers.length === 0;
     return (
-      <div className="overlay" role="dialog" aria-modal="true">
-        <div className="dialog">
-          <h2>{t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })}</h2>
+      <Modal t={t} title={t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })} onClose={() => (setAsking(false), setPin(""), setProblem(null))}>
           {offline ? <p>{t("discount_offline")}</p> : (
             <>
               <p className="muted">{t("discount_who")}</p>
@@ -1108,15 +1385,12 @@ function DiscountDialog({ t, subtotal, current, currentReason, settings, approve
               ? <button className="btn big primary" onClick={() => onDone(paise, reason, null)}>{t("give_anyway")}</button>
               : <button className="btn big primary" disabled={busy || !approver || pin.length < 4} onClick={allow}>{t("allow")}</button>}
           </div>
-        </div>
-      </div>
+      </Modal>
     );
   }
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true">
-      <div className="dialog">
-        <h2>{t("discount_title")}</h2>
+    <Modal t={t} title={t("discount_title")} onClose={onClose}>
         <div className="reason-grid">
           {[5, 10, 15, 20].map((p) => <button key={p} className="chip big" onClick={() => setRupees(String(Math.round((subtotal * p) / 100) / 100))}>{p}%</button>)}
         </div>
@@ -1134,8 +1408,7 @@ function DiscountDialog({ t, subtotal, current, currentReason, settings, approve
             {t("apply")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1148,27 +1421,14 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
 }) {
   const date = businessDate();
   // Bills from the other screens come from the server; this screen's own bills are always shown, sent or not.
-  const [shared, setShared] = useState<Bill[]>([]);
-  useEffect(() => {
-    if (!online) return;
-    let live = true;
-    const load = () => !document.hidden && fetchDay(date).then((b) => live && setShared(b)).catch(() => {});
-    load();
-    const id = window.setInterval(load, 30_000);
-    return () => {
-      live = false;
-      window.clearInterval(id);
-    };
-  }, [date, online]);
-  const mine = bills.filter((b) => b.business_date === date);
-  const mineIds = new Set(mine.map((b) => b.client_id));
-  const today = [...mine, ...shared.filter((b) => !mineIds.has(b.client_id))].sort((a, b) => a.closed_at.localeCompare(b.closed_at));
+  const today = useDayBills(date, online, bills);
   const paid = today.filter((b) => b.status === "paid");
   const sum = (list: Bill[]) => list.reduce((s, b) => s + b.total, 0);
   const mode = (m: BillPayMode) => paid.reduce((s, b) => s + b.payments.filter((p) => p.mode === m).reduce((a, p) => a + p.amount, 0), 0);
   const waiters = byWaiter(today, config.waiters);
   return (
     <main className="summary">
+      <h1 className="screen-title">{t("summary")} · <span className="num">{date.split("-").reverse().join("-")}</span></h1>
       <div className="stat-row">
         <div className="stat hero"><span>{t("sales")}</span><strong className="num">{formatINR(sum(paid))}</strong><span className="muted">{t("today_bills")}: {paid.length}</span></div>
         <div className="stat"><span>{t("cash")}</span><strong className="num">{formatINR(mode("cash"))}</strong></div>
@@ -1231,6 +1491,202 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
           </Fragment>
         ))}
       </div>
+    </main>
+  );
+}
+
+/* ---------------- Item Master: the menu as the counter has it ---------------- */
+
+/** The old POS's Item Master, to look things up. Items and prices are changed in the admin app (the owner). */
+function ItemMaster({ t, lang, config, isOwner }: { t: T; lang: Lang; config: Config; isOwner: boolean }) {
+  const [find, setFind] = useState("");
+  const [cat, setCat] = useState<number | "all">("all");
+  const q = find.trim().toLowerCase();
+  const catName = (id: number) => {
+    const c = config.categories.find((x) => x.id === id);
+    return c ? (lang === "hi" && c.name_hi) || (lang === "kn" && c.name_kn) || c.name : "—";
+  };
+  const list = config.items.filter((i) => (cat === "all" || i.category_id === cat)
+    && (!q || [i.name, i.short_name, i.name_hi, i.name_kn].some((n) => (n ?? "").toLowerCase().includes(q))));
+  return (
+    <main className="summary">
+      <div className="report-head">
+        <h1 className="screen-title">{t("item_master")}</h1>
+        <span className="grow" />
+        {isOwner && <a className="btn" href="/manage/menu" target="_blank" rel="noopener">{t("edit_in_admin")} ↗</a>}
+      </div>
+      <div className="report-filters">
+        <input className="search" placeholder={`🔍 ${t("search")}`} value={find} onChange={(e) => setFind(e.target.value)} />
+        {find && <button className="x-btn" onClick={() => setFind("")} aria-label={t("clear")}>✕</button>}
+        <select className="search" value={cat} onChange={(e) => setCat(e.target.value === "all" ? "all" : Number(e.target.value))} aria-label={t("m.category")}>
+          <option value="all">{t("all")}</option>
+          {config.categories.map((c) => <option key={c.id} value={c.id}>{catName(c.id)}</option>)}
+        </select>
+      </div>
+      <div className="rtable" style={{ "--cols": "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) 110px" } as React.CSSProperties}>
+        <div className="rrow rhead"><span>{t("item_name")}</span><span>{t("m.category")}</span><span>{t("variation")} / {t("addon")}</span><span className="r">{t("rate")}</span></div>
+        {list.map((i) => (
+          <div key={i.id} className="rrow">
+            <span>{i.favourite ? "★ " : ""}{i.name}{i.short_name && i.short_name !== i.name ? <span className="muted small"> · {i.short_name}</span> : null}</span>
+            <span className="muted">{catName(i.category_id)}</span>
+            <span className="muted small">{[...(i.variations ?? []).map((v) => `${v.name} ${formatINR(v.price)}`), ...(i.addons ?? []).map((a) => `+${a.name}`)].join(", ")}</span>
+            <strong className="num r">{formatINR(i.price)}</strong>
+          </div>
+        ))}
+        {list.length === 0 && <p className="muted center">{t("no_items_found")}</p>}
+      </div>
+      <p className="muted small">{t("items", { n: list.length })}{!isOwner && ` · ${t("owner_only_edit")}`}</p>
+    </main>
+  );
+}
+
+/* ---------------- Report's: the old POS's four reports, from a date to a date ---------------- */
+
+const dmy = (d: string) => d.split("-").reverse().join("-");
+const paidBy = (bills: Bill[], m: string) => bills.reduce((s, b) => s + b.payments.filter((p) => p.mode === m).reduce((a, p) => a + p.amount, 0), 0);
+
+function Report({ t, config, kind, printing, online, onOpen, onPrint }: {
+  t: T; config: Config; kind: ReportKind; printing: boolean; online: boolean; onOpen: (b: Bill) => void; onPrint: (job: PrintJob) => void;
+}) {
+  const today = businessDate();
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [bills, setBills] = useState<Bill[] | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "failed" | "too_long" | "bad_dates">("idle");
+  const title = t(REPORTS.find((r) => r.kind === kind)!.key);
+  const sub = from === to ? dmy(from) : `${dmy(from)} – ${dmy(to)}`;
+
+  const show = useCallback(async (f: string, tt: string) => {
+    if (!f || !tt || tt < f) return setState("bad_dates");
+    setState("loading");
+    try {
+      setBills(await fetchRange(f, tt));
+      setState("idle");
+    } catch (e) {
+      setState(e instanceof ApiError && e.code === "range_too_long" ? "too_long" : "failed");
+    }
+  }, []);
+  // Today's figures show straight away, like opening the report in the old POS.
+  useEffect(() => {
+    if (online) void show(today, today);
+  }, [show, today, online]);
+
+  const paid = (bills ?? []).filter((b) => b.status === "paid");
+  const sum = (list: Bill[]) => list.reduce((s, b) => s + b.total, 0);
+  let body: React.ReactNode = null;
+  let job: PrintJob | null = null;
+
+  if (bills && kind === "sales_summary") {
+    const dates = [...new Set(bills.map((b) => b.business_date))].sort();
+    const rows = dates.map((d) => {
+      const day = paid.filter((b) => b.business_date === d);
+      return { d, n: day.length, cash: paidBy(day, "cash"), upi: paidBy(day, "upi"), card: paidBy(day, "card"), other: paidBy(day, "other"), total: sum(day),
+        cancelled: sum(bills.filter((b) => b.business_date === d && b.status === "cancelled")) };
+    });
+    const tot = { n: paid.length, cash: paidBy(paid, "cash"), upi: paidBy(paid, "upi"), card: paidBy(paid, "card"), other: paidBy(paid, "other"), total: sum(paid),
+      cancelled: sum(bills.filter((b) => b.status === "cancelled")) };
+    const cols = "110px 70px repeat(5, minmax(0, 1fr)) minmax(0, 1.2fr)";
+    body = (
+      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+        <div className="rrow rhead"><span>{t("date")}</span><span className="r">{t("bills_n")}</span><span className="r">{t("cash")}</span><span className="r">{t("upi")}</span><span className="r">{t("card")}</span><span className="r">{t("other")}</span><span className="r">{t("cancelled")}</span><span className="r">{t("total")}</span></div>
+        {rows.map((r) => (
+          <div key={r.d} className="rrow"><span className="num">{dmy(r.d)}</span><span className="num r">{r.n}</span><span className="num r">{money(r.cash)}</span><span className="num r">{money(r.upi)}</span><span className="num r">{money(r.card)}</span><span className="num r">{money(r.other)}</span><span className="num r bad">{money(r.cancelled)}</span><strong className="num r">{money(r.total)}</strong></div>
+        ))}
+        <div className="rrow rfoot"><span>{t("total")}</span><span className="num r">{tot.n}</span><span className="num r">{money(tot.cash)}</span><span className="num r">{money(tot.upi)}</span><span className="num r">{money(tot.card)}</span><span className="num r">{money(tot.other)}</span><span className="num r">{money(tot.cancelled)}</span><span className="num r">{money(tot.total)}</span></div>
+      </div>
+    );
+    job = { kind: "table", title, sub, cols: "minmax(0,1fr) 2em 5.5em", head: ["Date", "Bills", "Sales"], rows: rows.map((r) => [dmy(r.d), String(r.n), money(r.total)]),
+      foot: ["Total", String(tot.n), money(tot.total)] };
+    const modes: [string, number][] = [["Cash", tot.cash], ["UPI", tot.upi], ["Card", tot.card], ["Other", tot.other], ["Cancelled", tot.cancelled]];
+    job.rows.push(["—"], ...modes.filter(([, v]) => v > 0).map(([k, v]) => [k, "", money(v)]));
+  } else if (bills && kind === "sales_details") {
+    const cols = "110px 140px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 120px";
+    body = (
+      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+        <div className="rrow rhead"><span>{t("date")}</span><span>{t("bill_no")}</span><span>{t("type_table")}</span><span>{t("waiter_short")}</span><span>{t("paid_by")}</span><span className="r">{t("amount")}</span></div>
+        {[...bills].reverse().map((b) => (
+          <button key={b.client_id} className={`rrow${b.status === "cancelled" ? " cancelled" : ""}`} onClick={() => onOpen(b)}>
+            <span className="num">{dmy(b.business_date)} <span className="muted small">{formatTime(new Date(b.closed_at))}</span></span>
+            <span className="num">{b.bill_no}</span>
+            <span>{orderLabel({ type: b.order_type, table_name: b.table_name, token: b.token }, t)}</span>
+            <span className="muted">{waiterName(config, b.waiter_staff_id) || "—"}</span>
+            <span className="muted">{b.status === "cancelled" ? `${t("cancelled")}: ${b.cancel_reason ?? ""}` : b.payments.map((p) => t(p.mode as Key)).join(" + ")}</span>
+            <strong className="num r">{money(b.total)}</strong>
+          </button>
+        ))}
+        <div className="rrow rfoot"><span>{t("total")}</span><span>{t("bills_n")}: {paid.length}</span><span /><span /><span /><span className="num r">{money(sum(paid))}</span></div>
+      </div>
+    );
+    job = { kind: "table", title, sub, cols: "minmax(0,1fr) 3.2em 5em", head: ["Bill", "Pay", "Amount"],
+      rows: bills.map((b) => [b.bill_no, b.status === "cancelled" ? "CANC" : b.payments.map((p) => p.mode.toUpperCase()).join("+"), money(b.total)]),
+      foot: ["Total", String(paid.length), money(sum(paid))] };
+  } else if (bills && kind === "item_sales") {
+    const rows = itemSales(bills);
+    const cats = [...new Set(rows.map((r) => r.category))];
+    const cols = "minmax(0, 2fr) minmax(0, 1fr) 90px 130px";
+    body = (
+      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+        <div className="rrow rhead"><span>{t("item_name")}</span><span>{t("variation")}</span><span className="r">{t("qty")}</span><span className="r">{t("amount")}</span></div>
+        {cats.map((c) => {
+          const list = rows.filter((r) => r.category === c);
+          return (
+            <Fragment key={c}>
+              <div className="rgroup">{t("m.category")}: {c}</div>
+              {list.map((r) => (
+                <div key={`${r.name}|${r.variation ?? ""}`} className="rrow"><span>{r.name}</span><span className="muted">{r.variation ? `[${r.variation}]` : ""}</span><span className="num r">{r.qty}</span><span className="num r">{money(r.amount)}</span></div>
+              ))}
+              <div className="rrow rsub"><span /><span /><span className="num r">{list.reduce((n, r) => n + r.qty, 0)}</span><span className="num r">{money(list.reduce((n, r) => n + r.amount, 0))}</span></div>
+            </Fragment>
+          );
+        })}
+        <div className="rrow rfoot"><span>{t("total")}</span><span /><span className="num r">{rows.reduce((n, r) => n + r.qty, 0)}</span><span className="num r">{money(rows.reduce((n, r) => n + r.amount, 0))}</span></div>
+      </div>
+    );
+    job = { kind: "table", title, sub, cols: "minmax(0,1fr) 2.6em 5em", head: ["Item", "Qty", "Amount"],
+      rows: cats.flatMap((c) => [[c], ...rows.filter((r) => r.category === c).map((r) => [`${r.name}${r.variation ? ` [${r.variation}]` : ""}`, String(r.qty), money(r.amount)])]),
+      foot: ["Total", String(rows.reduce((n, r) => n + r.qty, 0)), money(rows.reduce((n, r) => n + r.amount, 0))] };
+  } else if (bills && kind === "waiter_commission") {
+    const m = new Map<number | null, { id: number | null; bills: number; sales: number; commission: number }>();
+    for (const b of paid) {
+      const id = b.waiter_staff_id ?? null;
+      const r = m.get(id) ?? { id, bills: 0, sales: 0, commission: 0 };
+      r.bills++;
+      r.sales += b.total;
+      r.commission += b.commission ?? 0;
+      m.set(id, r);
+    }
+    const rows = [...m.values()].sort((a, b) => (a.id === null ? 1 : b.id === null ? -1 : b.sales - a.sales));
+    const nameOf = (id: number | null) => (id === null ? t("no_waiter") : waiterName(config, id) || `#${id}`);
+    const cols = "minmax(0, 2fr) 90px 140px 140px";
+    body = (
+      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+        <div className="rrow rhead"><span>{t("waiter")}</span><span className="r">{t("bills_n")}</span><span className="r">{t("sales")}</span><span className="r">{t("commission")}</span></div>
+        {rows.map((r) => (
+          <div key={r.id ?? "none"} className="rrow"><span>{nameOf(r.id)}</span><span className="num r">{r.bills}</span><span className="num r">{money(r.sales)}</span><strong className="num r">{money(r.commission)}</strong></div>
+        ))}
+        <div className="rrow rfoot"><span>{t("total")}</span><span className="num r">{paid.length}</span><span className="num r">{money(sum(paid))}</span><span className="num r">{money(rows.reduce((n, r) => n + r.commission, 0))}</span></div>
+      </div>
+    );
+    job = { kind: "table", title, sub, cols: "minmax(0,1fr) 2em 4.6em 4.2em", head: ["Waiter", "Bills", "Sales", "Comm."],
+      rows: rows.map((r) => [nameOf(r.id), String(r.bills), money(r.sales), money(r.commission)]),
+      foot: ["Total", String(paid.length), money(sum(paid)), money(rows.reduce((n, r) => n + r.commission, 0))] };
+  }
+
+  return (
+    <main className="summary">
+      <h1 className="screen-title">{title}</h1>
+      <div className="report-filters">
+        <label className="date-field"><span>{t("from_date")}</span><input type="date" value={from} max={today} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label className="date-field"><span>{t("to_date")}</span><input type="date" value={to} max={today} onChange={(e) => setTo(e.target.value)} /></label>
+        <button className="btn primary" disabled={state === "loading" || !online} onClick={() => void show(from, to)}>🔍 {t("show")}</button>
+        {printing && <button className="btn" disabled={!job || !bills?.length} onClick={() => job && onPrint(job)}>🖨 {t("print")}</button>}
+      </div>
+      {!online && <p className="banner bad">{t("report_offline")}</p>}
+      {state === "loading" && <p className="muted">{t("loading_report")}</p>}
+      {state === "failed" && <p className="banner bad">{t("report_failed")}</p>}
+      {state === "too_long" && <p className="banner bad">{t("range_too_long")}</p>}
+      {state === "bad_dates" && <p className="banner bad">{t("bad_dates")}</p>}
+      {bills && state === "idle" && (bills.length ? body : <p className="muted center empty-note">{t("no_bills_range")}</p>)}
     </main>
   );
 }
@@ -1323,7 +1779,26 @@ function PrintArea({ t, job, settings, config, onDone }: { t: T; job: PrintJob |
   const when = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "short" });
   let body: React.ReactNode = null;
 
-  if (job.kind === "bill") {
+  if (job.kind === "table") {
+    const grid = { gridTemplateColumns: job.cols };
+    body = (
+      <>
+        <div className="p-center p-big">{job.title}</div>
+        <div className="p-center">{job.sub}</div>
+        <div className="p-center p-small">{when}</div>
+        <hr />
+        <div className="p-items p-head" style={grid}>{job.head.map((h, i) => <span key={i}>{h}</span>)}</div>
+        <hr className="thin" />
+        {job.rows.map((r, i) => <div key={i} className={`p-items${r.length === 1 ? " p-group" : ""}`} style={r.length === 1 ? undefined : grid}>{r.map((c, j) => <span key={j}>{c}</span>)}</div>)}
+        {job.foot && (
+          <>
+            <hr />
+            <div className="p-items p-total" style={grid}>{job.foot.map((c, i) => <span key={i}>{c}</span>)}</div>
+          </>
+        )}
+      </>
+    );
+  } else if (job.kind === "bill") {
     body = <ReceiptBody bill={job.bill} settings={settings} config={config} copy={job.copy} />;
   } else if (job.kind === "items") {
     const rows = itemSales(job.bills);

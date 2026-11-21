@@ -47,6 +47,27 @@ describe("owner's POS bills page", () => {
   }, 60_000);
 });
 
+describe("POS reports: bills from a date to a date", () => {
+  it("returns every bill in the range with lines and payments, for the owner only", async () => {
+    expect((await send([bill("2026-08-10"), bill("2026-08-11"), bill("2026-08-11"), bill("2026-08-13")])).status).toBe(200);
+    const r = await app.call(owner, "GET", "/billing/range?from=2026-08-10&to=2026-08-11");
+    expect(r.status).toBe(200);
+    expect(r.json.bills).toHaveLength(3);
+    expect(r.json.bills.every((b: { lines: unknown[]; payments: unknown[]; commission: number }) => b.lines.length === 2 && b.payments.length === 1 && typeof b.commission === "number")).toBe(true);
+    expect((await app.call(staff, "GET", "/billing/range?from=2026-08-10&to=2026-08-11")).status).toBe(403);
+    expect((await app.call(owner, "GET", "/billing/range?from=2026-08-12&to=2026-08-10")).status).toBe(422);
+    expect((await app.call(owner, "GET", "/billing/range?from=2026-01-01&to=2026-08-10")).status).toBe(422);
+  }, 60_000);
+
+  it("the day list still has each bill's lines and payments", async () => {
+    const r = await app.call(staff, "GET", "/billing/day?date=2026-08-11");
+    expect(r.status).toBe(200);
+    expect(r.json.bills).toHaveLength(2);
+    expect(r.json.bills[0].lines).toHaveLength(2);
+    expect(r.json.bills[0].payments).toHaveLength(1);
+  });
+});
+
 async function dayRows(date: string) {
   const daily = await app.db.prepare("SELECT total, bills, cash, online FROM pos_daily WHERE business_date = ?").bind(date).first<{ total: number; bills: number; cash: number; online: number }>();
   const { results: items } = await app.db.prepare("SELECT item, qty, amount FROM pos_items WHERE business_date = ? ORDER BY item").bind(date).all<{ item: string; qty: number; amount: number }>();

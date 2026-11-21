@@ -198,3 +198,9 @@ export async function fetchDay(date: string): Promise<Bill[]> {
   const r = await api<{ bills: Omit<Bill, "synced">[] }>(`/billing/day?date=${date}`);
   return r.bills.map((b) => ({ ...b, synced: true }));
 }
+
+/** Bills from a date to a date (owner and managers), for the Report's menu. */
+export async function fetchRange(from: string, to: string): Promise<Bill[]> {
+  const r = await api<{ bills: Omit<Bill, "synced">[] }>(`/billing/range?from=${from}&to=${to}`);
+  return r.bills.map((b) => ({ ...b, synced: true }));
+}
