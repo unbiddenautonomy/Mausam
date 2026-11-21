@@ -302,6 +302,7 @@ const en = {
   "pos_only.title": "This app is for the owner and managers",
   "pos_only.body": "Employees bill at the counter, in the POS.",
   "pos_only.open": "Open the POS",
+  "more.pos_desc": "Take orders and bill at the counter",
 
   "staff.add": "Add staff member",
   "staff.name": "Name",
@@ -974,6 +975,7 @@ const hi: Dict = {
   "pos_only.title": "यह ऐप मालिक और मैनेजरों के लिए है",
   "pos_only.body": "कर्मचारी काउंटर पर POS में बिल बनाते हैं।",
   "pos_only.open": "POS खोलें",
+  "more.pos_desc": "काउंटर पर ऑर्डर लें और बिल बनाएं",
 
   "staff.add": "स्टाफ़ जोड़ें",
   "staff.name": "नाम",
@@ -1695,6 +1697,7 @@ const kn: Dict = {
   "pos_only.title": "ಈ ಆ್ಯಪ್ ಮಾಲೀಕರು ಮತ್ತು ಮ್ಯಾನೇಜರ್‌ಗಳಿಗೆ",
   "pos_only.body": "ಉದ್ಯೋಗಿಗಳು ಕೌಂಟರ್‌ನಲ್ಲಿ POS ನಲ್ಲಿ ಬಿಲ್ ಮಾಡುತ್ತಾರೆ.",
   "pos_only.open": "POS ತೆರೆಯಿರಿ",
+  "more.pos_desc": "ಕೌಂಟರ್‌ನಲ್ಲಿ ಆರ್ಡರ್ ತೆಗೆದುಕೊಂಡು ಬಿಲ್ ಮಾಡಿ",
 
   "staff.add": "ಸ್ಟಾಫ್ ಸೇರಿಸಿ",
   "staff.name": "ಹೆಸರು",

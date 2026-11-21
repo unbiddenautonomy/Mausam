@@ -23,9 +23,10 @@ export function PageHead({ title, subtitle, back, action }: { title: string; sub
   );
 }
 
-export function NavCard({ to, icon, title, desc, right }: { to: string; icon: IconName; title: string; desc?: ReactNode; right?: ReactNode }) {
-  return (
-    <Link to={to} className="card card-link">
+/** A tappable card. `to` is a route in this app; `href` leaves the app (for example the POS at /pos/). */
+export function NavCard({ to, href, icon, title, desc, right }: { to?: string; href?: string; icon: IconName; title: string; desc?: ReactNode; right?: ReactNode }) {
+  const inner = (
+    <>
       <span className="icon-wrap">
         <Icon name={icon} />
       </span>
@@ -35,8 +36,10 @@ export function NavCard({ to, icon, title, desc, right }: { to: string; icon: Ic
       </span>
       {right}
       <Icon name="chevron" className="chev" />
-    </Link>
+    </>
   );
+  if (href) return <a href={href} className="card card-link">{inner}</a>;
+  return <Link to={to!} className="card card-link">{inner}</Link>;
 }
 
 export function Stat({ label, value, delta, hero }: { label: string; value: ReactNode; delta?: ReactNode; hero?: boolean }) {
