@@ -151,6 +151,11 @@ h2 { font-size: 1.15rem; }
 .cat { min-height: 62px; flex: none; border-radius: 8px; border: 2px solid var(--tile-border); background: var(--tile); font-weight: 750; text-align: center; padding: 0 10px; }
 .cat.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
 .cat.fav { margin-top: auto; }
+.cat.add { border-style: dashed; background: transparent; color: var(--text-2); }
+.no-items { grid-column: 1 / -1; display: grid; gap: 12px; justify-items: center; }
+.add-item-form { display: grid; gap: 12px; min-width: min(420px, 80vw); }
+.add-item-form label { display: grid; gap: 4px; }
+.add-item-form .type-toggle { justify-self: start; }
 .items { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); padding: 10px; }
 .search-row { display: flex; gap: 8px; }
 .search { flex: 1; min-width: 0; min-height: 52px; border-radius: 10px; border: 2px solid var(--border); padding: 0 16px; background: var(--surface); }

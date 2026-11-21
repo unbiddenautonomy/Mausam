@@ -218,6 +218,18 @@ const en = {
   "range_too_long": "Pick at most 92 days at a time.",
   "bad_dates": "The To Date must be on or after the From Date.",
   "no_bills_range": "No bills between these dates.",
+  "add_item": "New item",
+  "add_item_title": "Add a new item",
+  "add_as_item": "Add “{name}” as a new item",
+  "new_item_rate": "Rate (₹)",
+  "veg": "Veg",
+  "non_veg": "Non-veg",
+  "add_item_note": "It goes on the menu straight away. The owner and the managers are told, so they can check the name and the rate.",
+  "add_item_save": "Add item",
+  "item_added": "{name} is on the menu now. The owner and the managers are told.",
+  "item_exists": "An item with this name is already on the menu.",
+  "add_item_offline": "No internet. Adding an item needs the internet.",
+  "add_item_failed": "Couldn't add the item. Check the internet and try again.",
 } as const;
 
 export type Key = keyof typeof en;
@@ -429,6 +441,18 @@ const hi: Dict = {
   "bad_dates": "'तारीख तक' 'तारीख से' के बाद होनी चाहिए।",
   "no_bills_range": "इन तारीखों में कोई बिल नहीं।",
   "summary": "डे एंड",
+  "add_item": "नया आइटम",
+  "add_item_title": "नया आइटम जोड़ें",
+  "add_as_item": "“{name}” को नया आइटम बनाएं",
+  "new_item_rate": "दाम (₹)",
+  "veg": "वेज",
+  "non_veg": "नॉन-वेज",
+  "add_item_note": "यह तुरंत मेन्यू में आ जाएगा। मालिक और मैनेजर को बताया जाएगा, ताकि वे नाम और दाम जाँच लें।",
+  "add_item_save": "आइटम जोड़ें",
+  "item_added": "{name} अब मेन्यू में है। मालिक और मैनेजर को बता दिया गया।",
+  "item_exists": "इस नाम का आइटम पहले से मेन्यू में है।",
+  "add_item_offline": "इंटरनेट नहीं है। आइटम जोड़ने के लिए इंटरनेट चाहिए।",
+  "add_item_failed": "आइटम नहीं जुड़ा। इंटरनेट देखकर फिर कोशिश करें।",
 };
 
 const kn: Dict = {
@@ -638,6 +662,18 @@ const kn: Dict = {
   "bad_dates": "'ದಿನಾಂಕದವರೆಗೆ' 'ದಿನಾಂಕದಿಂದ' ನಂತರ ಇರಬೇಕು.",
   "no_bills_range": "ಈ ದಿನಾಂಕಗಳಲ್ಲಿ ಬಿಲ್ ಇಲ್ಲ.",
   "summary": "ಡೇ ಎಂಡ್",
+  "add_item": "ಹೊಸ ಐಟಂ",
+  "add_item_title": "ಹೊಸ ಐಟಂ ಸೇರಿಸಿ",
+  "add_as_item": "“{name}” ಅನ್ನು ಹೊಸ ಐಟಂ ಆಗಿ ಸೇರಿಸಿ",
+  "new_item_rate": "ಬೆಲೆ (₹)",
+  "veg": "ವೆಜ್",
+  "non_veg": "ನಾನ್-ವೆಜ್",
+  "add_item_note": "ಇದು ತಕ್ಷಣ ಮೆನುವಿಗೆ ಸೇರುತ್ತದೆ. ಮಾಲೀಕರು ಮತ್ತು ಮ್ಯಾನೇಜರ್‌ಗಳಿಗೆ ತಿಳಿಸಲಾಗುತ್ತದೆ, ಅವರು ಹೆಸರು ಮತ್ತು ಬೆಲೆ ಪರಿಶೀಲಿಸಬಹುದು.",
+  "add_item_save": "ಐಟಂ ಸೇರಿಸಿ",
+  "item_added": "{name} ಈಗ ಮೆನುವಿನಲ್ಲಿದೆ. ಮಾಲೀಕರು ಮತ್ತು ಮ್ಯಾನೇಜರ್‌ಗಳಿಗೆ ತಿಳಿಸಲಾಗಿದೆ.",
+  "item_exists": "ಈ ಹೆಸರಿನ ಐಟಂ ಈಗಾಗಲೇ ಮೆನುವಿನಲ್ಲಿದೆ.",
+  "add_item_offline": "ಇಂಟರ್ನೆಟ್ ಇಲ್ಲ. ಐಟಂ ಸೇರಿಸಲು ಇಂಟರ್ನೆಟ್ ಬೇಕು.",
+  "add_item_failed": "ಐಟಂ ಸೇರಲಿಲ್ಲ. ಇಂಟರ್ನೆಟ್ ನೋಡಿ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
 };
 
 const dicts: Record<Lang, Dict> = { en, hi, kn };

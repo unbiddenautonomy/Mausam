@@ -289,3 +289,33 @@ describe("counter letters", () => {
     expect(list.json.counters.find((c: { code: string }) => c.code === "Q").held).toBe(1);
   });
 });
+
+describe("new items from the counter", () => {
+  it("puts the item on the menu, refuses a second one with the same name, and alerts the owner and managers", async () => {
+    const cat = await app.db.prepare("INSERT INTO menu_categories (name) VALUES ('Specials') RETURNING id").first<{ id: number }>();
+    const manager = await app.user("manager");
+    const add = (token: string, body: unknown) => app.call(token, "POST", "/billing/items", body);
+
+    const r = await add(staff, { name: "  Cheese Masala Pav ", category_id: cat!.id, price: 9000, veg: true });
+    expect(r.status).toBe(201);
+    expect(r.json.item).toMatchObject({ name: "Cheese Masala Pav", price: 9000, category_id: cat!.id, veg: 1 });
+
+    // Every screen gets it with the menu.
+    const config = await app.call(staff, "GET", "/billing/config");
+    expect(config.json.items.some((i: { id: number }) => i.id === r.json.item.id)).toBe(true);
+
+    expect((await add(staff, { name: "cheese masala pav", category_id: cat!.id, price: 9500 })).json.error).toBe("item_exists");
+    expect((await add(staff, { name: "No Price", category_id: cat!.id })).status).toBe(422);
+    expect((await add(staff, { name: "No Category", category_id: 999999, price: 100 })).status).toBe(422);
+
+    // The owner and the managers see it in their alerts, with who added it.
+    for (const token of [owner, manager.token]) {
+      const alerts = await app.call(token, "GET", "/alerts");
+      const a = alerts.json.alerts.find((x: { type: string }) => x.type === `item_added:${r.json.item.id}`);
+      expect(a.params).toMatchObject({ name: "Cheese Masala Pav", amount: 9000, category: "Specials" });
+      expect(a.params.by).toBeTruthy();
+    }
+    const audit = await app.db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE table_name = 'menu_items' AND row_id = ?").bind(r.json.item.id).first<{ n: number }>();
+    expect(audit!.n).toBe(1);
+  });
+});

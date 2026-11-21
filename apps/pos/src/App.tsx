@@ -512,6 +512,17 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     const b = billFor(o, "Duplicate");
     if (b && !printing) setView({ kind: "bill", bill: b, orderId: o.id });
   }
+  /** A new item was added from this screen: it can be billed at once, before the menu is loaded again. */
+  function itemAdded(item: Item) {
+    setConfig((c) => {
+      if (!c) return c;
+      const next = { ...c, items: [...c.items.filter((i) => i.id !== item.id), item] };
+      storage.setConfig(next);
+      return next;
+    });
+    setToast(t("item_added", { name: item.name }));
+    void loadConfig();
+  }
   const held = orders.filter((o) => o.id !== activeId);
   const counter = storage.counter();
   const restaurant = (s.bill_header || "").split("\n")[0] || t("app.title");
@@ -585,7 +596,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           t={t} lang={lang} config={config} order={active} update={update} held={held} online={online} bills={bills}
           openWith={openWith}
           onHold={hold} onClose={closeBill} onPickHeld={(o) => showOrder(o)} onShowBill={showBill}
-          onSavePrint={saveAndPrint} onBill={(copy) => billFor(active, copy)} onType={setType}
+          onSavePrint={saveAndPrint} onBill={(copy) => billFor(active, copy)} onType={setType} onItemAdded={itemAdded}
           onPaid={(payments, change) => {
             const bill = finish(active, "paid", payments, null);
             setToast(t("paid_done", { no: bill.bill_no }));
@@ -620,7 +631,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           onLogout={() => setAskLogout(true)}
         />
       )}
-      {screen.kind === "items" && <ItemMaster t={t} lang={lang} config={config} isOwner={isOwner} />}
+      {screen.kind === "items" && <ItemMaster t={t} lang={lang} config={config} isOwner={isOwner} online={online} onItemAdded={itemAdded} />}
       {screen.kind === "report" && (
         <Report key={screen.report} t={t} config={config} kind={screen.report} printing={printing} online={online}
           onOpen={showBill} onPrint={(job) => setPrint(job)} />
@@ -862,11 +873,11 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }:
 
 type OrderDialog = "pay" | "cancel" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
 
-function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel }: {
+function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel, onItemAdded }: {
   t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: Order[]; online: boolean; bills: Bill[];
   openWith: "pay" | null; onHold: () => void; onClose: () => void; onPickHeld: (o: Order) => void; onShowBill: (b: Bill) => void;
   onSavePrint: () => void; onBill: (copy: Copy) => Bill | null; onType: (type: Order["type"]) => void;
-  onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void;
+  onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void; onItemAdded: (item: Item) => void;
 }) {
   const s = config.settings;
   const printing = !!s.printing;
@@ -878,6 +889,8 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
   const [choosing, setChoosing] = useState<Item | null>(null);
   const [billPreview, setBillPreview] = useState<Bill | null>(null);
   const [noteFor, setNoteFor] = useState<string | null>(null);
+  /** The new-item pop-up, with the name typed in the search so far. */
+  const [adding, setAdding] = useState<string | null>(null);
   const totals = totalsOf(order, s);
   const totalQty = order.lines.reduce((n, l) => n + l.qty, 0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -910,8 +923,9 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
     }
   }
   const pay = () => setDialog(missingWaiter ? "waiter_then_pay" : "pay");
-  // An order with nothing sent to the kitchen and no bill is simply cleared; anything else asks why.
-  const cancel = () => (!order.bill_no && order.lines.every((l) => l.sent === 0) ? onCancel("") : setDialog("cancel"));
+  // An order whose bill hasn't been printed is just cancelled: bills are printed when the guest comes to pay, so this
+  // is the usual case. Only a printed bill asks why.
+  const cancel = () => (!order.bill_no ? onCancel(NOT_PRINTED) : setDialog("cancel"));
 
   return (
     <main className="order-screen">
@@ -920,11 +934,17 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
           <button key={c.id} className={`cat${cat === c.id && !query ? " on" : ""}`} onClick={() => (setCat(c.id), setQuery(""))}>{catName(c)}</button>
         ))}
         {favourites.length > 0 && <button className={`cat fav${cat === "fav" && !query ? " on" : ""}`} onClick={() => (setCat("fav"), setQuery(""))}>{t("favourites")}</button>}
+        <button className="cat add" onClick={() => setAdding(query.trim())}>＋ {t("add_item")}</button>
       </nav>
 
       <section className="items">
         <div className="item-grid">
-          {items.length === 0 && <p className="muted center">{t("no_items_found")}</p>}
+          {items.length === 0 && (
+            <div className="center no-items">
+              <p className="muted">{t("no_items_found")}</p>
+              {query.trim() && <button className="btn big" onClick={() => setAdding(query.trim())}>＋ {t("add_as_item", { name: query.trim() })}</button>}
+            </div>
+          )}
           {items.map((i) => {
             const inOrder = order.lines.filter((l) => l.item_id === i.id).reduce((n, l) => n + l.qty, 0);
             return (
@@ -1023,6 +1043,17 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
         </div>
       </aside>
 
+      {adding !== null && (
+        <AddItemDialog t={t} lang={lang} config={config} online={online} name={adding} category={typeof cat === "number" ? cat : null}
+          onClose={() => setAdding(null)}
+          onAdded={(item) => {
+            setAdding(null);
+            setQuery("");
+            setCat(item.category_id);
+            onItemAdded(item);
+            add(item);
+          }} />
+      )}
       {choosing && (
         <ChoiceDialog t={t} item={choosing} name={localName(choosing) || choosing.name} onClose={() => setChoosing(null)}
           onAdd={(pick, qty) => (setChoosing(null), add(choosing, pick, qty))} />
@@ -1498,8 +1529,11 @@ function Summary({ t, config, bills, waiting, online, printing, onSync, onPrint,
 /* ---------------- Item Master: the menu as the counter has it ---------------- */
 
 /** The old POS's Item Master, to look things up. Items and prices are changed in the admin app (the owner). */
-function ItemMaster({ t, lang, config, isOwner }: { t: T; lang: Lang; config: Config; isOwner: boolean }) {
+function ItemMaster({ t, lang, config, isOwner, online, onItemAdded }: {
+  t: T; lang: Lang; config: Config; isOwner: boolean; online: boolean; onItemAdded: (item: Item) => void;
+}) {
   const [find, setFind] = useState("");
+  const [adding, setAdding] = useState(false);
   const [cat, setCat] = useState<number | "all">("all");
   const q = find.trim().toLowerCase();
   const catName = (id: number) => {
@@ -1513,6 +1547,7 @@ function ItemMaster({ t, lang, config, isOwner }: { t: T; lang: Lang; config: Co
       <div className="report-head">
         <h1 className="screen-title">{t("item_master")}</h1>
         <span className="grow" />
+        <button className="btn primary" onClick={() => setAdding(true)}>＋ {t("add_item")}</button>
         {isOwner && <a className="btn" href="/manage/menu" target="_blank" rel="noopener">{t("edit_in_admin")} ↗</a>}
       </div>
       <div className="report-filters">
@@ -1536,7 +1571,76 @@ function ItemMaster({ t, lang, config, isOwner }: { t: T; lang: Lang; config: Co
         {list.length === 0 && <p className="muted center">{t("no_items_found")}</p>}
       </div>
       <p className="muted small">{t("items", { n: list.length })}{!isOwner && ` · ${t("owner_only_edit")}`}</p>
+      {adding && (
+        <AddItemDialog t={t} lang={lang} config={config} online={online} name={find.trim()} category={cat === "all" ? null : cat}
+          onClose={() => setAdding(false)}
+          onAdded={(item) => (setAdding(false), setFind(""), onItemAdded(item))} />
+      )}
     </main>
+  );
+}
+
+/** The cancel reason kept on an order cancelled before its bill was printed (nobody is asked). */
+const NOT_PRINTED = "Not printed";
+
+/**
+ * A new menu item, added at the counter so a dish that isn't on the menu yet can be billed. It needs the internet:
+ * the server puts it on the menu for every screen and tells the owner and the managers, who can fix the name or rate.
+ */
+function AddItemDialog({ t, lang, config, online, name, category, onClose, onAdded }: {
+  t: T; lang: Lang; config: Config; online: boolean; name: string; category: number | null; onClose: () => void; onAdded: (item: Item) => void;
+}) {
+  const [itemName, setItemName] = useState(name);
+  const [cat, setCat] = useState<number | null>(category ?? config.categories[0]?.id ?? null);
+  const [rate, setRate] = useState("");
+  const [veg, setVeg] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const paise = rupeesToPaise(rate);
+  const ready = itemName.trim() !== "" && cat !== null && paise !== null && paise > 0;
+  const catName = (c: Config["categories"][number]) => (lang === "hi" && c.name_hi) || (lang === "kn" && c.name_kn) || c.name;
+  async function save() {
+    if (!ready || busy) return;
+    if (!online) return setError(t("add_item_offline"));
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ item: Item }>("/billing/items", { method: "POST", json: { name: itemName.trim(), category_id: cat, price: paise, veg } });
+      onAdded(r.item);
+    } catch (e) {
+      setError(e instanceof ApiError && e.code === "item_exists" ? t("item_exists") : e instanceof ApiError ? t("add_item_failed") : t("add_item_offline"));
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal t={t} title={t("add_item_title")} onClose={onClose} className="add-item">
+      <form className="add-item-form" onSubmit={(e) => (e.preventDefault(), void save())}>
+        <label>
+          <span className="muted small">{t("item_name")}</span>
+          <input className="search" autoFocus value={itemName} maxLength={120} onChange={(e) => setItemName(e.target.value)} />
+        </label>
+        <label>
+          <span className="muted small">{t("m.category")}</span>
+          <select className="search" value={cat ?? ""} onChange={(e) => setCat(Number(e.target.value))}>
+            {config.categories.map((c) => <option key={c.id} value={c.id}>{catName(c)}</option>)}
+          </select>
+        </label>
+        <label>
+          <span className="muted small">{t("new_item_rate")}</span>
+          <input className="search num" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value.replace(/[^\d.]/g, ""))} placeholder="0" />
+        </label>
+        <div className="type-toggle" role="group">
+          <button type="button" className={veg ? "on" : ""} onClick={() => setVeg(true)}>🟢 {t("veg")}</button>
+          <button type="button" className={!veg ? "on" : ""} onClick={() => setVeg(false)}>🔴 {t("non_veg")}</button>
+        </div>
+        <p className="muted small">{t("add_item_note")}</p>
+        {error && <div className="error" role="alert">{error}</div>}
+        <div className="actions-row">
+          <button type="button" className="btn big" onClick={onClose}>{t("close")}</button>
+          <button type="submit" className="btn big primary" disabled={!ready || busy}>{t("add_item_save")}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
