@@ -128,34 +128,40 @@ The full printer steps and printer troubleshooting are in [pos-printing.md](pos-
 
 ## POS: everyday use at the counter
 
-The POS works like the counter's old POS. The home screen is **Tables**: a tile for each table, coloured **Vacant** (grey), **Running** (orange, order being taken) or **Billed** (blue, bill printed, waiting for payment), plus buttons for **New parcel** and **New order (no table)**.
+The POS is laid out like the counter's old POS. Across the top is the same menu bar: **Billing · Master's · Report's · Dashboard · Day End · Item Master**, with **🏠 Home** and **← Back** at the left and your name (language, log out) at the right. Every pop-up has a big **✕** in its corner, and also closes with **Esc** or a tap outside it.
 
-![The POS Tables screen: parcels on top, then tables T1 to T22 marked Running, Billed or Vacant](images/guide/pos-tables.png)
+**Home is Billing:** the menu on the left and a fresh bill on the right, ready to take the next order.
 
-**A table order**
+![The Billing screen: categories on the left, items in the middle, the bill on the right with Bill, Save & Print, Cash, HOLD, CLOSE and Cancel](images/guide/pos-order.png)
 
-1. Tap the table (for example T5). Pick the waiter serving it from the big buttons; payment can't be taken until a waiter is picked.
-2. Tap a category on the left (Pav Bhaji, Dosa, Chinese, Soft Drink, Favorite) and tap items to add them. Use **+ / −** to change quantity. Items with choices (Regular/Jain, Kadak/Medium/Naram, Full/Half) ask for the choice. The search box finds any item by name.
-3. Tap **Save & Print**. The order is saved and the bill prints twice: one copy for the kitchen, one for the guest's table. The table turns **Running**.
-4. More items later: tap the table again, add them, and **Save & Print** again.
-5. When the guest pays, tap **Cash / Pay**. Choose **Cash** (type the cash given and the screen shows the change to give back), **UPI**, **Card**, or split between them. Tap **Done, close bill**. The table goes back to **Vacant**.
+**Taking an order**
 
-![The order screen: categories on the left, items in the middle, the order with Bill, Save & Print, Hold, Cancel and Cash / Pay on the right](images/guide/pos-order.png)
+1. Pick **Dine-in** or **Parcel** at the top of the bill.
+2. Tap a category on the left (Pav Bhaji, Dosa, Chinese, Soft Drink, Favorite) and tap items to add them. Use **+ / −** to change quantity. Items with choices (Regular/Jain, Kadak/Medium/Naram, Full/Half) open the Variation / Add On pop-up: pick, then **Save**. **Select Product** finds any item by name.
+3. Tap **Waiter** to pick who is serving. Dine-in bills can't be paid until a waiter is picked; the POS asks when you tap **Cash**.
+4. **Save & Print** prints the bill (twice: one copy for the kitchen) and opens a fresh bill. The order waits under **Hold (n)** until it's paid.
+5. When the guest pays, open it from **Hold (n)** and tap **Cash**. Choose **Cash** (type the cash given and the screen shows the change), **UPI**, **Card**, or split between them.
 
-**A parcel:** tap **New parcel**, add items, **Save & Print**, then **Cash / Pay**. Parcels get a token number and don't need a waiter.
-
-**Other buttons on the order screen**
+**The other buttons**
 
 - **Bill:** shows or reprints the bill (marked "Duplicate").
-- **Hold:** parks an order and goes back to Tables; **Hold (n)** at the top brings it back.
+- **HOLD:** keeps the order open and gives you a fresh bill. **Hold (n)** at the top lists the held and printed bills; tap one to pick it up again.
+- **Invoice:** today's bills from both devices. Tap one to see or reprint it.
+- **CLOSE:** leaves this bill (an order with items stays on hold) and goes back.
+- **Cancel:** an empty bill is just cleared; anything sent to the kitchen or printed asks for a reason. Cancelled bills show in the admin app under **POS bills**.
 - **Discount:** an amount in ₹ or a percent off.
-- **Cancel order:** asks for a reason (guest left, wrong order, test bill, other). Cancelled orders show in the admin app under **POS bills**.
 
-**End of the day:** open **Day summary** (top left). It shows the day's sales by payment mode (cash, UPI, card) and by waiter, and any bills **Not sent yet**. Check it says **All bills sent**, then the manager uses these numbers for **Close the day** in the admin app (the POS total is filled in by itself).
+**Dashboard:** every open order (and the tables, if the table map is on), coloured **Running** (orange) or **Billed** (blue). Each card has **Bill** (print it), **Pay** and **Open** buttons.
 
-**If the internet drops:** keep billing. The top bar says **Offline: bills are saved here**, bills keep their numbers, and everything is sent when the internet is back. **Day summary → Send now** sends them straight away.
+![The Dashboard: open orders with Bill, Pay and Open buttons, then the tables](images/guide/pos-tables.png)
 
-**Language:** the dropdown at the top switches the POS between English, Hindi and Kannada at any time; the menu items change language too.
+**Report's** (owner and managers): **Sales Summary**, **Sales Details**, **Item Sales Summary** and **Waiter Commission**, each with **From Date**, **To Date**, **Show** and **Print**, like the old POS. **Master's** and **Item Master** show the menu; the owner changes items, tables and waiters in the admin app (the links open it).
+
+**End of the day:** open **Day End**. It shows the day's sales by payment mode (cash, UPI, card) and by waiter, and any bills **Not sent yet**. Check it says **All bills sent**, then the manager uses these numbers for **Close the day** in the admin app (the POS total is filled in by itself).
+
+**If the internet drops:** keep billing. The top bar says **Offline: bills are saved here**, bills keep their numbers, and everything is sent when the internet is back. **Day End → Send now** sends them straight away. Reports need the internet.
+
+**Language:** tap your name at the top right to switch between English, Hindi and Kannada at any time; the menu items change language too.
 
 ## If something goes wrong
 
@@ -167,7 +173,7 @@ The POS works like the counter's old POS. The home screen is **Tables**: a tile 
 | A print pop-up appears at the counter | Chrome was opened some other way. Close every Chrome window and open the **Mausam POS** shortcut. |
 | Nothing prints | Check paper and the printer light, print a Windows test page, and check **A receipt printer is connected** is on in **Manage → POS options**. |
 | The printer is broken | Switch **A receipt printer is connected** off in **POS options**. Bills show on screen instead, and billing carries on. |
-| The POS says Offline | Keep billing. Bills are sent when the internet is back. Check **Day summary** before closing for the night. |
+| The POS says Offline | Keep billing. Bills are sent when the internet is back. Check **Day End** before closing for the night. |
 | The POS says bills were refused by the server | Tell the owner and open **POS bills** in the admin app. |
 | A wrong price on the POS | Fix it in **Manage → Menu**; the POS picks up the change the next time it loads. |
 | An update to the app broke something | In Cloudflare, **mausam-admin → Deployments**, pick the version before it and choose **Rollback**. |

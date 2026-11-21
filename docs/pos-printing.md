@@ -5,7 +5,7 @@ The POS is a web page. On the counter (the Posiflex Windows touchscreen), Chrome
 **When a bill prints:**
 - **Save & Print**: the order is saved and its bill prints twice, one copy after the other, with every item and price. The second copy is for the kitchen. This happens for dine-in and parcel orders alike. To print one or three copies, go to **Manage → POS options → Copies of each bill** in the admin app.
 - **Cash / Pay**: if items were added after the last print, the bill prints again (both copies) when it's paid.
-- **Bill**, or tapping a bill in **Day summary**: prints a copy marked "Duplicate".
+- **Bill**, or tapping a bill in **Day End**: prints a copy marked "Duplicate".
 
 The bill is laid out like the old POS's bill. It has the token number at the top (tokens keep counting up and don't restart each day), then the restaurant's name, address and phone number, the date and time, DINEIN or PARCEL, and the bill number. Then come the items with their [variation] (Item, Qty, Price, Amount), the total quantity, the Grand Total, and "Thank You !! Visit Again !!". To change the heading or the footer, go to **Manage → POS options** in the admin app. The heading has one line each for the name, the address and the phone number.
 
