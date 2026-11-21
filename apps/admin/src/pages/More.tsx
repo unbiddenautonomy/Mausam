@@ -13,6 +13,7 @@ export function More() {
     <div className="page">
       <PageHead title={t("nav.more")} subtitle={`${user!.name} · ${t(`role.${user!.role}` as const)}`} />
       <div className="grid-2">
+        <NavCard href="/pos/" icon="pos" title={t("pos_only.open")} desc={t("more.pos_desc")} />
         <NavCard to="/alerts" icon="bell" title={t("nav.alerts")} />
         <NavCard to="/people" icon="users" title={t("people.title")} desc={t("people.payroll_desc")} />
         <NavCard to="/vendors" icon="truck" title={t("vendor.title")} desc={t("vendor.desc")} />
