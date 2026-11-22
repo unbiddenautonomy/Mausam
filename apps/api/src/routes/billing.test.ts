@@ -288,6 +288,23 @@ describe("counter letters", () => {
     const list = await app.call(owner, "GET", "/billing/counters");
     expect(list.json.counters.find((c: { code: string }) => c.code === "Q").held).toBe(1);
   });
+
+  it("gives each device its own letter without asking, and the same one again", async () => {
+    const auto = (device: string) => app.call(staff, "POST", "/billing/counters/auto", { device });
+    const one = (await auto("auto-device-one")).json.code;
+    const two = (await auto("auto-device-two")).json.code;
+    expect(one).toMatch(/^[A-Z]$/);
+    expect(two).toMatch(/^[A-Z]$/);
+    expect(two).not.toBe(one);
+    expect((await auto("auto-device-one")).json.code).toBe(one);
+    // Letters held by other devices (K and Q above) are skipped.
+    expect([one, two]).not.toContain("K");
+    expect([one, two]).not.toContain("Q");
+    // A freed letter goes to the next new device.
+    expect((await app.call(owner, "POST", `/billing/counters/${one}/release`)).status).toBe(200);
+    expect((await auto("auto-device-three")).json.code).toBe(one);
+    expect((await auto("bad")).status).toBe(422);
+  });
 });
 
 describe("new items from the counter", () => {

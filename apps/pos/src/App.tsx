@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { businessDate, changeDue, financialYear, formatINR, formatTime, LANGUAGES, setDateLang, rupeesToPaise, validCounter, type BillPayMode, type Lang } from "@mausam/shared";
-import { api, ApiError, fetchConfig, fetchDay, fetchRange, claimCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
+import { businessDate, changeDue, financialYear, formatINR, formatTime, LANGUAGES, setDateLang, rupeesToPaise, type BillPayMode, type Lang } from "@mausam/shared";
+import { uid } from "./store";
+import { api, ApiError, fetchConfig, fetchDay, fetchRange, autoCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
@@ -46,7 +47,7 @@ export function App() {
   const [counter, setCounter] = useState(storage.counter());
 
   if (!loggedIn) return <Login t={t} lang={lang} setLang={setLang} onDone={() => setLoggedIn(true)} />;
-  if (!counter || counter.taken) return <CounterSetup t={t} taken={counter?.taken ? counter.code : null} onDone={() => setCounter(storage.counter())} />;
+  if (!counter || counter.taken) return <CounterSetup t={t} onDone={() => setCounter(storage.counter())} />;
   return (
     <Counter t={t} lang={lang} setLang={setLang} onLogout={() => void logout().then(() => setLoggedIn(false))}
       onCounterTaken={() => setCounter(storage.counter())} />
@@ -116,51 +117,53 @@ function Login({ t, lang, setLang, onDone }: { t: T; lang: Lang; setLang: (l: La
   );
 }
 
-/* ---------------- First run on a device: which counter is this? ---------------- */
+/* ---------------- First run on a device: its counter letter, picked without asking ---------------- */
 
 /**
- * Picks this device's counter letter. A letter another device holds is refused. With no internet the letter is taken
- * on trust and claimed with the first bills sent; if another device holds it, this screen comes back here.
- * `taken`: the letter this device had, which the server says another device holds.
+ * Gets this device a counter letter from the server and starts billing; nobody is asked. Bill numbers start with
+ * the letter (A2627-00001) so screens billing offline never make the same number. `taken`: the server says another
+ * device now holds this device's letter, so it simply gets another.
  */
-function CounterSetup({ t, taken, onDone }: { t: T; taken: string | null; onDone: () => void }) {
-  const [code, setCode] = useState(taken ? "" : "A");
-  const [busy, setBusy] = useState(false);
-  const [refused, setRefused] = useState<string | null>(taken);
-  async function go() {
-    setBusy(true);
-    try {
-      if ((await claimCounter(code)) === "taken") {
-        setRefused(code);
-        setBusy(false);
-        return;
+function CounterSetup({ t, onDone }: { t: T; onDone: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      let code: string | null = null;
+      try {
+        code = await autoCounter();
+      } catch {
+        /* logged out: App shows the login */
       }
-    } catch {
-      setBusy(false);
-      return;
-    }
-    keepStorage();
-    // Carry on from the last bill this counter sent, in case the device was reset.
-    let seq = 0;
-    try {
-      const r = await api<{ last_bill_no: string | null }>(`/billing/counters/${code}/last`);
-      if (r.last_bill_no) seq = Number(r.last_bill_no.split("-").at(-1)) || 0;
-    } catch {
-      /* offline: start from 0; the server refuses a repeated number, so nothing is lost silently */
-    }
-    storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0, fy: financialYear(businessDate()) });
-    onDone();
-  }
+      if (!live) return;
+      if (!code) return setFailed(true);
+      keepStorage();
+      // Carry on from the last bill this letter sent, in case the device was reset.
+      let seq = 0;
+      try {
+        const r = await api<{ last_bill_no: string | null }>(`/billing/counters/${code}/last`);
+        if (r.last_bill_no) seq = Number(r.last_bill_no.split("-").at(-1)) || 0;
+      } catch {
+        /* the server refuses a repeated number, so nothing is lost silently */
+      }
+      if (!live) return;
+      storage.setCounter({ code, seq, tokenDate: businessDate(), token: 0, fy: financialYear(businessDate()) });
+      done.current();
+    })();
+    return () => void (live = false);
+  }, [attempt]);
   return (
     <div className="login">
       <div className="login-card">
-        <h1>{t("setup.title")}</h1>
-        <p className="muted">{t("setup.help")}</p>
-        {refused && <p className="banner bad" role="alert">{t("counter_taken", { code: refused })}</p>}
-        <div className="lang-row">
-          {["A", "B", "C", "D", "E", "F"].map((c) => <button key={c} className={`chip big${code === c ? " on" : ""}`} onClick={() => setCode(c)}>{c}</button>)}
-        </div>
-        <button className="btn primary big block" disabled={busy || !validCounter(code)} onClick={go}>{t("setup.go")}</button>
+        {failed ? (
+          <>
+            <p className="error" role="alert">{t("load_failed")}</p>
+            <button className="btn primary big block" onClick={() => (setFailed(false), setAttempt((a) => a + 1))}>{t("retry")}</button>
+          </>
+        ) : <p className="muted center">{t("loading")}</p>}
       </div>
     </div>
   );
@@ -226,6 +229,8 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   const [starting, setStarting] = useState<Table | null>(null);
   const [askLogout, setAskLogout] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  /** A message with an Undo button, shown for a few seconds after something is thrown away without asking. */
+  const [undo, setUndo] = useState<{ text: string; run: () => void } | null>(null);
   const [now, setNow] = useState(Date.now());
   const [cantSave, setCantSave] = useState(storageBroken());
   const tokenAsked = useRef(new Set<string>());
@@ -347,6 +352,11 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     }
   }, [orders, activeId, t]);
 
+  useEffect(() => {
+    if (!undo) return;
+    const id = window.setTimeout(() => setUndo(null), 8000);
+    return () => window.clearTimeout(id);
+  }, [undo]);
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(null), 3000);
@@ -539,7 +549,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
         </span>
         <div className="mb-wrap">
           <button className="user-btn" onClick={() => setMenu(menu === "user" ? null : "user")} aria-expanded={menu === "user"}>
-            👤 {user?.name} · {counter?.code} ▾
+            👤 <span className="uname">{user?.name}</span> · {counter?.code} ▾
           </button>
           {menu === "user" && (
             <Dropdown align="right" onClose={() => setMenu(null)}>
@@ -608,8 +618,16 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
             // Nothing reached the kitchen or the guest: just drop it. Otherwise keep a cancelled bill.
             if (activeId === null) return setDraft(newOrder("dine_in", null, null));
             if (!active.bill_no && active.lines.every((l) => l.sent === 0)) {
-              setOrders((os) => os.filter((o) => o.id !== active.id));
+              // No confirm: the order goes at once, and Undo on the message brings it back if the tap was a mistake.
+              const gone = active;
+              setOrders((os) => os.filter((o) => o.id !== gone.id));
               setActiveId(null);
+              // The cancel may already have reached the other screens, so Undo brings it back as a new order, same token.
+              setUndo({ text: t("order_cancelled"), run: () => {
+                const back = { ...gone, id: uid() };
+                setOrders((os) => [...os, back]);
+                showOrder(back);
+              } });
             } else finish(active, "cancelled", [], reason);
           }}
         />
@@ -661,7 +679,12 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           </div>
         </Modal>
       )}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {undo ? (
+        <div className="toast undo-toast" role="status">
+          <span>{undo.text}</span>
+          <button className="btn" onClick={() => (undo.run(), setUndo(null))}>↶ {t("undo")}</button>
+        </div>
+      ) : toast && <div className="toast" role="status">{toast}</div>}
       <PrintArea t={t} job={print} settings={s} config={config} onDone={() => setPrint(null)} />
     </div>
   );
@@ -889,6 +912,9 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
   const [choosing, setChoosing] = useState<Item | null>(null);
   const [billPreview, setBillPreview] = useState<Bill | null>(null);
   const [noteFor, setNoteFor] = useState<string | null>(null);
+  /** The bill line whose quantity is being typed in (tap the number: 30 of an item is two taps, not 29). */
+  const [qtyFor, setQtyFor] = useState<string | null>(null);
+  const qtyLine = qtyFor ? order.lines.find((l) => l.key === qtyFor) ?? null : null;
   /** The new-item pop-up, with the name typed in the search so far. */
   const [adding, setAdding] = useState<string | null>(null);
   const totals = totalsOf(order, s);
@@ -1005,7 +1031,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
                 {/* At 1 the minus takes the line off the bill, so it shows a bin: staff can see that tapping it removes the item. */}
                 <button className={l.qty === 1 ? "remove" : ""} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))}
                   aria-label={l.qty === 1 ? t("remove") : "−"}>{l.qty === 1 ? "🗑" : "−"}</button>
-                <span className="num">{l.qty}</span>
+                <button className="qty-btn num" onClick={() => setQtyFor(l.key)} aria-label={t("how_many")}>{l.qty}</button>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
               <span className="lprice num">{formatINR(l.price, { symbol: false })}</span>
@@ -1054,6 +1080,14 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
             setCat(item.category_id);
             onItemAdded(item);
             add(item);
+          }} />
+      )}
+      {qtyLine && (
+        <QtyDialog t={t} name={(qtyLine.item_id !== null && localName(itemById.get(qtyLine.item_id))) || qtyLine.name} current={qtyLine.qty}
+          onClose={() => setQtyFor(null)}
+          onDone={(n) => {
+            setQtyFor(null);
+            update((o) => changeQty(o, qtyLine.key, n - qtyLine.qty, n < qtyLine.qty ? storage.user()?.id ?? null : null));
           }} />
       )}
       {choosing && (
@@ -1161,6 +1195,7 @@ function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; nam
   const [variation, setVariation] = useState<ItemOption | null>(variations[0] ?? null);
   const [addon, setAddon] = useState<ItemOption | null>(null);
   const [qty, setQty] = useState(1);
+  const [typing, setTyping] = useState(false);
   const unit = (variation?.price ?? item.price) + (addon?.price ?? 0);
   return (
     <Modal t={t} title={name} onClose={onClose} className="wide choice-dialog">
@@ -1191,9 +1226,10 @@ function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; nam
       <div className="choice-foot">
         <div className="stepper big">
           <button onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="−">−</button>
-          <span className="num">{qty}</span>
-          <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="+">+</button>
+          <button className="qty-btn num" onClick={() => setTyping(true)} aria-label={t("how_many")}>{qty}</button>
+          <button onClick={() => setQty((q) => Math.min(QTY_MAX, q + 1))} aria-label="+">+</button>
         </div>
+        {typing && <QtyDialog t={t} name={name} current={qty} onClose={() => setTyping(false)} onDone={(n) => (setTyping(false), n > 0 && setQty(n))} />}
         <button className="btn big" onClick={onClose}>{t("cancel_short")}</button>
         <button className="btn big primary grow" disabled={variations.length > 0 && !variation} onClick={() => onAdd({ variation, addon }, qty)}>
           {t("save")} · {formatINR(unit * qty)}
@@ -1349,17 +1385,61 @@ function PayDialog({ t, due, onClose, onDone }: { t: T; due: number; onClose: ()
   );
 }
 
+/** Cancelling a printed bill: one tap on the reason cancels it (no separate confirm). ✕ or a tap outside keeps it. */
 function CancelDialog({ t, onClose, onDone }: { t: T; onClose: () => void; onDone: (reason: string) => void }) {
-  const [reason, setReason] = useState("");
   return (
     <Modal t={t} title={t("cancel_reason")} onClose={onClose}>
+        <p className="muted">{t("cancel_tap_reason")}</p>
         <div className="reason-grid">
-          {t("cancel_reasons").split("|").map((r) => <button key={r} className={`chip big${reason === r ? " on" : ""}`} onClick={() => setReason(r)}>{r}</button>)}
+          {t("cancel_reasons").split("|").map((r) => <button key={r} className="chip big" onClick={() => onDone(r)}>{r}</button>)}
         </div>
-        <div className="actions-row">
-          <button className="btn big" onClick={onClose}>{t("keep")}</button>
-          <button className="btn big danger-solid" disabled={!reason} onClick={() => onDone(reason)}>{t("cancel_confirm")}</button>
-        </div>
+    </Modal>
+  );
+}
+
+const QTY_MAX = 999;
+const QTY_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫"];
+
+/**
+ * Types a quantity in: the first key replaces the number shown, so 3 then 0 gives 30. Done (or Enter) sets it;
+ * 0 takes the item off the bill. A keyboard's digits, Backspace and Enter work too.
+ */
+function QtyDialog({ t, name, current, onClose, onDone }: { t: T; name: string; current: number; onClose: () => void; onDone: (n: number) => void }) {
+  const [text, setText] = useState(String(current));
+  const [fresh, setFresh] = useState(true);
+  const n = Number(text || "0");
+  const latest = useRef({ text, fresh, n });
+  latest.current = { text, fresh, n };
+  function press(k: string) {
+    const { text: cur, fresh: f } = latest.current;
+    if (k === "C") return (setText(""), setFresh(false));
+    if (k === "⌫") return (setText(f ? "" : cur.slice(0, -1)), setFresh(false));
+    const next = (f ? "" : cur) + k;
+    if (Number(next) > QTY_MAX) return;
+    setText(next.replace(/^0+(?=\d)/, ""));
+    setFresh(false);
+  }
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (/^\d$/.test(e.key)) press(e.key);
+      else if (e.key === "Backspace") press("⌫");
+      else if (e.key === "Enter") done.current(latest.current.n);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+  return (
+    <Modal t={t} title={name} onClose={onClose} className="qty-dialog">
+      <div className="muted small">{t("how_many")}</div>
+      <div className={`display num${fresh ? " fresh" : ""}`} aria-live="polite">{text || "0"}</div>
+      <Keypad keys={QTY_KEYS} onKey={press} />
+      <button className={`btn big block ${n === 0 ? "danger-solid" : "primary"}`} onClick={() => onDone(n)}>
+        {n === 0 ? `🗑 ${t("remove")}` : `${t("done")} · ${n}`}
+      </button>
     </Modal>
   );
 }

@@ -74,7 +74,9 @@ h2 { font-size: 1.15rem; }
 .key:active { background: var(--surface-2); }
 
 /* Shell */
-.app { height: 100dvh; display: flex; flex-direction: column; }
+/* svh: the height with the browser's bars showing. On an iPhone, Safari's bottom bar floats over the page, so a
+   taller page would put HOLD · CLOSE · Cancel under it. The inset keeps clear of the home bar too. */
+.app { height: 100vh; height: 100svh; display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
 .app > main { flex: 1 1 auto; min-height: 0; }
 /* The bars above the screen keep their height: on a phone they used to get squeezed under the category bar. */
 .app > header, .app > nav, .app > .banner { flex: none; }
@@ -82,7 +84,9 @@ h2 { font-size: 1.15rem; }
 .titlebar { display: flex; align-items: center; gap: 14px; padding: 4px 14px; background: #2b2b2b; color: #fff; min-height: 44px; }
 .titlebar .rname { font-size: 0.95rem; letter-spacing: 0.06em; text-transform: uppercase; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .titlebar .period { font-size: 0.85rem; opacity: 0.8; }
-.user-btn { max-width: 40vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 40px; padding: 0 12px; border-radius: 8px; border: 0; background: rgba(255,255,255,0.14); color: #fff; font-weight: 650; }
+.user-btn { max-width: 40vw; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 12px; border-radius: 8px; border: 0; background: rgba(255,255,255,0.14); color: #fff; font-weight: 650; }
+/* The name shortens with … so the counter letter always shows. */
+.user-btn .uname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .menubar { display: flex; align-items: stretch; gap: 4px; padding: 4px 8px; background: var(--brand); color: #fff; position: relative; z-index: 30; }
 .mb { min-height: 52px; padding: 0 16px; border-radius: 8px; border: 0; background: transparent; color: rgba(255,255,255,0.88); font-weight: 750; font-size: 1.02rem; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .mb.on { background: #f59e2c; color: #1d1200; }
@@ -112,6 +116,8 @@ h2 { font-size: 1.15rem; }
 .banner { padding: 10px 16px; font-weight: 600; }
 .banner.bad { background: var(--bad-soft); color: var(--bad); }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #161614; color: #fff; padding: 14px 22px; border-radius: 12px; font-weight: 600; z-index: 50; }
+.undo-toast { display: flex; align-items: center; gap: 16px; padding: 8px 8px 8px 22px; z-index: 60; max-width: calc(100vw - 24px); }
+.undo-toast .btn { min-height: 52px; background: #f59e2c; border-color: #f59e2c; color: #1d1200; font-size: 1.05rem; white-space: nowrap; }
 
 /* Tables: every area on one screen, like the old POS. Running = orange, Billed = blue, Vacant = grey. */
 .tables-screen { overflow: auto; padding: 14px 16px; display: grid; gap: 14px; align-content: start; }
@@ -206,6 +212,12 @@ h2 { font-size: 1.15rem; }
 .stepper button { width: 42px; height: 42px; border-radius: 10px; border: 2px solid var(--border); background: var(--surface-2); font-size: 1.4rem; font-weight: 800; }
 .stepper button.remove { font-size: 1.15rem; background: var(--bad-soft); border-color: #f0c2c0; }
 .stepper span { min-width: 28px; text-align: center; font-weight: 800; font-size: 1.1rem; }
+/* The quantity is a button: tap it to type the number in. Underlined like a link so staff see it can be tapped. */
+.stepper .qty-btn { width: auto; min-width: 36px; padding: 0 4px; border-color: transparent; background: none; font-size: 1.1rem; text-decoration: underline dotted; text-underline-offset: 4px; }
+.stepper.big .qty-btn { min-width: 56px; font-size: 1.5rem; }
+.qty-dialog { width: min(360px, 100%); display: grid; gap: 10px; }
+.qty-dialog .display { font-size: 2.4rem; }
+.qty-dialog .display.fresh { color: var(--text-2); }
 .stepper.big button { width: 60px; height: 60px; }
 .stepper.big span { min-width: 44px; font-size: 1.5rem; }
 .note-input { grid-column: 1 / -1; min-height: 48px; border-radius: 10px; border: 2px solid var(--warn); padding: 0 12px; }
