@@ -102,18 +102,14 @@ function noteCounterTaken() {
   if (c && !c.taken) storage.setCounter({ ...c, taken: true });
 }
 
-/**
- * Takes a counter letter for this device. "taken" when another device holds it; "offline" when the server can't be
- * reached (the letter is then claimed with the first bills sent).
- */
-export async function claimCounter(code: string): Promise<"ok" | "taken" | "offline"> {
+/** Asks the server for this device's counter letter (it picks a free one). null when it can't be reached. */
+export async function autoCounter(): Promise<string | null> {
   try {
-    await api(`/billing/counters/${code}/claim`, { method: "POST", json: { device: storage.device() } });
-    return "ok";
+    const r = await api<{ code: string }>("/billing/counters/auto", { method: "POST", json: { device: storage.device() } });
+    return r.code;
   } catch (e) {
-    if (e instanceof ApiError && e.status === 409) return "taken";
     if (e instanceof ApiError && e.status === 401) throw e;
-    return "offline";
+    return null;
   }
 }
 

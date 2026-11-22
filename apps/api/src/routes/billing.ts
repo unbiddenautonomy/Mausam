@@ -552,6 +552,36 @@ billing.post("/counters/:code/claim", requireRole("owner", "manager", "staff"), 
   return c.json({ ok: true });
 });
 
+/** The letters a device can be given without asking: A to Z, in order. */
+const AUTO_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+/**
+ * Gives this device a counter letter, nobody asked: the letter it already holds, else the first letter nobody holds
+ * (or whose device sent nothing for 30 days). Letters only keep bill numbers apart between screens billing offline,
+ * so which one a device gets doesn't matter, and a closed tab or an old test device never blocks a new one.
+ */
+billing.post("/counters/auto", requireRole("owner", "manager", "staff"), async (c) => {
+  const body = await c.req.json<{ device?: unknown }>();
+  if (!validDevice(body.device)) throw new HttpError(422, "invalid", { field: "device" });
+  const device = body.device;
+  const db = c.env.DB;
+  const mine = await db.prepare("SELECT code FROM pos_counters WHERE device_id = ? ORDER BY code LIMIT 1").bind(device).first<{ code: string }>();
+  if (mine) return c.json({ code: mine.code });
+  const now = new Date().toISOString();
+  const cutoff = new Date(Date.now() - COUNTER_IDLE_DAYS * 86_400_000).toISOString();
+  for (const code of AUTO_LETTERS) {
+    // Takes the letter only if it's still free when written, so two devices starting together get different ones.
+    const r = await db.prepare(
+      `INSERT INTO pos_counters (code, device_id, claimed_at) VALUES (?1, ?2, ?3)
+       ON CONFLICT (code) DO UPDATE SET device_id = excluded.device_id, claimed_at = excluded.claimed_at
+       WHERE pos_counters.device_id IS NULL OR pos_counters.device_id = excluded.device_id
+         OR MAX(COALESCE(pos_counters.last_seen_at, ''), COALESCE(pos_counters.claimed_at, '')) < ?4`,
+    ).bind(code, device, now, cutoff).run();
+    if (r.meta.changes > 0) return c.json({ code });
+  }
+  throw new HttpError(409, "counter_taken");
+});
+
 /** Owner: the counter letters, which are held by a device, and when each was last used. */
 billing.get("/counters", requireRole("owner"), async (c) => {
   const { results } = await c.env.DB.prepare(
