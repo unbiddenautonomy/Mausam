@@ -563,9 +563,6 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
         </div>
       </header>
       <nav className="menubar" aria-label={t("menu_bar")}>
-        <button className="mb icon" onClick={home} aria-label={t("home")}><span aria-hidden="true">🏠</span>{t("home")}</button>
-        <button className="mb icon" onClick={back} disabled={history.length < 2} aria-label={t("go_back")}><span aria-hidden="true">←</span>{t("go_back")}</button>
-        <span className="mb-sep" />
         <button className={`mb${screen.kind === "billing" ? " on" : ""}`} onClick={() => (screen.kind === "billing" ? home() : go(HOME))}>{t("billing")}</button>
         <div className="mb-wrap">
           <button className={`mb${menu === "masters" ? " on" : ""}`} onClick={() => setMenu(menu === "masters" ? null : "masters")} aria-expanded={menu === "masters"}>{t("masters")} ▾</button>
@@ -897,6 +894,9 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }:
 
 type OrderDialog = "pay" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
 
+/** A tile's price as the old POS shows it: "₹ 220.00". */
+const tilePrice = (paise: number) => `₹ ${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel, onItemAdded }: {
   t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: Order[]; online: boolean; bills: Bill[];
   openWith: "pay" | null; onHold: () => void; onClose: () => void; onPickHeld: (o: Order) => void; onShowBill: (b: Bill) => void;
@@ -976,7 +976,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
                 <span className="iname">{localName(i) || i.short_name || i.name}</span>
                 <span className="ifoot">
                   {i.favourite ? <span className="star" aria-label={t("favourites")}>★</span> : null}
-                  <span className="price num">{formatINR(i.price)}</span>
+                  <span className="price num">{tilePrice(i.price)}</span>
                   {hasChoices(i) && <span className="more" aria-hidden="true">⋯</span>}
                 </span>
                 {inOrder > 0 && <span className="badge">{inOrder}</span>}
@@ -992,12 +992,11 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
             <button className={order.type === "dine_in" ? "on" : ""} onClick={() => order.type !== "dine_in" && onType("dine_in")}><span aria-hidden="true">🍴</span>{t("dine_in")}</button>
             <button className={order.type === "parcel" ? "on" : ""} onClick={() => order.type !== "parcel" && onType("parcel")}><span aria-hidden="true">🛍</span>{t("parcel")}</button>
           </div>
-          <span className="grow" />
+          <strong className="num date top-date">{today}</strong>
           <button className="btn hold-btn" onClick={() => setDialog("held")}>{t("hold_count", { n: held.length })}</button>
           <button className="btn hold-btn" onClick={() => setDialog("invoices")}>☰ {t("invoice")}</button>
         </div>
         <div className="ticket-fields">
-          <div className="field"><span className="muted small">{t("date")}</span><strong className="num date">{today}</strong></div>
           <div className="field"><span className="muted small">{t("token_no")}</span><strong className="num">{order.token ?? "—"}</strong></div>
           {order.type === "dine_in" && (
             <button className="field" onClick={() => order.table_id === null && setDialog("table")} disabled={order.table_id !== null}>
@@ -1015,16 +1014,18 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
             onKeyDown={(e) => e.key === "Enter" && items.length === 1 && (tap(items[0]), setQuery(""))} />
           {query && <button className="x-btn" onClick={() => setQuery("")} aria-label={t("clear")}>✕</button>}
         </div>
-        <div className="grid-head"><span>{t("item_name")} · {t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
+        <div className="grid-head"><span className="lsr">Sr</span><span>{t("item_name")}<span className="tag-inline"> · {t("modifier")}</span></span><span className="lmod">{t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
         <div className="lines" ref={listRef}>
           {empty && <p className="muted center">{t("order_empty")}</p>}
-          {order.lines.map((l) => (
+          {order.lines.map((l, n) => (
             <div key={l.key} className={`line${l.sent >= l.qty ? " sent" : ""}`}>
+              <span className="lsr num">{n + 1}</span>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
                 <span>{(l.item_id !== null && localName(itemById.get(l.item_id))) || l.name}</span>
-                {lineTag(l) && <span className="tag">{lineTag(l)}</span>}
+                {lineTag(l) && <span className="tag tag-inline">{lineTag(l)}</span>}
                 {l.note && <span className="note">✎ {l.note}</span>}
               </div>
+              <span className="lmod tag">{[l.variation, l.modifier].filter(Boolean).join(" · ")}</span>
               <div className="stepper">
                 {/* At 1 the minus takes the line off the bill, so it shows a bin: staff can see that tapping it removes the item. */}
                 <button className={l.qty === 1 ? "remove" : ""} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))}
