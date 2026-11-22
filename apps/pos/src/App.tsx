@@ -534,7 +534,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
         <span className="period">{t("period")}: {periodOf(businessDate())}</span>
         <span className="grow" />
         <span className={`net ${online ? "on" : "off"}`}>
-          <span className="dot" /> {online ? t("online") : t("offline")}
+          <span className="dot" /> <span className="net-label">{online ? t("online") : t("offline")}</span>
           {waiting > 0 && <> · {t("waiting", { n: waiting })}</>}
         </span>
         <div className="mb-wrap">
@@ -1002,7 +1002,9 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
                 {l.note && <span className="note">✎ {l.note}</span>}
               </div>
               <div className="stepper">
-                <button onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))} aria-label="−">−</button>
+                {/* At 1 the minus takes the line off the bill, so it shows a bin: staff can see that tapping it removes the item. */}
+                <button className={l.qty === 1 ? "remove" : ""} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))}
+                  aria-label={l.qty === 1 ? t("remove") : "−"}>{l.qty === 1 ? "🗑" : "−"}</button>
                 <span className="num">{l.qty}</span>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
