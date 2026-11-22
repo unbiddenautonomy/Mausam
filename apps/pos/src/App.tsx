@@ -614,21 +614,22 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
               if (!active.bill_no || unsent(active).length) setPrint({ kind: "bill", bill, copy: "Original" });
             } else setView({ kind: "paid", bill, change });
           }}
-          onCancel={(reason) => {
-            // Nothing reached the kitchen or the guest: just drop it. Otherwise keep a cancelled bill.
+          onCancel={() => {
+            // Nobody is asked, not even why. Nothing reached the kitchen or the guest: the order is just dropped.
+            // Otherwise a cancelled bill is kept ("No reason given"; the printed copy can be explained later).
             if (activeId === null) return setDraft(newOrder("dine_in", null, null));
-            if (!active.bill_no && active.lines.every((l) => l.sent === 0)) {
-              // No confirm: the order goes at once, and Undo on the message brings it back if the tap was a mistake.
-              const gone = active;
+            const gone = active;
+            if (!gone.bill_no && gone.lines.every((l) => l.sent === 0)) {
               setOrders((os) => os.filter((o) => o.id !== gone.id));
               setActiveId(null);
-              // The cancel may already have reached the other screens, so Undo brings it back as a new order, same token.
-              setUndo({ text: t("order_cancelled"), run: () => {
-                const back = { ...gone, id: uid() };
-                setOrders((os) => [...os, back]);
-                showOrder(back);
-              } });
-            } else finish(active, "cancelled", [], reason);
+            } else finish(gone, "cancelled", [], gone.bill_no ? NO_REASON : NOT_PRINTED);
+            // Undo brings the order back as a new one with the same token and items (the cancel may already have
+            // reached the other screens). A cancelled bill stays on record, and the order gets a new bill number.
+            setUndo({ text: t("order_cancelled"), run: () => {
+              const back: Order = { ...gone, id: uid(), bill_no: null, voids: [] };
+              setOrders((os) => [...os, back]);
+              showOrder(back);
+            } });
           }}
         />
       )}
@@ -894,13 +895,13 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }:
 
 /* ---------------- Billing: the menu and the order, like the old POS's Billing screen ---------------- */
 
-type OrderDialog = "pay" | "cancel" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
+type OrderDialog = "pay" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
 
 function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel, onItemAdded }: {
   t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: Order[]; online: boolean; bills: Bill[];
   openWith: "pay" | null; onHold: () => void; onClose: () => void; onPickHeld: (o: Order) => void; onShowBill: (b: Bill) => void;
   onSavePrint: () => void; onBill: (copy: Copy) => Bill | null; onType: (type: Order["type"]) => void;
-  onPaid: (p: Payment[], change: number) => void; onCancel: (reason: string) => void; onItemAdded: (item: Item) => void;
+  onPaid: (p: Payment[], change: number) => void; onCancel: () => void; onItemAdded: (item: Item) => void;
 }) {
   const s = config.settings;
   const printing = !!s.printing;
@@ -949,9 +950,6 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
     }
   }
   const pay = () => setDialog(missingWaiter ? "waiter_then_pay" : "pay");
-  // An order whose bill hasn't been printed is just cancelled: bills are printed when the guest comes to pay, so this
-  // is the usual case. Only a printed bill asks why.
-  const cancel = () => (!order.bill_no ? onCancel(NOT_PRINTED) : setDialog("cancel"));
 
   return (
     <main className="order-screen">
@@ -1067,7 +1065,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
           </button>
           <button className="btn hold" onClick={onHold}>❚❚ {t("hold").toUpperCase()}</button>
           <button className="btn close-btn" onClick={onClose}>✕ {t("close").toUpperCase()}</button>
-          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={cancel}>{t("cancel_short")}</button>
+          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}>{t("cancel_short")}</button>
         </div>
       </aside>
 
@@ -1095,7 +1093,6 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
           onAdd={(pick, qty) => (setChoosing(null), add(choosing, pick, qty))} />
       )}
       {dialog === "pay" && <PayDialog t={t} due={totals.total} onClose={() => setDialog(null)} onDone={(p, change) => (setDialog(null), onPaid(p, change))} />}
-      {dialog === "cancel" && <CancelDialog t={t} onClose={() => setDialog(null)} onDone={(r) => (setDialog(null), onCancel(r))} />}
       {dialog === "discount" && (
         <DiscountDialog t={t} subtotal={totals.subtotal} current={order.discount} currentReason={order.discount_reason ?? null}
           settings={config.settings} approvers={config.approvers ?? []} onClose={() => setDialog(null)}
@@ -1385,18 +1382,6 @@ function PayDialog({ t, due, onClose, onDone }: { t: T; due: number; onClose: ()
   );
 }
 
-/** Cancelling a printed bill: one tap on the reason cancels it (no separate confirm). ✕ or a tap outside keeps it. */
-function CancelDialog({ t, onClose, onDone }: { t: T; onClose: () => void; onDone: (reason: string) => void }) {
-  return (
-    <Modal t={t} title={t("cancel_reason")} onClose={onClose}>
-        <p className="muted">{t("cancel_tap_reason")}</p>
-        <div className="reason-grid">
-          {t("cancel_reasons").split("|").map((r) => <button key={r} className="chip big" onClick={() => onDone(r)}>{r}</button>)}
-        </div>
-    </Modal>
-  );
-}
-
 const QTY_MAX = 999;
 const QTY_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫"];
 
@@ -1664,6 +1649,8 @@ function ItemMaster({ t, lang, config, isOwner, online, onItemAdded }: {
 
 /** The cancel reason kept on an order cancelled before its bill was printed (nobody is asked). */
 const NOT_PRINTED = "Not printed";
+/** The reason kept on a printed bill cancelled at the counter: nobody is asked (the printed copy is kept instead). */
+const NO_REASON = "No reason given";
 
 /**
  * A new menu item, added at the counter so a dish that isn't on the menu yet can be billed. It needs the internet:
