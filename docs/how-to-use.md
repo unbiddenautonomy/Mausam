@@ -172,7 +172,7 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 | A manager's reminders don't come | Redo **More → Turn on reminders** on their phone, and the battery setting on Xiaomi, Oppo, Vivo and Realme phones. |
 | A print pop-up appears at the counter | Chrome was opened some other way. Close every Chrome window and open the **Mausam POS** shortcut. |
 | Nothing prints | Check paper and the printer light, print a Windows test page, and check **A receipt printer is connected** is on in **Manage → POS options**. |
-| The printer is broken | Switch **A receipt printer is connected** off in **POS options**. Bills show on screen instead, and billing carries on. |
+| The printer is broken | Switch **A receipt printer is connected** off in **POS options**. Save & Print then just saves and clears the screen, other bills show on screen, and billing carries on. It starts off until a printer is set up. |
 | The POS says Offline | Keep billing. Bills are sent when the internet is back. Check **Day End** before closing for the night. |
 | The POS says bills were refused by the server | Tell the owner and open **POS bills** in the admin app. |
 | A wrong price on the POS | Fix it in **Manage → Menu**; the POS picks up the change the next time it loads. |

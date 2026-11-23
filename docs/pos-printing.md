@@ -9,6 +9,10 @@ The POS is a web page. On the counter (the Posiflex Windows touchscreen), Chrome
 
 The bill is laid out like the old POS's bill. It has the token number at the top (tokens keep counting up and don't restart each day), then the restaurant's name, address and phone number, the date and time, DINEIN or PARCEL, and the bill number. Then come the items with their [variation] (Item, Qty, Price, Amount), the total quantity, the Grand Total, and "Thank You !! Visit Again !!". To change the heading or the footer, go to **Manage → POS options** in the admin app. The heading has one line each for the name, the address and the phone number.
 
+## No printer yet
+
+Printing starts switched off, so the POS can be tested before the printer arrives. **Save & Print** (the button reads **Save**) saves the order exactly as it would with a printer: it gets its bill number and counts as sent to the kitchen, so reports look the same. The screen then clears for the next order, with no print pop-up. **Bill** and the day summary show the bill on screen instead. When the printer is set up (below), switch **A receipt printer is connected** on in **Manage → POS options**.
+
 ## One-time setup on the counter PC (about 15 minutes)
 
 1. **Plug in the Rugtek** by USB and switch it on. Install its Windows driver from the CD or from rugtek.com, picking the 80 mm model. Print a Windows test page to check that it works.
@@ -39,4 +43,4 @@ If the internet drops, each device keeps billing on its own and catches up when 
 - **The two copies come out joined, with no cut between them.** Open the Rugtek's **Printing preferences** and set the paper cut to cut after every page (sometimes called **Cut: Page** or **Partial cut each page**).
 - **The bill is cut off, or very small.** Go back to step 3 and check the paper size is 80 mm. Then repeat step 4 and check Margins is **None**.
 - **Nothing prints.** Check the printer has paper and its light is green, then print a Windows test page. If the printer is fine, open **Manage → POS options** in the admin app and check **A receipt printer is connected** is switched on.
-- **The printer is broken.** Switch **A receipt printer is connected** off in **Manage → POS options**. The POS then shows each bill on screen instead, and billing carries on.
+- **The printer is broken.** Switch **A receipt printer is connected** off in **Manage → POS options**. **Save & Print** then just saves the order and clears the screen for the next one, other bills show on screen, and billing carries on.
