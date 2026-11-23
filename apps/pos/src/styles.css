@@ -132,11 +132,12 @@ h2 { font-size: 1.15rem; }
 .table-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
 .table-card { min-height: 112px; border-radius: 10px; border: 2px solid var(--tile-border); background: #e6ebee; display: grid; grid-template-rows: 1fr auto; overflow: hidden; }
 .tc-main { display: grid; align-content: start; gap: 6px; padding: 10px 12px; text-align: left; border: 0; background: none; }
-.tc-icons { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid rgba(0,0,0,0.12); }
+.tc-icons { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid rgba(0,0,0,0.12); }
 .tc-icons button { min-height: 50px; border: 0; background: rgba(255,255,255,0.55); display: grid; justify-items: center; align-content: center; font-size: 0.78rem; font-weight: 700; color: var(--text-2); }
 .tc-icons button + button { border-left: 1px solid rgba(0,0,0,0.12); }
 .tc-icons button span { font-size: 1.2rem; line-height: 1.1; color: var(--text); }
 .tc-icons button:active { background: #fff; }
+.tc-icons .tc-cancel, .tc-icons .tc-cancel span { color: #b3261e; }
 .state-chip { min-height: 48px; padding: 0 14px; border-radius: 8px; border: 2px solid transparent; font-weight: 800; font-size: 0.85rem; text-transform: uppercase; color: #fff; opacity: 0.75; }
 .state-chip.on { opacity: 1; border-color: #161614; }
 .state-chip.running { background: #e25a2c; }

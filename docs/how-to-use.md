@@ -151,7 +151,7 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 - **Cancel:** an empty bill is just cleared; anything sent to the kitchen or printed asks for a reason. Cancelled bills show in the admin app under **POS bills**.
 - **Discount:** an amount in ₹ or a percent off.
 
-**Dashboard:** every open order (and the tables, if the table map is on), coloured **Running** (orange) or **Billed** (blue). Each card has **Bill** (print it), **Pay** and **Open** buttons.
+**Dashboard:** every open order (and the tables, if the table map is on), coloured **Running** (orange) or **Billed** (blue). Each card has **Bill** (print it), **Pay**, **Open** and **Cancel** buttons. **Cancel** takes one tap with no question: an order that never printed is just dropped, and a printed one is kept as a cancelled bill ("No reason given") so it shows in the cancellations report. **↶ Undo** brings it back for 8 seconds.
 
 ![The Dashboard: open orders with Bill, Pay and Open buttons, then the tables](images/guide/pos-tables.png)
 
