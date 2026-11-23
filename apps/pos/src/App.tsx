@@ -479,7 +479,11 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     if (printing) setPrint({ kind: "bill", bill, copy });
     return bill;
   }
-  /** Save & Print: the order is saved (everything on it counts as sent to the kitchen), its bill prints, and a fresh bill opens. */
+  /**
+   * Save & Print: the order is saved (everything on it counts as sent to the kitchen), its bill prints, and a fresh bill
+   * opens. With no printer the order is saved exactly the same way (bill number, sent to the kitchen) and the screen just
+   * clears for the next order, so testing without a printer gives the same reports.
+   */
   function saveAndPrint() {
     if (!active || !active.lines.length || activeId === null) return;
     const withNo = withToken({ ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) });
@@ -488,7 +492,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     if (printing) {
       setPrint({ kind: "bill", bill, copy: "Original" });
       setToast(t("bill_printed"));
-    } else setView({ kind: "bill", bill, orderId: withNo.id });
+    } else setToast(t("order_saved", { no: withNo.bill_no ?? "" }));
     setActiveId(null);
     setDraft(newOrder("dine_in", null, null));
   }
@@ -1083,7 +1087,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
         {/* The old POS's buttons, in its order: Bill, Save & Print, Cash; then HOLD, CLOSE, Cancel. */}
         <div className="actions">
           <button className="btn bill-btn" disabled={empty} onClick={bill}><span aria-hidden="true">✔</span> {t("bill")}</button>
-          <button className="btn save-print" disabled={empty} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_show")}</button>
+          <button className="btn save-print" disabled={empty} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_only")}</button>
           <button className="btn primary cash" disabled={empty || totals.total <= 0} onClick={pay}>
             <span>💵 {t("cash")}</span><strong className="num">{formatINR(totals.total)}</strong>
           </button>
