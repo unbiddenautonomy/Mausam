@@ -62,15 +62,21 @@ export function Layout() {
   return (
     <div className="shell">
       <aside className="sidebar" aria-label="Main">
-        <div className="brand">
+        <Link to="/" className="brand" aria-label={t("nav.home")}>
           <Logo /> {t("app.name")}
-        </div>
+        </Link>
+        {/* The POS is a separate app at /pos/; owners and managers jump there from here. */}
+        <a href="/pos/" className="side-pos">
+          <Icon name="pos" /> {t("pos_only.open")}
+        </a>
         {work.map((n) => link(n))}
         {insight.length > 0 && <div className="side-group">{t("nav.reports")}</div>}
         {insight.map((n) => link(n))}
         {link({ to: "/alerts", icon: "bell", label: t("nav.alerts") }, unseen > 0 ? <span className="count">{unseen}</span> : null)}
         {admin.length > 0 && <div className="side-group">{t("nav.manage")}</div>}
         {admin.map((n) => link(n))}
+        <div className="side-group" />
+        {link({ to: "/more", icon: "more", label: t("nav.more") })}
         <div className="side-foot">
           <div className="small">
             <strong>{user?.name}</strong>
@@ -89,9 +95,17 @@ export function Layout() {
 
       <div>
         <header className="topbar">
-          <span className="brand">
+          <Link to="/" className="brand" aria-label={t("nav.home")}>
             <Logo /> {t("app.name")}
-          </span>
+          </Link>
+          {location.pathname !== "/" && (
+            <Link to="/" className="top-btn" title={t("nav.home")}>
+              <Icon name="today" /> <span className="top-label">{t("nav.home")}</span>
+            </Link>
+          )}
+          <a href="/pos/" className="top-btn pos" title={t("pos_only.open")}>
+            <Icon name="pos" /> <span className="top-label">{t("nav.pos")}</span>
+          </a>
           <NavLink to="/alerts" className="bell" aria-label={t("nav.alerts")}>
             <Icon name="bell" />
             {unseen > 0 && <span className="count">{unseen}</span>}

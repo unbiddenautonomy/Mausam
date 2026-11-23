@@ -16,6 +16,8 @@ const en = {
   "nav.manage": "Manage",
   "nav.alerts": "Alerts",
   "nav.more": "More",
+  "nav.home": "Home",
+  "nav.pos": "POS",
 
   "entries.shopping": "Morning shopping",
   "entries.shopping_desc": "Cash taken, receipts, cash returned",
@@ -765,6 +767,8 @@ const hi: Dict = {
   "nav.manage": "मैनेज",
   "nav.alerts": "अलर्ट",
   "nav.more": "और",
+  "nav.home": "होम",
+  "nav.pos": "POS",
 
   "entries.shopping": "सुबह की खरीदारी",
   "entries.shopping_desc": "ले गए कैश, बिल, वापस लाया कैश",
@@ -1502,6 +1506,8 @@ const kn: Dict = {
   "nav.manage": "ಮ್ಯಾನೇಜ್",
   "nav.alerts": "ಅಲರ್ಟ್‌ಗಳು",
   "nav.more": "ಇನ್ನಷ್ಟು",
+  "nav.home": "ಹೋಮ್",
+  "nav.pos": "POS",
 
   "entries.shopping": "ಬೆಳಗಿನ ಖರೀದಿ",
   "entries.shopping_desc": "ತೆಗೆದುಕೊಂಡ ಕ್ಯಾಶ್, ಬಿಲ್‌ಗಳು, ವಾಪಸ್ ಕ್ಯಾಶ್",

@@ -557,12 +557,17 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
               <div className="dd-langs">
                 {LANGUAGES.map((l) => <button key={l.code} className={`chip${lang === l.code ? " on" : ""}`} onClick={() => (setLang(l.code), setMenu(null))}>{l.label}</button>)}
               </div>
+              {canReport && <a className="dd-item" href="/" onClick={() => setMenu(null)}>{t("admin_app")} <span className="muted small">↗</span></a>}
               <button className="dd-item danger" onClick={() => (setMenu(null), setAskLogout(true))}>{t("logout")}</button>
             </Dropdown>
           )}
         </div>
       </header>
       <nav className="menubar" aria-label={t("menu_bar")}>
+        {/* Home from anywhere: a fresh bill on the Billing screen. An order with items stays open (held). */}
+        <button className="mb mb-home" onClick={home} aria-label={t("home")} title={t("home")}>
+          <span aria-hidden="true">🏠</span> <span className="mb-home-label">{t("home")}</span>
+        </button>
         <button className={`mb${screen.kind === "billing" ? " on" : ""}`} onClick={() => (screen.kind === "billing" ? home() : go(HOME))}>{t("billing")}</button>
         <div className="mb-wrap">
           <button className={`mb${menu === "masters" ? " on" : ""}`} onClick={() => setMenu(menu === "masters" ? null : "masters")} aria-expanded={menu === "masters"}>{t("masters")} ▾</button>

@@ -96,6 +96,8 @@ h2 { font-size: 1.15rem; }
 .mb-sep { width: 2px; margin: 6px 4px; background: rgba(255,255,255,0.3); }
 .mb-count { min-width: 24px; height: 24px; border-radius: 12px; background: var(--brand); color: #fff; display: inline-grid; place-items: center; font-size: 0.8rem; font-weight: 800; padding: 0 6px; }
 .mb-wrap { position: relative; display: flex; }
+.mb-home { background: #fff; border: 1px solid #bdbdb9; }
+.mb-home span[aria-hidden] { font-size: 1.2rem; line-height: 1; }
 .dd-backdrop { position: fixed; inset: 0; z-index: 35; }
 .dd { position: absolute; top: calc(100% + 4px); left: 0; z-index: 36; min-width: 280px; display: grid; gap: 2px; padding: 6px; border-radius: 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,0.25); }
 .dd.right { left: auto; right: 0; }
@@ -428,6 +430,7 @@ h3 { margin: 0; font-size: 1.05rem; }
   .select-product > span { display: none; }
   .menubar { overflow-x: auto; }
   .mb { padding: 0 12px; }
+  .mb-home-label { display: none; }
   .dd { position: fixed; top: 100px; left: 8px; right: 8px; }
   .pick-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   .pick-row > :nth-child(3), .pick-row > :nth-child(4) { display: none; }
