@@ -516,6 +516,33 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     void sync();
     return bill;
   }
+  /**
+   * Cancel, from the Billing screen or a dashboard card. Nobody is asked, not even why. Nothing reached the kitchen or
+   * the guest: the order is just dropped. Otherwise a cancelled bill is kept ("No reason given"; the printed copy can
+   * be explained later), so it shows in the cancellations report.
+   */
+  function cancelOrder(gone: Order, reopen: boolean) {
+    if (!gone.bill_no && gone.lines.every((l) => l.sent === 0)) {
+      setOrders((os) => os.filter((o) => o.id !== gone.id));
+      if (activeId === gone.id) setActiveId(null);
+    } else if (activeId === gone.id) finish(gone, "cancelled", [], gone.bill_no ? NO_REASON : NOT_PRINTED);
+    else {
+      // From the dashboard: the order on the Billing screen (if any) stays as it is.
+      const bill = toBill(withToken(gone), s, "cancelled", [], gone.bill_no ? NO_REASON : NOT_PRINTED);
+      storage.setBills(pruneBills([...storage.bills(), bill]));
+      refreshBills();
+      setOrders((os) => os.filter((o) => o.id !== gone.id));
+      void sync();
+    }
+    // Undo brings the order back as a new one with the same token and items (the cancel may already have reached the
+    // other screens). A cancelled bill stays on record, and the order gets a new bill number. From the Billing screen
+    // it opens again there; from the dashboard it goes back on the dashboard.
+    setUndo({ text: t("order_cancelled"), run: () => {
+      const back: Order = { ...gone, id: uid(), bill_no: null, voids: [] };
+      setOrders((os) => [...os, back]);
+      if (reopen) showOrder(back);
+    } });
+  }
   const showBill = (b: Bill) => (printing ? setPrint({ kind: "bill", bill: b, copy: "Duplicate" }) : setView({ kind: "bill", bill: b }));
   /** The bill icon on a dashboard card: prints the bill (or shows it on screen). */
   function cardBill(o: Order) {
@@ -617,30 +644,17 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
             } else setView({ kind: "paid", bill, change });
           }}
           onCancel={() => {
-            // Nobody is asked, not even why. Nothing reached the kitchen or the guest: the order is just dropped.
-            // Otherwise a cancelled bill is kept ("No reason given"; the printed copy can be explained later).
             if (activeId === null) return setDraft(newOrder("dine_in", null, null));
-            const gone = active;
-            if (!gone.bill_no && gone.lines.every((l) => l.sent === 0)) {
-              setOrders((os) => os.filter((o) => o.id !== gone.id));
-              setActiveId(null);
-            } else finish(gone, "cancelled", [], gone.bill_no ? NO_REASON : NOT_PRINTED);
-            // Undo brings the order back as a new one with the same token and items (the cancel may already have
-            // reached the other screens). A cancelled bill stays on record, and the order gets a new bill number.
-            setUndo({ text: t("order_cancelled"), run: () => {
-              const back: Order = { ...gone, id: uid(), bill_no: null, voids: [] };
-              setOrders((os) => [...os, back]);
-              showOrder(back);
-            } });
+            cancelOrder(active, true);
           }}
         />
       )}
       {screen.kind === "dashboard" && (tablesOn ? (
         <TablesScreen t={t} config={config} orders={orders} now={now} onTable={openTable}
-          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} />
+          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} onCancel={(o) => cancelOrder(o, false)} />
       ) : (
         <OrdersScreen t={t} config={config} orders={orders} now={now} onNew={() => go(HOME)}
-          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} />
+          onOrder={(o) => showOrder(o)} onBill={cardBill} onPay={(o) => showOrder(o, "pay")} onCancel={(o) => cancelOrder(o, false)} />
       ))}
       {screen.kind === "dayend" && (
         <Summary
@@ -768,9 +782,10 @@ function orderState(o: Order): "running" | "billed" {
   return o.bill_no && unsent(o).length === 0 ? "billed" : "running";
 }
 
-/** A card on the dashboard. An open order has the old POS's three buttons: bill, pay and open. */
-function OrderCard({ t, state, className = "", onOpen, onBill, onPay, children }: {
-  t: T; state: "running" | "billed" | "vacant"; className?: string; onOpen: () => void; onBill?: () => void; onPay?: () => void; children: React.ReactNode;
+/** A card on the dashboard. An open order has the old POS's three buttons (bill, pay and open), and Cancel: one tap, Undo for a few seconds. */
+function OrderCard({ t, state, className = "", onOpen, onBill, onPay, onCancel, children }: {
+  t: T; state: "running" | "billed" | "vacant"; className?: string; onOpen: () => void; onBill?: () => void; onPay?: () => void; onCancel?: () => void;
+  children: React.ReactNode;
 }) {
   return (
     <div className={`table-card ${state} ${className}`}>
@@ -780,14 +795,16 @@ function OrderCard({ t, state, className = "", onOpen, onBill, onPay, children }
           <button onClick={onBill}><span aria-hidden="true">🖨</span>{t("bill")}</button>
           <button onClick={onPay}><span aria-hidden="true">₹</span>{t("pay_short")}</button>
           <button onClick={onOpen}><span aria-hidden="true">👁</span>{t("open")}</button>
+          <button className="tc-cancel" onClick={onCancel}><span aria-hidden="true">✕</span>{t("cancel_short")}</button>
         </div>
       )}
     </div>
   );
 }
 
-function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay }: {
+function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay, onCancel }: {
   t: T; config: Config; orders: Order[]; now: number; onTable: (t: Table) => void; onOrder: (o: Order) => void; onBill: (o: Order) => void; onPay: (o: Order) => void;
+  onCancel: (o: Order) => void;
 }) {
   const [find, setFind] = useState("");
   const [only, setOnly] = useState<"all" | "running" | "billed" | "vacant">("all");
@@ -819,7 +836,7 @@ function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay 
       {loose.length > 0 && only !== "vacant" && !find && (
         <div className="table-grid">
           {loose.filter((o) => only === "all" || orderState(o) === only).map((o) => (
-            <OrderCard key={o.id} t={t} state={orderState(o)} onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)}>
+            <OrderCard key={o.id} t={t} state={orderState(o)} onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)} onCancel={() => onCancel(o)}>
               <span className="tc-top"><span className="name">{orderLabel(o, t)}</span><b className={`state ${orderState(o)}`}>{t(orderState(o))}</b></span>
               <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
               <span className="meta">{t("min", { n: minutesSince(o.opened_at, now) })}{o.waiter_staff_id ? ` · ${waiterName(config, o.waiter_staff_id)}` : ""}</span>
@@ -838,7 +855,7 @@ function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay 
                 const o = orders.find((x) => x.table_id === table.id);
                 const st = o ? orderState(o) : "vacant";
                 return (
-                  <OrderCard key={table.id} t={t} state={st} onOpen={() => onTable(table)} onBill={o && (() => onBill(o))} onPay={o && (() => onPay(o))}>
+                  <OrderCard key={table.id} t={t} state={st} onOpen={() => onTable(table)} onBill={o && (() => onBill(o))} onPay={o && (() => onPay(o))} onCancel={o && (() => onCancel(o))}>
                     <span className="tc-top"><span className="name">{table.name}</span><b className={`state ${st}`}>{t(st)}</b></span>
                     {o ? (
                       <>
@@ -860,8 +877,9 @@ function TablesScreen({ t, config, orders, now, onTable, onOrder, onBill, onPay 
 }
 
 /** The dashboard without the table map: every open order (held or billed), oldest first. */
-function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }: {
+function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay, onCancel }: {
   t: T; config: Config; orders: Order[]; now: number; onNew: () => void; onOrder: (o: Order) => void; onBill: (o: Order) => void; onPay: (o: Order) => void;
+  onCancel: (o: Order) => void;
 }) {
   const s = config.settings;
   const list = [...orders].sort((a, b) => a.opened_at.localeCompare(b.opened_at));
@@ -880,7 +898,7 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay }:
       ) : (
         <div className="order-grid">
           {list.map((o) => (
-            <OrderCard key={o.id} t={t} state={orderState(o)} className="order-card" onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)}>
+            <OrderCard key={o.id} t={t} state={orderState(o)} className="order-card" onOpen={() => onOrder(o)} onBill={() => onBill(o)} onPay={() => onPay(o)} onCancel={() => onCancel(o)}>
               <span className="tc-top"><span className="name">{orderLabel(o, t)}</span><b className={`state ${orderState(o)}`}>{t(orderState(o))}</b></span>
               <span className="amt num">{formatINR(totalsOf(o, s).total)}</span>
               <span className="meta">
