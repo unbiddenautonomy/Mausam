@@ -432,7 +432,9 @@ h3 { margin: 0; font-size: 1.05rem; }
   .menubar { overflow-x: auto; }
   .mb { padding: 0 12px; }
   .mb-home-label { display: none; }
-  .dd { position: fixed; top: 100px; left: 8px; right: 8px; }
+  .dd { position: fixed; top: 100px; left: 8px; right: 8px; max-height: calc(100dvh - 120px); overflow-y: auto; }
+  .dd-backdrop { z-index: 45; }
+  .dd { z-index: 46; }
   .pick-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   .pick-row > :nth-child(3), .pick-row > :nth-child(4) { display: none; }
   .rtable { overflow-x: auto; }

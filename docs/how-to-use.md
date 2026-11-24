@@ -138,9 +138,9 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 
 1. Pick **Dine-in** or **Parcel** at the top of the bill.
 2. Tap a category on the left (Pav Bhaji, Dosa, Chinese, Soft Drink, Favorite) and tap items to add them. Use **+ / −** to change quantity. Items with choices (Regular/Jain, Kadak/Medium/Naram, Full/Half) open the Variation / Add On pop-up: pick, then **Save**. **Select Product** finds any item by name.
-3. Tap **Waiter** to pick who is serving. Dine-in bills can't be paid until a waiter is picked; the POS asks when you tap **Cash**.
-4. **Save & Print** prints the bill (twice: one copy for the kitchen) and opens a fresh bill. The order waits under **Hold (n)** until it's paid.
-5. When the guest pays, open it from **Hold (n)** and tap **Cash**. Choose **Cash** (type the cash given and the screen shows the change), **UPI**, **Card**, or split between them.
+3. Tap **Waiter** to pick who is serving. Dine-in bills can't be paid until a waiter is picked; the POS asks when you tap **Save & Print** or **Cash**.
+4. **Save & Print** closes the order as paid in cash, prints the bill (twice: one copy for the kitchen) and opens a fresh bill. For UPI, card or a split payment, use **Cash** instead.
+5. To keep an order open instead (a table still eating), use **HOLD**. When the guest pays, open it from **Hold (n)** and tap **Cash**. Choose **Cash** (type the cash given and the screen shows the change), **UPI**, **Card**, or split between them.
 
 **The other buttons**
 
@@ -172,7 +172,7 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 | A manager's reminders don't come | Redo **More → Turn on reminders** on their phone, and the battery setting on Xiaomi, Oppo, Vivo and Realme phones. |
 | A print pop-up appears at the counter | Chrome was opened some other way. Close every Chrome window and open the **Mausam POS** shortcut. |
 | Nothing prints | Check paper and the printer light, print a Windows test page, and check **A receipt printer is connected** is on in **Manage → POS options**. |
-| The printer is broken | Switch **A receipt printer is connected** off in **POS options**. Save & Print then just saves and clears the screen, other bills show on screen, and billing carries on. It starts off until a printer is set up. |
+| The printer is broken | Switch **A receipt printer is connected** off in **POS options**. Save & Print then records the order as paid in cash and clears the screen, other bills show on screen, and billing carries on. It starts off until a printer is set up. |
 | The POS says Offline | Keep billing. Bills are sent when the internet is back. Check **Day End** before closing for the night. |
 | The POS says bills were refused by the server | Tell the owner and open **POS bills** in the admin app. |
 | A wrong price on the POS | Fix it in **Manage → Menu**; the POS picks up the change the next time it loads. |

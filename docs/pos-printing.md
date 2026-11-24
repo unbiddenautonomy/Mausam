@@ -3,7 +3,7 @@
 The POS is a web page. On the counter (the Posiflex Windows touchscreen), Chrome opens it full screen and prints every bill straight to the Rugtek receipt printer without a print pop-up.
 
 **When a bill prints:**
-- **Save & Print**: the order is saved and its bill prints twice, one copy after the other, with every item and price. The second copy is for the kitchen. This happens for dine-in and parcel orders alike. To print one or three copies, go to **Manage → POS options → Copies of each bill** in the admin app.
+- **Save & Print**: the order is closed as **paid in cash** and its bill prints twice, one copy after the other, with every item and price. The second copy is for the kitchen. This happens for dine-in and parcel orders alike. To print one or three copies, go to **Manage → POS options → Copies of each bill** in the admin app.
 - **Cash / Pay**: if items were added after the last print, the bill prints again (both copies) when it's paid.
 - **Bill**, or tapping a bill in **Day End**: prints a copy marked "Duplicate".
 
@@ -11,7 +11,7 @@ The bill is laid out like the old POS's bill. It has the token number at the top
 
 ## No printer yet
 
-Printing starts switched off, so the POS can be tested before the printer arrives. **Save & Print** (the button reads **Save**) saves the order exactly as it would with a printer: it gets its bill number and counts as sent to the kitchen, so reports look the same. The screen then clears for the next order, with no print pop-up. **Bill** and the day summary show the bill on screen instead. When the printer is set up (below), switch **A receipt printer is connected** on in **Manage → POS options**.
+Printing starts switched off, so the POS can be tested before the printer arrives. **Save & Print** (the button reads **Save**) records the order as paid in cash, exactly as it would with a printer, so it shows in the admin app's bills and reports straight away. The screen then clears for the next order, with no print pop-up. **Bill** and the day summary show the bill on screen instead. When the printer is set up (below), switch **A receipt printer is connected** on in **Manage → POS options**.
 
 ## One-time setup on the counter PC (about 15 minutes)
 
@@ -43,4 +43,4 @@ If the internet drops, each device keeps billing on its own and catches up when 
 - **The two copies come out joined, with no cut between them.** Open the Rugtek's **Printing preferences** and set the paper cut to cut after every page (sometimes called **Cut: Page** or **Partial cut each page**).
 - **The bill is cut off, or very small.** Go back to step 3 and check the paper size is 80 mm. Then repeat step 4 and check Margins is **None**.
 - **Nothing prints.** Check the printer has paper and its light is green, then print a Windows test page. If the printer is fine, open **Manage → POS options** in the admin app and check **A receipt printer is connected** is switched on.
-- **The printer is broken.** Switch **A receipt printer is connected** off in **Manage → POS options**. **Save & Print** then just saves the order and clears the screen for the next one, other bills show on screen, and billing carries on.
+- **The printer is broken.** Switch **A receipt printer is connected** off in **Manage → POS options**. **Save & Print** then records the order as paid in cash and clears the screen for the next one, other bills show on screen, and billing carries on.
