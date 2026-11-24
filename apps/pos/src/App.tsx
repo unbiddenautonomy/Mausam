@@ -480,21 +480,22 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
     return bill;
   }
   /**
-   * Save & Print: the order is saved (everything on it counts as sent to the kitchen), its bill prints, and a fresh bill
-   * opens. With no printer the order is saved exactly the same way (bill number, sent to the kitchen) and the screen just
-   * clears for the next order, so testing without a printer gives the same reports.
+   * Save & Print: at a busy counter this means "paid". The order is closed as paid in cash (everything on it counts as
+   * sent to the kitchen), its bill prints if a printer is connected, and a fresh bill opens. No pop-up, no question.
+   * Other ways of paying (UPI, card, split) go through the Cash button.
    */
-  function saveAndPrint() {
+  function saveAndPrint(waiter?: number | null) {
     if (!active || !active.lines.length || activeId === null) return;
-    const withNo = withToken({ ...active, bill_no: active.bill_no ?? takeBillNo(), lines: active.lines.map((l) => ({ ...l, sent: l.qty })) });
-    setOrders((os) => os.map((o) => (o.id === active.id ? withNo : o)));
-    const bill = toBill(withNo, s, "paid", [], null);
-    if (printing) {
-      setPrint({ kind: "bill", bill, copy: "Original" });
-      setToast(t("bill_printed"));
-    } else setToast(t("order_saved", { no: withNo.bill_no ?? "" }));
-    setActiveId(null);
-    setDraft(newOrder("dine_in", null, null));
+    const order: Order = {
+      ...active,
+      ...(waiter !== undefined ? { waiter_staff_id: waiter } : {}),
+      lines: active.lines.map((l) => ({ ...l, sent: l.qty })),
+    };
+    const total = totalsOf(order, s).total;
+    if (total <= 0) return;
+    const bill = finish(order, "paid", [{ mode: "cash", amount: total }], null);
+    if (printing) setPrint({ kind: "bill", bill, copy: "Original" });
+    setToast(t("paid_done", { no: bill.bill_no }));
   }
   function hold() {
     if (active?.lines.length) setToast(t("held"));
@@ -762,12 +763,17 @@ function Dropdown({ align = "left", onClose, children }: { align?: "left" | "rig
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  return (
+  // On a phone or upright tablet the menu bar scrolls sideways, and some phone browsers clip or bury a menu drawn
+  // inside it. There the menu is drawn on top of the whole page instead, just under the menu bar.
+  const narrow = window.matchMedia("(max-width: 900px)").matches;
+  const top = narrow ? Math.round((document.querySelector(".menubar")?.getBoundingClientRect().bottom ?? 96) + 4) : undefined;
+  const menu = (
     <>
       <div className="dd-backdrop" onClick={onClose} />
-      <div className={`dd ${align}`} role="menu">{children}</div>
+      <div className={`dd ${align}`} role="menu" style={top !== undefined ? { top } : undefined}>{children}</div>
     </>
   );
+  return narrow ? createPortal(menu, document.body) : menu;
 }
 
 /* ---------------- Dashboard: open orders, and the tables when the table map is on ---------------- */
@@ -919,7 +925,7 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay, o
 
 /* ---------------- Billing: the menu and the order, like the old POS's Billing screen ---------------- */
 
-type OrderDialog = "pay" | "discount" | "waiter" | "waiter_then_pay" | "table" | "bill" | "held" | "invoices";
+type OrderDialog = "pay" | "discount" | "waiter" | "waiter_then_pay" | "waiter_then_save" | "table" | "bill" | "held" | "invoices";
 
 /** A tile's price as the old POS shows it: "₹ 220.00". */
 const tilePrice = (paise: number) => `₹ ${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -927,7 +933,7 @@ const tilePrice = (paise: number) => `₹ ${(paise / 100).toLocaleString("en-IN"
 function OrderScreen({ t, lang, config, order, update, held, online, bills, openWith, onHold, onClose, onPickHeld, onShowBill, onSavePrint, onBill, onType, onPaid, onCancel, onItemAdded }: {
   t: T; lang: Lang; config: Config; order: Order; update: (fn: (o: Order) => Order) => void; held: Order[]; online: boolean; bills: Bill[];
   openWith: "pay" | null; onHold: () => void; onClose: () => void; onPickHeld: (o: Order) => void; onShowBill: (b: Bill) => void;
-  onSavePrint: () => void; onBill: (copy: Copy) => Bill | null; onType: (type: Order["type"]) => void;
+  onSavePrint: (waiter?: number | null) => void; onBill: (copy: Copy) => Bill | null; onType: (type: Order["type"]) => void;
   onPaid: (p: Payment[], change: number) => void; onCancel: () => void; onItemAdded: (item: Item) => void;
 }) {
   const s = config.settings;
@@ -1087,7 +1093,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
         {/* The old POS's buttons, in its order: Bill, Save & Print, Cash; then HOLD, CLOSE, Cancel. */}
         <div className="actions">
           <button className="btn bill-btn" disabled={empty} onClick={bill}><span aria-hidden="true">✔</span> {t("bill")}</button>
-          <button className="btn save-print" disabled={empty} onClick={onSavePrint}>🖨 {printing ? t("save_print") : t("save_only")}</button>
+          <button className="btn save-print" disabled={empty || totals.total <= 0} onClick={() => (missingWaiter ? setDialog("waiter_then_save") : onSavePrint())}>🖨 {printing ? t("save_print") : t("save_only")}</button>
           <button className="btn primary cash" disabled={empty || totals.total <= 0} onClick={pay}>
             <span>💵 {t("cash")}</span><strong className="num">{formatINR(totals.total)}</strong>
           </button>
@@ -1126,10 +1132,15 @@ function OrderScreen({ t, lang, config, order, update, held, online, bills, open
           settings={config.settings} approvers={config.approvers ?? []} onClose={() => setDialog(null)}
           onDone={(d, reason, by) => (setDialog(null), update((o) => ({ ...o, discount: d, discount_reason: d ? reason : null, discount_approved_by: d ? by : null })))} />
       )}
-      {(dialog === "waiter" || dialog === "waiter_then_pay") && (
+      {(dialog === "waiter" || dialog === "waiter_then_pay" || dialog === "waiter_then_save") && (
         <WaiterDialog t={t} config={config} current={order.waiter_staff_id} optional={order.type === "parcel" || s.waiter_required === false}
           onClose={() => setDialog(null)}
-          onPick={(id) => (update((o) => ({ ...o, waiter_staff_id: id })), setDialog(dialog === "waiter_then_pay" && (id || order.type === "parcel") ? "pay" : null))} />
+          onPick={(id) => {
+            // Save & Print with no waiter picked yet: pick one, then the order is paid straight away.
+            if (dialog === "waiter_then_save" && (id || order.type === "parcel")) return (setDialog(null), onSavePrint(id));
+            update((o) => ({ ...o, waiter_staff_id: id }));
+            setDialog(dialog === "waiter_then_pay" && (id || order.type === "parcel") ? "pay" : null);
+          }} />
       )}
       {dialog === "table" && (
         <TableNoDialog t={t} current={order.table_name} onClose={() => setDialog(null)}
