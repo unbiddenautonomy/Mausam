@@ -36,7 +36,7 @@ Do these in order on your own phone or a laptop. You need the setup code you sav
 6. **Add waiters.** **Manage → Waiters.** Each waiter gets an ID number and a commission %. The POS asks for a waiter on every table order, so do this before the first service.
 7. **Check the menu.** **Manage → Menu.** Mausam's printed menu is already loaded, with Hindi and Kannada names, variations (Regular/Jain, Kadak/Medium/Naram, Full/Half) and favourites. Fix any price that is wrong.
 8. **Check the tables.** **Manage → Tables.** T1 to T22 are already there. Rename, add or remove tables to match your floor.
-9. **Set POS options.** **Manage → POS options.** The bill heading (name, address, phone), the footer, whether a receipt printer is connected, how many copies of each bill print (2 by default, one for the kitchen), whether to show the table map, and GST if you charge it.
+9. **Set POS options.** **Manage → POS options.** The bill heading (name, address, phone), the footer, whether a receipt printer is connected, how many copies of each bill print (dine-in 1, parcel 2 by default: a parcel's second copy is for the kitchen), whether to show the table map, and GST if you charge it.
 10. **Set reminders and categories.** **Manage → Reminders and rules** picks who gets each reminder and at what time (for example, shopping to the head manager, closing to the assistant manager). **Manage → Categories** holds the expense categories.
 
 Once steps 1 to 9 are done, the counter can start billing. Reminders and categories can be tuned later.
@@ -146,7 +146,7 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 
 - **Bill:** shows or reprints the bill (marked "Duplicate").
 - **HOLD:** keeps the order open and gives you a fresh bill. **Hold (n)** at the top lists the held and printed bills; tap one to pick it up again.
-- **Invoice:** today's bills from both devices. Tap one to see or reprint it.
+- **Invoice:** today's bills from both devices, with **All / Dine-in / Parcel** and **Today's Sales**, like the old POS. Each bill has **View**, **Print**, **Edit** and **Delete**. **Edit** opens the bill on the Billing screen: change it and tap **Update Bill**. It's saved as a new bill (same token, paid the same way) and the old one is kept as cancelled ("Edited: now …"). **Delete** keeps the bill as cancelled ("Deleted at the counter"). Both show in the cancellations report, and only today's bills can be changed.
 - **CLOSE:** leaves this bill (an order with items stays on hold) and goes back.
 - **Cancel:** an empty bill is just cleared; anything sent to the kitchen or printed asks for a reason. Cancelled bills show in the admin app under **POS bills**.
 - **Discount:** an amount in ₹ or a percent off.
@@ -155,7 +155,11 @@ The POS is laid out like the counter's old POS. Across the top is the same menu 
 
 ![The Dashboard: open orders with Bill, Pay and Open buttons, then the tables](images/guide/pos-tables.png)
 
-**Report's** (owner and managers): **Sales Summary**, **Sales Details**, **Item Sales Summary** and **Waiter Commission**, each with **From Date**, **To Date**, **Show** and **Print**, like the old POS. **Master's** and **Item Master** show the menu; the owner changes items, tables and waiters in the admin app (the links open it).
+**Report's** (owner and managers): **Sales Summary**, **Sales Details**, **Item Sales Summary** and **Waiter Commission**, each with **From Date**, **To Date**, **Show** and **Print**, like the old POS. **Sales Summary** has one row per invoice (table start, duration, status, PAX, mode, amount, waived, total, waiter, user), and **Sales Details** lists every item on every invoice.
+
+**Item Master** is laid out like the old POS's Product Master. The owner taps ✎ on an item to change its name, category, rate and choices (for example a Half price), star it, or discontinue it (hide it from billing). Tables and waiters are changed in the admin app (the Master's links open it).
+
+**The menu is in the old POS's order**, three tiles a row, with the old POS's prices. Every Chinese item is Regular or Jain; Manchurian, Chinese Bhel, Noodles and Veg. Fried Rice also come Full or Half. Bhaji Green comes Oil or Butter, Regular or Jain.
 
 **End of the day:** open **Day End**. It shows the day's sales by payment mode (cash, UPI, card) and by waiter, and any bills **Not sent yet**. Check it says **All bills sent**, then the manager uses these numbers for **Close the day** in the admin app (the POS total is filled in by itself).
 
