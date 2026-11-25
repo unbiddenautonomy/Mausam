@@ -364,8 +364,13 @@ h3 { margin: 0; font-size: 1.05rem; }
   .select-product > span { display: none; }
   .type-toggle button, .hold-btn { min-height: 48px; }
   .field, .select-product .search { min-height: 46px; }
-  .line { padding-top: 3px; padding-bottom: 3px; }
-  .stepper button { width: 40px; height: 40px; }
+  /* Thin order rows like the old POS's grid: about 34px each, so a long order fits without scrolling. */
+  .line { padding-top: 1px; padding-bottom: 1px; min-height: 34px; font-size: 0.95rem; }
+  .lname { line-height: 1.1; }
+  .stepper { gap: 2px; }
+  .stepper button { width: 34px; height: 30px; border-radius: 8px; border-width: 1px; font-size: 1.1rem; }
+  .stepper button.remove { font-size: 0.95rem; }
+  .stepper .qty-btn { min-width: 30px; font-size: 1rem; }
   .actions { grid-template-rows: 54px 54px; padding-top: 6px; padding-bottom: 8px; }
   /* Three tiles a row, as on the old POS, so every item sits where staff are used to finding it. */
   .item-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 108px; }
