@@ -7,10 +7,22 @@ export interface ItemOption { name: string; price: number }
 export interface Item {
   id: number; category_id: number; name: string; name_hi?: string | null; name_kn?: string | null; short_name: string | null;
   price: number; tax_rate: number | null; veg: number; favourite: number; sort: number;
+  /** Place in the Favorite tab (the old POS's order); none = after those, in menu order. */
+  fav_sort?: number | null;
   variations?: ItemOption[] | null; addons?: ItemOption[] | null;
 }
 /** Does tapping this item ask which variation or add-on, before it goes on the order? */
 export const hasChoices = (i: Item) => !!(i.variations?.length || i.addons?.length);
+/** The Favorite tab: starred items in the old POS's order (fav_sort), then any other starred ones in menu order. */
+export function favouritesOf(items: Item[]): Item[] {
+  const at = (i: Item) => (i.fav_sort == null ? Number.MAX_SAFE_INTEGER : i.fav_sort);
+  return items.map((i, n) => ({ i, n })).filter(({ i }) => i.favourite).sort((a, b) => at(a.i) - at(b.i) || a.n - b.n).map(({ i }) => i);
+}
+/** Copies of a new bill at Save & Print: dine-in once, parcel twice (the kitchen's copy), unless POS options say otherwise. */
+export function billCopies(type: "dine_in" | "parcel", s: PosSettings): number {
+  const n = type === "parcel" ? s.bill_copies ?? 2 : s.bill_copies_dine_in ?? 1;
+  return Math.min(Math.max(Math.round(n) || 1, 1), 3);
+}
 export interface Table { id: number; area: string; name: string; seats: number; sort: number }
 export interface Waiter { id: number; name: string; name_local: string | null; waiter_code?: string | null }
 export interface PosSettings {
@@ -24,8 +36,10 @@ export interface PosSettings {
   commission_bp?: number;
   /** A dine-in order needs a waiter before payment. */
   waiter_required?: boolean;
-  /** Copies of a bill printed at Save & Print, one after the other (the second is the kitchen's). */
+  /** Copies of a parcel bill printed at Save & Print, one after the other (the second is the kitchen's). */
   bill_copies?: number;
+  /** Copies of a dine-in bill printed at Save & Print. */
+  bill_copies_dine_in?: number;
   /** The biggest discount staff may give without a manager's PIN, as a % of the bill. 100 (or missing) = no limit. */
   discount_limit_pct?: number;
   /** The same limit in paise (10000 = ₹100). 0 (or missing) = no rupee limit. Over either one needs a PIN. */
@@ -82,6 +96,8 @@ export interface Order {
   updated_at?: string;
   /** Items taken off after the kitchen got them or the bill was printed. The owner sees these in the leaks report. */
   voids?: Void[];
+  /** Editing a saved bill (Invoice → Edit): the bill this order replaces, and how it was paid. */
+  replaces?: { client_id: string; bill_no: string; mode: BillPayMode } | null;
 }
 /**
  * An item taken off an order after it went to the kitchen ("kitchen") or after the bill was printed ("billed").
@@ -103,6 +119,10 @@ export interface Bill {
   printed_no?: string;
   /** The waiter's commission on this bill, in paise, worked out by the server (reports only). */
   commission?: number;
+  /** Who was logged in on the screen that saved it (reports only, from the server). */
+  user_name?: string | null;
+  /** An edited bill: the client_id of the bill it replaces. The server keeps that one as cancelled. */
+  replaces?: string;
   synced?: boolean;
   /** Why the server refused it (an error code). Such a bill isn't sent again until someone taps Send again. */
   rejected?: string;
@@ -434,7 +454,36 @@ export function toBill(order: Order, s: PosSettings, status: Bill["status"], pay
     payments,
     ...(order.voids?.length ? { voids: order.voids.slice(-MAX_VOIDS) } : {}),
     ...(t.discount > 0 ? { discount_reason: order.discount_reason ?? null, discount_approved_by: order.discount_approved_by ?? null } : {}),
+    ...(order.replaces ? { replaces: order.replaces.client_id } : {}),
   };
+}
+
+/** The reason kept on a bill replaced by an edit (followed by the new number), and on one deleted at the counter. */
+export const EDITED_REASON = "Edited: now";
+export const DELETED_REASON = "Deleted at the counter";
+
+/**
+ * Invoice → Edit: a saved bill opened again on the Billing screen, like the old POS's Update Bill. Its items count as
+ * already sent to the kitchen, so taking one off is recorded. Saving it makes a new bill (new number, same token and
+ * day) and the old one is kept as cancelled.
+ */
+export function orderFromBill(b: Bill): Order {
+  return {
+    id: uid(), type: b.order_type, table_id: b.table_id, table_name: b.table_name, token: b.token,
+    waiter_staff_id: b.waiter_staff_id, guests: b.guests, discount: b.discount,
+    discount_reason: b.discount_reason ?? null, discount_approved_by: b.discount_approved_by ?? null,
+    opened_at: b.opened_at, bill_no: null, business_date: b.business_date, voids: [],
+    lines: b.lines.map((l) => ({
+      key: uid(), item_id: l.item_id, name: l.name, category: l.category, qty: l.qty, price: l.price, tax_rate: l.tax_rate,
+      note: l.note, variation: l.variation ?? null, modifier: l.modifier ?? null, sent: l.qty,
+    })),
+    replaces: { client_id: b.client_id, bill_no: b.bill_no, mode: b.payments[0]?.mode ?? "cash" },
+  };
+}
+
+/** This screen's copy of a bill, kept as cancelled (edited or deleted), so the day summary and the invoice list agree. */
+export function cancelLocal(bills: Bill[], clientId: string, reason: string): Bill[] {
+  return bills.map((b) => (b.client_id === clientId && b.status === "paid" ? { ...b, status: "cancelled", cancel_reason: reason } : b));
 }
 
 /**

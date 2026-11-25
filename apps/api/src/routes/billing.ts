@@ -19,6 +19,7 @@ export const billing = new Hono<AppEnv>();
 const POS_SETTING_KEYS = [
   "pos_gst_rate", "pos_prices_include_tax", "pos_gstin", "pos_bill_header", "pos_bill_footer",
   "pos_use_tables", "pos_use_gst", "pos_printing", "pos_commission_bp", "pos_waiter_required", "pos_bill_copies",
+  "pos_bill_copies_dine_in",
   "pos_discount_limit_pct", "pos_discount_limit_paise",
 ] as const;
 type PosSettingKey = (typeof POS_SETTING_KEYS)[number];
@@ -39,8 +40,10 @@ export interface PosSettings {
   commission_bp: number;
   /** A dine-in order needs a waiter before it can be paid. */
   waiter_required: boolean;
-  /** How many copies of a bill print at Save & Print (the second goes to the kitchen). Reprints print one. */
+  /** How many copies of a parcel bill print at Save & Print (the second goes to the kitchen). Reprints print one. */
   bill_copies: number;
+  /** How many copies of a dine-in bill print at Save & Print. */
+  bill_copies_dine_in: number;
   /** The biggest discount staff may give on their own, as a % of the bill. More needs a manager's or the owner's PIN. 100 = no limit. */
   discount_limit_pct: number;
   /** The biggest discount staff may give on their own, in paise (10000 = ₹100). 0 = no rupee limit. Over this or the % needs a PIN. */
@@ -65,6 +68,7 @@ async function loadPosSettings(db: D1Database): Promise<PosSettings> {
     commission_bp: Number(m.pos_commission_bp ?? 0) || 0,
     waiter_required: (m.pos_waiter_required ?? "1") === "1",
     bill_copies: Math.min(Math.max(Number(m.pos_bill_copies ?? 2) || 2, 1), 3),
+    bill_copies_dine_in: Math.min(Math.max(Number(m.pos_bill_copies_dine_in ?? 1) || 1, 1), 3),
     discount_limit_pct: Math.min(Math.max(Number(m.pos_discount_limit_pct ?? 100) || 0, 0), 100),
     discount_limit_paise: Math.max(Number(m.pos_discount_limit_paise ?? 0) || 0, 0),
   };
@@ -111,7 +115,7 @@ billing.get("/config", async (c) => {
   const db = c.env.DB;
   const [cats, items, tables, waiters, settings, approvers] = await Promise.all([
     db.prepare("SELECT id, name, name_hi, name_kn, sort FROM menu_categories WHERE active = 1 ORDER BY sort, name").all(),
-    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, sort, variations, addons FROM menu_items WHERE active = 1 ORDER BY sort, name").all<Record<string, unknown>>(),
+    db.prepare("SELECT id, category_id, name, name_hi, name_kn, short_name, price, tax_rate, veg, favourite, fav_sort, sort, variations, addons FROM menu_items WHERE active = 1 ORDER BY sort, name").all<Record<string, unknown>>(),
     db.prepare("SELECT id, area, name, seats, sort FROM dining_tables WHERE active = 1 ORDER BY sort, area, name").all(),
     db.prepare("SELECT id, name, name_local, waiter_code FROM staff WHERE active = 1 AND is_waiter = 1 ORDER BY CAST(waiter_code AS INTEGER), waiter_code, name").all(),
     loadPosSettings(db),
@@ -137,6 +141,8 @@ interface BillIn {
   discount?: unknown; prices_include_tax?: unknown; total?: unknown; status?: unknown; cancel_reason?: unknown;
   opened_at?: unknown; closed_at?: unknown; lines?: unknown; payments?: unknown; voids?: unknown;
   discount_reason?: unknown; discount_approved_by?: unknown; printed_no?: unknown;
+  /** Edited at the counter: the bill (client_id) this one replaces. That bill is kept as cancelled. */
+  replaces?: unknown;
 }
 
 type Result = { client_id: string; status: "saved" | "duplicate" | "rejected"; error?: string; bill_no?: string };
@@ -287,7 +293,25 @@ function prepareBill(db: D1Database, b: BillIn, user: { id: number; role: Role }
       ).bind(b.client_id, v.name, v.variation, v.qty, v.price, v.stage, v.at, v.by),
     ),
   ];
+  // An edited bill (the old POS's Update Bill): the bill it replaces, of the same day, is kept as cancelled, so it
+  // shows in the cancellations report with the new number. A bill already cancelled or missing is left alone.
+  if (typeof b.replaces === "string" && b.replaces !== b.client_id && /^[A-Za-z0-9-]{8,64}$/.test(b.replaces)) {
+    stmts.push(replacedStmt(db, b.replaces, b.business_date, `${EDITED_REASON} ${b.bill_no}`));
+  }
   return { stmts, date: b.business_date };
+}
+
+/** The reason kept on a bill edited at the counter (followed by the new bill's number), and on one deleted there. */
+const EDITED_REASON = "Edited: now";
+const DELETED_REASON = "Deleted at the counter";
+
+/** Keeps a paid bill as cancelled: no sale, no commission, flagged for the owner. Only a bill of that day. */
+function replacedStmt(db: D1Database, clientId: string, date: string, reason: string) {
+  return db.prepare(
+    `UPDATE pos_bills SET status = 'cancelled', cancel_reason = ?, commission = 0,
+       flags = json_insert(COALESCE(flags, '[]'), '$[#]', ?)
+     WHERE client_id = ? AND business_date = ? AND status = 'paid'`,
+  ).bind(reason, reason.startsWith(EDITED_REASON) ? "edited" : "deleted", clientId, date);
 }
 
 interface VoidRow { name: string; variation: string | null; qty: number; price: number; stage: "kitchen" | "billed"; at: string; by: number | null }
@@ -705,7 +729,8 @@ async function billsBetween(db: D1Database, from: string, to: string) {
   const { results: bills } = await db
     .prepare(
       `SELECT id, client_id, bill_no, counter, business_date, order_type, table_id, table_name, token, waiter_staff_id, guests,
-              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at, commission
+              discount, prices_include_tax, total, status, cancel_reason, opened_at, closed_at, commission,
+              (SELECT u.name FROM users u WHERE u.id = pos_bills.created_by) AS user_name
        FROM pos_bills WHERE business_date BETWEEN ? AND ? ORDER BY closed_at`,
     )
     .bind(from, to)
@@ -736,6 +761,25 @@ billing.get("/day", anyPosUser, async (c) => {
   const date = c.req.query("date") ?? businessDate();
   if (!isDate(date)) throw new HttpError(422, "invalid", { field: "date" });
   return c.json({ date, bills: await billsBetween(c.env.DB, date, date) });
+});
+
+/**
+ * Delete on the Invoice screen: a paid bill of today is kept as cancelled ("Deleted at the counter"), like the old
+ * POS's delete, but it stays in the cancellations report (flagged "deleted"). Today's bills only.
+ */
+billing.post("/bills/:client_id/delete", anyPosUser, async (c) => {
+  const db = c.env.DB;
+  const clientId = c.req.param("client_id");
+  const before = await db.prepare("SELECT id, bill_no, business_date, status, total FROM pos_bills WHERE client_id = ?")
+    .bind(clientId).first<{ id: number; bill_no: string; business_date: string; status: string; total: number }>();
+  if (!before) throw new HttpError(404, "not_found");
+  if (before.status !== "paid") return c.json({ ok: true, already: true });
+  if (before.business_date !== businessDate()) throw new HttpError(409, "not_today");
+  const user = c.get("user");
+  await db.batch([replacedStmt(db, clientId, before.business_date, DELETED_REASON), ...posDayStatements(db, before.business_date)]);
+  await audit(db, "pos_bills", before.id, "update", { status: "paid" }, { status: "cancelled", cancel_reason: DELETED_REASON }, user.id);
+  await applyPosToCloses(db, before.business_date, before.business_date, user.id);
+  return c.json({ ok: true });
 });
 
 /** The longest stretch the POS reports ask for at once. */
@@ -996,10 +1040,11 @@ billing.put("/settings", async (c) => {
   for (const [field, key] of [["use_tables", "pos_use_tables"], ["use_gst", "pos_use_gst"], ["printing", "pos_printing"], ["waiter_required", "pos_waiter_required"]] as const) {
     if (b[field] !== undefined) updates.push([key, b[field] ? "1" : "0"]);
   }
-  if (b.bill_copies !== undefined) {
-    const r = int(b.bill_copies, 1, 3);
-    if (r === null) throw new HttpError(422, "invalid", { field: "bill_copies" });
-    updates.push(["pos_bill_copies", String(r)]);
+  for (const [field, key] of [["bill_copies", "pos_bill_copies"], ["bill_copies_dine_in", "pos_bill_copies_dine_in"]] as const) {
+    if (b[field] === undefined) continue;
+    const r = int(b[field], 1, 3);
+    if (r === null) throw new HttpError(422, "invalid", { field });
+    updates.push([key, String(r)]);
   }
   if (b.discount_limit_pct !== undefined) {
     const r = int(b.discount_limit_pct, 0, 100);

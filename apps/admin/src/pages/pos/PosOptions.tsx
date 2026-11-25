@@ -46,6 +46,8 @@ export function PosOptionsPage() {
         {toggle("printing", t("posset.printing"), t("posset.printing_help"))}
         {s.printing && (
           <div className="field">
+            <span className="label">{t("posset.copies_dine_in")}</span>
+            <Segmented<string> value={String(s.bill_copies_dine_in ?? 1)} onChange={(v) => setF({ ...s, bill_copies_dine_in: Number(v) })} options={["1", "2", "3"].map((n) => ({ value: n, label: n }))} />
             <span className="label">{t("posset.copies")}</span>
             <Segmented<string> value={String(s.bill_copies)} onChange={(v) => setF({ ...s, bill_copies: Number(v) })} options={["1", "2", "3"].map((n) => ({ value: n, label: n }))} />
             <span className="muted small">{t("posset.copies_help")}</span>

@@ -320,3 +320,44 @@ describe("refused bills", () => {
     expect(readyToResend({ ...b, rejected: "total_mismatch" }).bill_no).toBe(b.bill_no);
   });
 });
+
+describe("matching the old POS", () => {
+  it("lists favourites in the old POS's order, then other starred items in menu order", async () => {
+    const { favouritesOf } = await import("./store");
+    const items = [
+      { ...bhaji, id: 1, name: "Bhaji", fav_sort: 3 },
+      { ...bhaji, id: 2, name: "Not starred", favourite: 0 },
+      { ...bhaji, id: 3, name: "Starred later", fav_sort: null },
+      { ...pav, id: 4, name: "1 Pav (Amul Butter)", fav_sort: 1 },
+      { ...pav, id: 5, name: "1 Pav (Oil)", fav_sort: 2 },
+    ];
+    expect(favouritesOf(items).map((i) => i.name)).toEqual(["1 Pav (Amul Butter)", "1 Pav (Oil)", "Bhaji", "Starred later"]);
+  });
+
+  it("prints a dine-in bill once and a parcel bill twice, unless POS options say otherwise", async () => {
+    const { billCopies } = await import("./store");
+    expect(billCopies("dine_in", settings)).toBe(1);
+    expect(billCopies("parcel", settings)).toBe(2);
+    expect(billCopies("dine_in", { ...settings, bill_copies_dine_in: 2, bill_copies: 3 })).toBe(2);
+    expect(billCopies("parcel", { ...settings, bill_copies: 9 })).toBe(3);
+  });
+
+  it("opens a saved bill to edit: same items, token and day, a new id, and the new bill names the one it replaces", async () => {
+    const { orderFromBill, cancelLocal, EDITED_REASON } = await import("./store");
+    let o = newOrder("parcel", null, 7);
+    o = addItem(o, bhaji, cats, settings, { variation: { name: "Jain", price: 22000 } }, 2);
+    const paid = toBill({ ...o, bill_no: takeBillNo() }, settings, "paid", [{ mode: "upi", amount: totalsOf(o, settings).total }], null);
+    const edit = orderFromBill(paid);
+    expect(edit.id).not.toBe(paid.client_id);
+    expect(edit).toMatchObject({ type: "parcel", token: 7, business_date: paid.business_date, bill_no: null,
+      replaces: { client_id: paid.client_id, bill_no: paid.bill_no, mode: "upi" } });
+    expect(edit.lines).toMatchObject([{ name: "Bhaji", qty: 2, sent: 2, variation: "Jain" }]);
+    // Taking an item off an edited bill is recorded, like one already sent to the kitchen.
+    const less = changeQty(edit, edit.lines[0].key, -1, 5);
+    expect(less.voids).toHaveLength(1);
+    const again = toBill({ ...less, bill_no: takeBillNo() }, settings, "paid", [{ mode: "upi", amount: totalsOf(less, settings).total }], null);
+    expect(again.replaces).toBe(paid.client_id);
+    const local = cancelLocal([paid], paid.client_id, `${EDITED_REASON} ${again.bill_no}`);
+    expect(local[0]).toMatchObject({ status: "cancelled", cancel_reason: `Edited: now ${again.bill_no}` });
+  });
+});

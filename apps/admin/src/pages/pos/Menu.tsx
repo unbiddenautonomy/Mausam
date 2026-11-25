@@ -16,7 +16,7 @@ export interface MenuItem {
 export interface MenuOption { name: string; price: number }
 export interface PosSettings {
   gst_rate: number; prices_include_tax: boolean; gstin: string; bill_header: string; bill_footer: string;
-  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean; bill_copies: number;
+  use_tables: boolean; use_gst: boolean; printing: boolean; commission_bp: number; waiter_required: boolean; bill_copies: number; bill_copies_dine_in?: number;
   discount_limit_pct: number; discount_limit_paise: number;
 }
 

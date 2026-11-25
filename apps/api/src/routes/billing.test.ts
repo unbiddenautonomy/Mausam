@@ -336,3 +336,71 @@ describe("new items from the counter", () => {
     expect(audit!.n).toBe(1);
   });
 });
+
+describe("Invoice screen: edit and delete a bill", () => {
+  it("keeps an edited bill as cancelled with the new number, and the day counts only the new one", async () => {
+    const date = businessDate();
+    const first = bill(date);
+    await send([first]);
+    const edited = { ...bill(date), replaces: first.client_id };
+    const r = await send([edited]);
+    expect(r.json.results[0].status).toBe("saved");
+    const old = await app.db.prepare("SELECT status, cancel_reason, commission, flags FROM pos_bills WHERE client_id = ?").bind(first.client_id).first();
+    expect(old).toMatchObject({ status: "cancelled", cancel_reason: `Edited: now ${edited.bill_no}`, commission: 0, flags: '["edited"]' });
+    const { results } = await app.db.prepare("SELECT client_id FROM pos_bills WHERE business_date = ? AND status = 'paid'").bind(date).all<{ client_id: string }>();
+    expect(results.map((x) => x.client_id)).toContain(edited.client_id);
+    expect(results.map((x) => x.client_id)).not.toContain(first.client_id);
+    const { daily, sums } = await dayRows(date);
+    expect(daily!.total).toBe(sums!.total);
+  }, 60_000);
+
+  it("an edit sent with the bill it replaces, offline, still cancels that bill", async () => {
+    const date = businessDate();
+    const first = bill(date);
+    const edited = { ...bill(date), replaces: first.client_id };
+    await send([first, edited]);
+    const old = await app.db.prepare("SELECT status FROM pos_bills WHERE client_id = ?").bind(first.client_id).first();
+    expect(old).toMatchObject({ status: "cancelled" });
+  }, 60_000);
+
+  it("deletes today's paid bill (kept as cancelled), refuses an older one, and leaves the day's totals right", async () => {
+    const today = businessDate();
+    const b = bill(today);
+    const old = bill(addDays(today, -2));
+    await send([b, old]);
+    const r = await app.call(staff, "POST", `/billing/bills/${b.client_id}/delete`);
+    expect(r.status).toBe(200);
+    const row = await app.db.prepare("SELECT status, cancel_reason, flags FROM pos_bills WHERE client_id = ?").bind(b.client_id).first();
+    expect(row).toMatchObject({ status: "cancelled", cancel_reason: "Deleted at the counter", flags: '["deleted"]' });
+    expect((await app.call(staff, "POST", `/billing/bills/${b.client_id}/delete`)).json).toMatchObject({ already: true });
+    expect((await app.call(staff, "POST", `/billing/bills/${old.client_id}/delete`)).status).toBe(409);
+    expect((await app.call(staff, "POST", "/billing/bills/nope-nope-nope/delete")).status).toBe(404);
+    const { daily, sums } = await dayRows(today);
+    expect(daily!.total).toBe(sums!.total);
+  }, 60_000);
+});
+
+describe("the menu as on the old POS", () => {
+  it("has each category in the old POS's order, with Half ₹100 less than Full on four Chinese items", async () => {
+    const r = await app.call(staff, "GET", "/billing/config");
+    const items = r.json.items as { name: string; category_id: number; price: number; variations: { name: string; price: number }[] | null; fav_sort: number | null; favourite: number }[];
+    const cats = r.json.categories as { id: number; name: string }[];
+    const names = (c: string) => items.filter((i) => i.category_id === cats.find((x) => x.name === c)!.id).map((i) => i.name);
+    expect(names("Chinese")).toEqual(["Manchurian", "Chinese Bhel", "Bombay Bhel", "Manchurian Gravy", "Green Manchurian", "Manchow Soup",
+      "Manchurian Rice Full", "Noodles", "Schezwan Noodles", "Schezwan Rice", "Singapore Noodles", "Singapore Rice", "Triple Rice",
+      "Veg. Fried Rice", "Manchurian Noodles"]);
+    expect(names("Pav Bhaji").slice(0, 9)).toEqual(["Kora Pav", "Pav Bhaji", "1 Pav (Oil) (1 pc)", "1 Pav (Amul Butter) (1 pc)", "Pulav (Oil)",
+      "Masala Pav (Oil)", "Bhaji Tikka", "Jain Bhaji", "Green Pav Bhaji (Oil)"]);
+    expect(names("Pav Bhaji").at(-1)).toBe("Butter Pav Bhaji");
+    expect(names("Dosa")[0]).toBe("Cheese Masala Dosa");
+    expect(names("Soft Drink")).toEqual(["Chaas (Buttermilk)", "Cold Drinks", "Water", "Water Bottle Small"]);
+    const noodles = items.find((i) => i.name === "Noodles")!;
+    expect(noodles.variations).toEqual([{ name: "Full", price: 28000 }, { name: "Half", price: 18000 }, { name: "Full Jain", price: 28000 }, { name: "Half Jain", price: 18000 }]);
+    expect(items.find((i) => i.name === "Bombay Bhel")!.variations!.map((v) => v.name)).toEqual(["Regular", "Jain"]);
+    expect(items.find((i) => i.name === "Green Pav Bhaji (Oil)")!.variations!.map((v) => `${v.name} ${v.price / 100}`))
+      .toEqual(["Oil 330", "Jain Oil 330", "Butter 370", "Jain Butter 370"]);
+    const favs = items.filter((i) => i.favourite).sort((a, b) => (a.fav_sort ?? 99) - (b.fav_sort ?? 99)).map((i) => i.name);
+    expect(favs).toEqual(["1 Pav (Amul Butter) (1 pc)", "1 Pav (Oil) (1 pc)", "Pav Bhaji", "Jain Bhaji", "Chinese Bhel", "Manchurian"]);
+    expect(r.json.settings).toMatchObject({ bill_copies: 2, bill_copies_dine_in: 1 });
+  }, 60_000);
+});
