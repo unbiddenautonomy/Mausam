@@ -17,7 +17,7 @@ let full = false;
   length: 0,
 };
 
-const { addItem, billNumbersFull, clockOffMinutes, readyToResend, noteServerTime, onStorageChange, overDiscountLimit, discountLimit, serverNow, storageBroken, byWaiter, changeQty, counterOf, itemSales, hasChoices, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
+const { addItem, billNumbersFull, clockOffMinutes, readyToResend, noteServerTime, onStorageChange, overDiscountLimit, discountLimit, serverNow, storageBroken, byWaiter, changeQty, counterOf, itemSales, hasChoices, variationRows, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, noteToken, orderLabel, rateFor, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables } = await import("./store");
 
 const settings = { gst_rate: 500, prices_include_tax: true, gstin: "29ABCDE1234F1Z5", bill_header: "", bill_footer: "", use_gst: true };
 const cats = [{ id: 1, name: "Pav Bhaji", name_hi: null, name_kn: null, sort: 1 }];
@@ -359,5 +359,27 @@ describe("matching the old POS", () => {
     expect(again.replaces).toBe(paid.client_id);
     const local = cancelLocal([paid], paid.client_id, `${EDITED_REASON} ${again.bill_no}`);
     expect(local[0]).toMatchObject({ status: "cancelled", cancel_reason: `Edited: now ${again.bill_no}` });
+  });
+});
+
+describe("variationRows", () => {
+  const v = (name: string, price = 100) => ({ name, price });
+  it("splits Oil/Butter × Regular/Jain into two rows", () => {
+    const vs = [v("Oil", 330), v("Jain Oil", 330), v("Butter", 370), v("Jain Butter", 370)];
+    const r = variationRows(vs)!;
+    expect(r.rows.map((row) => row.labels)).toEqual([["Oil", "Butter"], ["Regular", "Jain"]]);
+    expect(r.find(["butter", "jain"])).toBe(vs[3]);
+    expect(r.keyOf(vs[0])).toEqual(["oil", "regular"]);
+  });
+  it("splits Half/Full × Regular/Jain", () => {
+    const vs = [v("Half"), v("Full"), v("Half Jain"), v("Full Jain")];
+    const r = variationRows(vs)!;
+    expect(r.rows.map((row) => row.values)).toEqual([["regular", "jain"], ["half", "full"]]);
+    expect(r.find(["jain", "full"])).toBe(vs[3]);
+  });
+  it("keeps a plain list when names don't split", () => {
+    expect(variationRows([v("Regular"), v("Jain")])).toBeNull();
+    expect(variationRows([v("Small"), v("Medium"), v("Large")])).toBeNull();
+    expect(variationRows([v("Oil"), v("Butter"), v("Amul Butter")])).toBeNull();
   });
 });

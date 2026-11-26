@@ -73,6 +73,9 @@ export function App() {
           {(owner || user.role === "manager") && (
             <>
               <Route path="bills" element={<BillsPage />} />
+              {/* Managers add and remove menu items and waiters too. */}
+              <Route path="manage/menu" element={<MenuPage />} />
+              <Route path="manage/waiters" element={<WaitersPage />} />
               {/* Managers: the basic reports always; the rest show data only while the owner shares analytics for the month. */}
               <Route path="reports" element={<ReportsHub />} />
               <Route path="reports/sales" element={<Suspense fallback={<Loading />}><SalesReport /></Suspense>} />
@@ -98,9 +101,7 @@ export function App() {
               <Route path="manage/staff" element={<StaffPage />} />
               <Route path="manage/categories" element={<Categories />} />
               <Route path="manage/settings" element={<SettingsPage />} />
-              <Route path="manage/menu" element={<MenuPage />} />
               <Route path="manage/tables" element={<TablesPage />} />
-              <Route path="manage/waiters" element={<WaitersPage />} />
               <Route path="manage/pos" element={<PosOptionsPage />} />
               <Route path="manage/import" element={<Suspense fallback={<Loading />}><PosImport /></Suspense>} />
             </>

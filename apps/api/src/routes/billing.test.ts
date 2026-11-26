@@ -413,3 +413,29 @@ describe("the menu as on the old POS", () => {
     expect(r.json.settings).toMatchObject({ bill_copies: 2, bill_copies_dine_in: 1 });
   }, 60_000);
 });
+
+describe("managers run the menu and the waiters", () => {
+  it("lets a manager add and switch off menu items and waiters, but not set commission, tables or settings", async () => {
+    const manager = (await app.user("manager")).token;
+    const cat = await app.call(manager, "POST", "/billing/menu/categories", { name: "Manager Cat" });
+    expect(cat.status).toBe(201);
+    const item = await app.call(manager, "POST", "/billing/menu/items", { category_id: cat.json.id, name: "Manager Dosa", price: 12000 });
+    expect(item.status).toBe(201);
+    expect((await app.call(manager, "PATCH", `/billing/menu/items/${item.json.id}`, { active: false, category_id: cat.json.id, name: "Manager Dosa", price: 12000 })).status).toBe(200);
+    expect((await app.call(manager, "GET", "/billing/settings")).status).toBe(200);
+    expect((await app.call(manager, "PUT", "/billing/settings", { commission_bp: 900 })).status).toBe(403);
+    expect((await app.call(manager, "POST", "/billing/tables", { name: "T99" })).status).toBe(403);
+
+    const w = await app.call(manager, "POST", "/billing/waiters", { name: "Manager Waiter", waiter_code: "77", commission_bp: 500 });
+    expect(w.status).toBe(201);
+    expect((await app.call(manager, "PATCH", `/billing/waiters/${w.json.id}`, { commission_bp: 900 })).status).toBe(200);
+    const list = await app.call(manager, "GET", "/billing/waiters");
+    const mine = list.json.staff.find((s: { id: number }) => s.id === w.json.id);
+    expect(mine).toMatchObject({ waiter_code: "77", commission_bp: null, is_waiter: 1 });
+    expect((await app.call(manager, "PATCH", `/billing/waiters/${w.json.id}`, { is_waiter: false })).status).toBe(200);
+
+    // Staff still can't.
+    expect((await app.call(staff, "POST", "/billing/waiters", { name: "Nope" })).status).toBe(403);
+    expect((await app.call(staff, "POST", "/billing/menu/items", { category_id: cat.json.id, name: "Nope", price: 100 })).status).toBe(403);
+  });
+});

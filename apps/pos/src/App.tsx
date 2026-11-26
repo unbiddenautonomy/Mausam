@@ -6,7 +6,7 @@ import { api, ApiError, fetchConfig, fetchDay, fetchRange, autoCounter, logout, 
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
-  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, variationRows, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -194,11 +194,12 @@ const REPORTS: { kind: ReportKind; key: Key }[] = [
   { kind: "waiter_commission", key: "r.waiter_commission" },
 ];
 /** The old POS's Master's menu. Menus, tables and waiters are kept in the admin app, so these open its pages. */
-const MASTERS: { key: Key; href: string }[] = [
-  { key: "m.waiter", href: "/manage/waiters" },
-  { key: "m.table", href: "/manage/tables" },
-  { key: "m.category", href: "/manage/menu" },
-  { key: "m.menu", href: "/manage/menu" },
+/** Managers can open the waiter and menu pages too; tables stay the owner's. */
+const MASTERS: { key: Key; href: string; manager: boolean }[] = [
+  { key: "m.waiter", href: "/manage/waiters", manager: true },
+  { key: "m.table", href: "/manage/tables", manager: false },
+  { key: "m.category", href: "/manage/menu", manager: true },
+  { key: "m.menu", href: "/manage/menu", manager: true },
 ];
 
 /** "01-04-2026 – 31-03-2027": the financial year the counter is billing in, shown at the top like the old POS. */
@@ -384,6 +385,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
   const user = storage.user();
   const canReport = user?.role === "owner" || user?.role === "manager";
   const isOwner = user?.role === "owner";
+  const isManager = user?.role === "manager";
 
   /** Every order gets the next token number. It comes from the server so two screens never share one; offline, from this screen. */
   async function giveToken(id: string) {
@@ -654,10 +656,10 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           <button className={`mb${menu === "masters" ? " on" : ""}`} onClick={() => setMenu(menu === "masters" ? null : "masters")} aria-expanded={menu === "masters"}>{t("masters")} ▾</button>
           {menu === "masters" && (
             <Dropdown onClose={() => setMenu(null)}>
-              {MASTERS.map((m) => isOwner
+              {MASTERS.map((m) => isOwner || (isManager && m.manager)
                 ? <a key={m.key} className="dd-item" href={m.href} target="_blank" rel="noopener" onClick={() => setMenu(null)}>{t(m.key)} <span className="muted small">↗</span></a>
                 : <span key={m.key} className="dd-item off">{t(m.key)}</span>)}
-              <div className="dd-note">{isOwner ? t("opens_admin") : t("owner_only")}</div>
+              <div className="dd-note">{isOwner || isManager ? t("opens_admin") : t("owner_only")}</div>
             </Dropdown>
           )}
         </div>
@@ -727,7 +729,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
           onLogout={() => setAskLogout(true)}
         />
       )}
-      {screen.kind === "items" && <ItemMaster t={t} lang={lang} config={config} isOwner={isOwner} online={online} onItemAdded={itemAdded} onChanged={() => void loadConfig()} />}
+      {screen.kind === "items" && <ItemMaster t={t} lang={lang} config={config} isOwner={isOwner || isManager} online={online} onItemAdded={itemAdded} onChanged={() => void loadConfig()} />}
       {screen.kind === "invoices" && (
         <InvoiceScreen t={t} config={config} bills={bills} online={online} printing={printing}
           onView={(b) => setView({ kind: "bill", bill: b })} onPrint={(b) => setPrint({ kind: "bill", bill: b, copy: "Duplicate" })}
@@ -1349,13 +1351,36 @@ function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; nam
   const variations = item.variations ?? [];
   const addons = item.addons ?? [];
   const [variation, setVariation] = useState<ItemOption | null>(variations[0] ?? null);
+  const rows = useMemo(() => variationRows(item.variations ?? []), [item.variations]);
   const [addon, setAddon] = useState<ItemOption | null>(null);
   const [qty, setQty] = useState(1);
   const [typing, setTyping] = useState(false);
   const unit = (variation?.price ?? item.price) + (addon?.price ?? 0);
   return (
     <Modal t={t} title={name} onClose={onClose} className="wide choice-dialog">
-      {variations.length > 0 && (
+      {rows && variation && (
+        <section>
+          <h3>{t("variation")} <span className="muted small">{formatINR(variation.price)}</span></h3>
+          {rows.rows.map((row, r) => {
+            const key = rows.keyOf(variation);
+            return (
+              <div key={r} className="choice-row">
+                {row.values.map((val, i) => {
+                  // The closest variation with this value: same picks on the other rows where one exists.
+                  const want = key.map((k, j) => (j === r ? val : k));
+                  const hit = rows.find(want) ?? variations.find((v) => rows.keyOf(v)[r] === val) ?? null;
+                  return (
+                    <button key={val} className={`choice small${key[r] === val ? " on" : ""}`} disabled={!hit} onClick={() => hit && setVariation(hit)}>
+                      {row.labels[i]}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </section>
+      )}
+      {!rows && variations.length > 0 && (
         <section>
           <h3>{t("variation")} <span className="muted small">({t("pick_one")})</span></h3>
           <div className="choice-grid">

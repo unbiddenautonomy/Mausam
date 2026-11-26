@@ -13,7 +13,8 @@ const pct = (bp: number | null | undefined) => (bp === null || bp === undefined 
 
 /** Owner: waiters, the ID the POS shows for each, and their commission. A waiter is a staff member, so pay and attendance work as usual. */
 export function WaitersPage() {
-  const { t } = useSession();
+  const { t, user } = useSession();
+  const owner = user?.role === "owner";
   const toast = useToast();
   const res = useApi<{ staff: StaffW[]; settings: PosSettings }>("/billing/waiters");
   const [editing, setEditing] = useState<StaffW | "new" | null>(null);
@@ -52,10 +53,10 @@ export function WaitersPage() {
       <PageHead
         title={t("manage.waiters")}
         subtitle={t("waiters.count", { n: waiters.length })}
-        back="/manage"
+        back={user?.role === "owner" ? "/manage" : "/more"}
         action={!editing ? <button className="btn small primary" onClick={() => setEditing("new")}><Icon name="plus" /> {t("waiters.add")}</button> : undefined}
       />
-      {editing && <WaiterForm initial={editing === "new" ? null : editing} defaultBp={defaultBp} onDone={() => (setEditing(null), res.reload())} />}
+      {editing && <WaiterForm owner={owner} initial={editing === "new" ? null : editing} defaultBp={defaultBp} onDone={() => (setEditing(null), res.reload())} />}
       {waiters.length === 0 ? <Empty>{t("waiters.none")}</Empty> : (
         <div className="card flush list">
           {waiters.map((w) => (
@@ -63,7 +64,7 @@ export function WaitersPage() {
               <span className="pill" style={{ minWidth: 44, textAlign: "center", fontWeight: 800 }}>{w.waiter_code ?? "—"}</span>
               <span className="grow">
                 <strong>{w.name}{w.name_local ? <span className="muted"> · {w.name_local}</span> : null}</strong>
-                <span className="muted small">{w.waiter_code ? "" : `${t("waiters.no_code")} · `}{w.commission_bp === null ? t("waiters.uses_default", { pct: pct(defaultBp) || "0" }) : `${pct(w.commission_bp)}%`}</span>
+                <span className="muted small">{w.waiter_code ? "" : `${t("waiters.no_code")} · `}{!owner ? "" : w.commission_bp === null ? t("waiters.uses_default", { pct: pct(defaultBp) || "0" }) : `${pct(w.commission_bp)}%`}</span>
               </span>
               <Icon name="chevron" />
             </button>
@@ -72,12 +73,12 @@ export function WaitersPage() {
       )}
 
       <div className="card form">
-        <Field label={t("waiters.default")} help={t("waiters.default_help")} htmlFor="w-def">
+        {owner && <Field label={t("waiters.default")} help={t("waiters.default_help")} htmlFor="w-def">
           <div style={{ display: "flex", gap: 10 }}>
             <input id="w-def" className="input num" inputMode="decimal" value={def} placeholder="0" onChange={(e) => setDefPct(e.target.value.replace(/[^\d.]/g, ""))} />
             <button className="btn primary" disabled={defPct === null || percentToBp(def) === null && def !== ""} onClick={saveDefault}><Icon name="check" /> {t("common.save")}</button>
           </div>
-        </Field>
+        </Field>}
         {others.length > 0 && (
           <Field label={t("waiters.make")} htmlFor="w-make">
             <select id="w-make" className="select" value="" onChange={(e) => e.target.value && void makeWaiter(Number(e.target.value))}>
@@ -92,7 +93,7 @@ export function WaitersPage() {
   );
 }
 
-function WaiterForm({ initial, defaultBp, onDone }: { initial: StaffW | null; defaultBp: number; onDone: () => void }) {
+function WaiterForm({ owner, initial, defaultBp, onDone }: { owner: boolean; initial: StaffW | null; defaultBp: number; onDone: () => void }) {
   const { t } = useSession();
   const [f, setF] = useState({ name: initial?.name ?? "", name_local: initial?.name_local ?? "", code: initial?.waiter_code ?? "", pct: pct(initial?.commission_bp) });
   const [error, setError] = useState<unknown>(null);
@@ -124,9 +125,9 @@ function WaiterForm({ initial, defaultBp, onDone }: { initial: StaffW | null; de
         <Field label={t("waiters.code")} help={t("waiters.code_help")} htmlFor="w-code">
           <input id="w-code" className="input num" value={f.code} maxLength={6} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} />
         </Field>
-        <Field label={`${t("waiters.commission")} (${t("common.optional")})`} help={t("waiters.commission_help", { pct: pct(defaultBp) || "0" })} htmlFor="w-pct">
+        {owner && <Field label={`${t("waiters.commission")} (${t("common.optional")})`} help={t("waiters.commission_help", { pct: pct(defaultBp) || "0" })} htmlFor="w-pct">
           <input id="w-pct" className="input num" inputMode="decimal" value={f.pct} placeholder={pct(defaultBp) || "0"} onChange={(e) => setF({ ...f, pct: e.target.value.replace(/[^\d.]/g, "") })} />
-        </Field>
+        </Field>}
       </div>
       <ErrorNote error={error} />
       <div className="btn-row">

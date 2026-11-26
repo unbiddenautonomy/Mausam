@@ -299,6 +299,11 @@ button.rrow:active { background: var(--brand-soft); }
 .choice .num { font-weight: 600; color: var(--text-2); font-size: 0.95rem; }
 .choice.on { background: var(--brand); border-color: var(--brand); color: #fff; }
 .choice.on .num { color: #fff; }
+.choice-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+/* A line and a little space between the rows (Oil / Butter, then Regular / Jain). */
+.choice-row + .choice-row { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 6px; }
+.choice.small { min-height: 56px; }
+.choice:disabled { opacity: 0.35; }
 .choice-foot { display: flex; gap: 10px; align-items: center; }
 
 /* Dialogs */
@@ -374,7 +379,7 @@ h3 { margin: 0; font-size: 1.05rem; }
 /* The counter (landscape, wider than 1100px): the old POS's proportions. Three columns of tiles, a wider bill with
    its Sr · Item Name · Modifier · Qty · Sale Price · Amount grid. */
 @media (min-width: 1101px) {
-  .order-screen { grid-template-columns: 150px minmax(0, 1fr) minmax(470px, 50%); }
+  .order-screen { grid-template-columns: 140px minmax(0, 1fr) minmax(470px, 48%); }
   /* More room for the order, like the old POS: Token, Table and Waiter share one row with the item search, and the
      rows around the bill are a little lower, so about twice as many lines show. */
   /* Like the old POS: the item search (Select Product) on the left, Token, Table and Waiter on the right. */
@@ -382,7 +387,7 @@ h3 { margin: 0; font-size: 1.05rem; }
   .ticket > * { grid-column: 1 / -1; }
   .ticket > .ticket-fields { grid-column: 2; padding-left: 0; }
   .ticket > .select-product { grid-column: 1; }
-  .ticket-fields .field.grow { flex: 0 0 210px; }
+  .ticket-fields .field.grow { flex: 0 0 180px; }
   .select-product > span { display: none; }
   .type-toggle button, .hold-btn { min-height: 48px; }
   .field, .select-product .search { min-height: 46px; }
@@ -402,7 +407,7 @@ h3 { margin: 0; font-size: 1.05rem; }
   .note-input { grid-column: 3 / -1; }
 }
 @media (max-width: 1100px) {
-  .order-screen { grid-template-columns: 124px 1fr 420px; }
+  .order-screen { grid-template-columns: 116px 1fr 440px; }
   /* Not enough width for the Amount box beside Cash: Cash shows the amount itself. */
   .actions { grid-template-columns: repeat(6, 1fr) 1.5fr; }
   .amount-box { display: none; }
@@ -656,8 +661,6 @@ h3 { margin: 0; font-size: 1.05rem; }
   .actions .btn { font-size: 0.95rem; }
 }
 @media (min-width: 901px) {
-  .item-grid { grid-auto-rows: 88px; gap: 6px; }
-  .item { padding: 6px 8px 6px; }
   .cat { min-height: 38px; }
   /* Thin order lines on every tablet and desktop, so many more fit. */
   .line { padding-top: 1px; padding-bottom: 1px; min-height: 34px; font-size: 0.95rem; }

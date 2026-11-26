@@ -22,7 +22,7 @@ export interface PosSettings {
 
 /** Owner: the POS menu. Categories down the side on desktop, items as a list, one form for add and edit. */
 export function MenuPage() {
-  const { t } = useSession();
+  const { t, user } = useSession();
   const res = useApi<{ categories: MenuCategory[]; items: MenuItem[] }>("/billing/menu");
   const useGst = !!useApi<{ settings: PosSettings }>("/billing/settings").data?.settings.use_gst;
   const [cat, setCat] = useState<number | null>(null);
@@ -54,7 +54,7 @@ export function MenuPage() {
       <PageHead
         title={t("menu.title")}
         subtitle={res.data ? t("menu.count", { n: res.data.items.filter((i) => i.active).length }) : undefined}
-        back="/manage"
+        back={user?.role === "owner" ? "/manage" : "/more"}
         action={!editing && current ? <button className="btn small primary" onClick={() => setEditing("new")}><Icon name="plus" /> {t("menu.add_item")}</button> : undefined}
       />
       {!res.data ? <Loading /> : (
