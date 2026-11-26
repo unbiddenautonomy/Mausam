@@ -6,8 +6,8 @@ import { api, ApiError, fetchConfig, fetchDay, fetchRange, autoCounter, logout, 
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
-  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, DISCOUNT_REASONS, keepStorage, onStorageChange, serverNow, storageBroken, overDiscountLimit, discountLimit, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
-  type Approver, type Bill, type Choice, type DiscountReason, type PosSettings, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
+  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
 type T = (key: Key, params?: Record<string, string | number>) => string;
@@ -986,7 +986,7 @@ function OrdersScreen({ t, config, orders, now, onNew, onOrder, onBill, onPay, o
 
 /* ---------------- Billing: the menu and the order, like the old POS's Billing screen ---------------- */
 
-type OrderDialog = "pay" | "discount" | "waiter" | "waiter_then_pay" | "waiter_then_save" | "table" | "bill" | "held";
+type OrderDialog = "pay" | "waiter" | "waiter_then_pay" | "waiter_then_save" | "table" | "bill" | "held";
 
 /** A tile's price as the old POS shows it: "₹ 220.00". */
 const tilePrice = (paise: number) => `₹ ${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1089,7 +1089,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
           </div>
           <strong className="num date top-date">{today}</strong>
           <button className="btn hold-btn" onClick={() => setDialog("held")}>{t("hold_count", { n: held.length })}</button>
-          <button className="btn hold-btn" onClick={onInvoices}>☰ {t("invoice")}</button>
+          <button className="btn hold-btn inv-btn" onClick={onInvoices}>☰ {t("invoice")}</button>
         </div>
         {order.replaces && <div className="editing-bar" role="status">✎ {t("editing_bill", { no: order.replaces.bill_no })}</div>}
         <div className="ticket-fields">
@@ -1127,7 +1127,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
               <span className="lmod tag">{[l.variation, l.modifier].filter(Boolean).join(" · ")}</span>
               <div className="stepper">
                 {/* The ✕ takes a line off; − stops at 1 so a quick double tap doesn't remove the item by mistake. */}
-                <button disabled={l.qty <= 1} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))} aria-label="−">−</button>
+                <button className={l.qty <= 1 ? "remove" : undefined} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))} aria-label="−">−</button>
                 <button className="qty-btn num" onClick={() => setQtyFor(l.key)} aria-label={t("how_many")}>{l.qty}</button>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
@@ -1150,7 +1150,6 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
             </div>
           )}
           <div className="grand">
-            <button className="link" disabled={empty} onClick={() => setDialog("discount")}>{t("discount")}</button>
             <span className="qty-total num">{totalQty}</span>
             <span className="num">{formatINR(totals.total)}</span>
           </div>
@@ -1197,11 +1196,6 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
           onAdd={(pick, qty) => (setChoosing(null), add(choosing, pick, qty))} />
       )}
       {dialog === "pay" && <PayDialog t={t} due={totals.total} onClose={() => setDialog(null)} onDone={(p, change) => (setDialog(null), onPaid(p, change))} />}
-      {dialog === "discount" && (
-        <DiscountDialog t={t} subtotal={totals.subtotal} current={order.discount} currentReason={order.discount_reason ?? null}
-          settings={config.settings} approvers={config.approvers ?? []} onClose={() => setDialog(null)}
-          onDone={(d, reason, by) => (setDialog(null), update((o) => ({ ...o, discount: d, discount_reason: d ? reason : null, discount_approved_by: d ? by : null })))} />
-      )}
       {(dialog === "waiter" || dialog === "waiter_then_pay" || dialog === "waiter_then_save") && (
         <WaiterDialog t={t} config={config} current={order.waiter_staff_id} optional={order.type === "parcel" || s.waiter_required === false}
           onClose={() => setDialog(null)}
@@ -1590,87 +1584,6 @@ function QtyDialog({ t, name, current, onClose, onDone }: { t: T; name: string; 
       <button className={`btn big block ${n === 0 ? "danger-solid" : "primary"}`} onClick={() => onDone(n)}>
         {n === 0 ? `🗑 ${t("remove")}` : `${t("done")} · ${n}`}
       </button>
-    </Modal>
-  );
-}
-
-/**
- * The discount: an amount, and why (required). Staff giving more than the owner's limit need a manager or the owner
- * to type their PIN here. With no internet the PIN can't be checked, so the discount is allowed and the owner sees it.
- */
-function DiscountDialog({ t, subtotal, current, currentReason, settings, approvers, onClose, onDone }: {
-  t: T; subtotal: number; current: number; currentReason: DiscountReason | null; settings: PosSettings; approvers: Approver[];
-  onClose: () => void; onDone: (paise: number, reason: DiscountReason | null, approvedBy: number | null) => void;
-}) {
-  const [rupees, setRupees] = useState(current ? String(current / 100) : "");
-  const [reason, setReason] = useState<DiscountReason | null>(currentReason);
-  const [asking, setAsking] = useState(false);
-  const [approver, setApprover] = useState<number | null>(approvers.length === 1 ? approvers[0].id : null);
-  const [pin, setPin] = useState("");
-  const [problem, setProblem] = useState<"wrong" | "locked" | "offline" | null>(null);
-  const [busy, setBusy] = useState(false);
-  const paise = Math.min(subtotal, rupeesToPaise(rupees) ?? 0);
-  const over = overDiscountLimit(paise, subtotal, settings, storage.user()?.role);
-
-  async function allow() {
-    if (!approver || pin.length < 4) return;
-    setBusy(true);
-    setProblem(null);
-    try {
-      await api("/billing/discount-approval", { method: "POST", json: { approver_id: approver, pin } });
-      onDone(paise, reason, approver);
-    } catch (e) {
-      setPin("");
-      setProblem(e instanceof ApiError ? (e.status === 429 ? "locked" : "wrong") : "offline");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (asking) {
-    const offline = problem === "offline" || !navigator.onLine || approvers.length === 0;
-    return (
-      <Modal t={t} title={t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })} onClose={() => (setAsking(false), setPin(""), setProblem(null))}>
-          {offline ? <p>{t("discount_offline")}</p> : (
-            <>
-              <p className="muted">{t("discount_who")}</p>
-              <div className="reason-grid">
-                {approvers.map((a) => <button key={a.id} className={`chip big${approver === a.id ? " on" : ""}`} onClick={() => setApprover(a.id)}>{a.name}</button>)}
-              </div>
-              <div className="display num">{"•".repeat(pin.length) || " "}</div>
-              {problem && <p className="banner bad">{t(problem === "locked" ? "login.too_many" : "wrong_pin")}</p>}
-              <Keypad onKey={(k) => setPin((v) => (k === "⌫" ? v.slice(0, -1) : (v + k).slice(0, 4)))} keys={["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"]} />
-            </>
-          )}
-          <div className="actions-row">
-            <button className="btn big" onClick={() => (setAsking(false), setPin(""), setProblem(null))}>{t("close")}</button>
-            {offline
-              ? <button className="btn big primary" onClick={() => onDone(paise, reason, null)}>{t("give_anyway")}</button>
-              : <button className="btn big primary" disabled={busy || !approver || pin.length < 4} onClick={allow}>{t("allow")}</button>}
-          </div>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal t={t} title={t("discount_title")} onClose={onClose}>
-        <div className="reason-grid">
-          {[5, 10, 15, 20].map((p) => <button key={p} className="chip big" onClick={() => setRupees(String(Math.round((subtotal * p) / 100) / 100))}>{p}%</button>)}
-        </div>
-        <div className="display num">{formatINR(paise)}</div>
-        <Keypad onKey={(k) => setRupees((g) => (k === "⌫" ? g.slice(0, -1) : (g + k).replace(/^0+/, "").slice(0, 7)))} />
-        <p className="muted" style={{ margin: "8px 0 4px" }}>{t("discount_why")}</p>
-        <div className="reason-grid">
-          {DISCOUNT_REASONS.map((r) => <button key={r} className={`chip${reason === r ? " on" : ""}`} onClick={() => setReason(r)}>{t(`dr.${r}`)}</button>)}
-        </div>
-        {over && <p className="muted small">{t("discount_needs_pin", { amount: formatINR(discountLimit(subtotal, settings) ?? 0) })}</p>}
-        <div className="actions-row">
-          <button className="btn big" onClick={() => onDone(0, null, null)}>{t("remove")}</button>
-          <button className="btn big" onClick={onClose}>{t("close")}</button>
-          <button className="btn big primary" disabled={paise > 0 && !reason} onClick={() => (paise > 0 && over ? setAsking(true) : onDone(paise, reason, null))}>
-            {t("apply")}
-          </button>
-        </div>
     </Modal>
   );
 }
