@@ -674,3 +674,11 @@ h3 { margin: 0; font-size: 1.05rem; }
   .grid-head, .line { grid-template-columns: 34px minmax(0, 1fr) 104px 44px 62px; }
   .actions .cash .ok { display: none; }
 }
+/* Like the old POS: no separate total line above the buttons on tablets and desktops (the Amount box, or Cash on
+   smaller screens, shows it), so Bill and Save grow up into that space and the bottom stays the same height. */
+@media (min-width: 601px) {
+  .sums .grand { display: none; }
+  .sums:not(:has(.sum-small)) { display: none; }
+  .actions { grid-template-rows: 70px 38px; }
+  .amount-box .count { font-weight: 500; color: var(--text-2); font-size: 0.85rem; }
+}

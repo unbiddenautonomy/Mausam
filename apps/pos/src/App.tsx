@@ -1167,7 +1167,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
             <strong className="num">{formatINR(totals.total)}</strong>
           </button>
           {/* The old POS's Amount box beside Cash: what this bill comes to. */}
-          <div className="amount-box" aria-live="polite"><span>{t("amount")}</span><strong className="num">{formatINR(totals.total)}</strong></div>
+          <div className="amount-box" aria-live="polite"><span>{t("amount")} {totalQty > 0 && <span className="count">· {totalQty}</span>}</span><strong className="num">{formatINR(totals.total)}</strong></div>
           <button className="btn hold" onClick={onHold}>❚❚ {t("hold").toUpperCase()}</button>
           <button className="btn close-btn" onClick={onClose}><span className="x-red" aria-hidden="true">✕</span> {t("close").toUpperCase()}</button>
           <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}><span className="x-red" aria-hidden="true">✕</span> {t("cancel_short")}</button>
