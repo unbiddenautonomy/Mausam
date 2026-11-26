@@ -71,3 +71,14 @@ describe("owner home", () => {
     expect(r.json.last7[0]).toMatchObject({ pos_total: null });
   });
 });
+
+describe("pausing notifications", () => {
+  it("lets the owner pause and resume all phone notifications", async () => {
+    const r = await app.call(owner, "PUT", "/settings", { notifications_paused: 1 });
+    expect(r.status).toBe(200);
+    expect((await app.call(owner, "GET", "/settings")).json.settings.notifications_paused).toBe(1);
+    expect((await app.call(owner, "PUT", "/settings", { notifications_paused: 2 })).status).toBe(422);
+    await app.call(owner, "PUT", "/settings", { notifications_paused: 0 });
+    expect((await app.call(owner, "GET", "/settings")).json.settings.notifications_paused).toBe(0);
+  });
+});

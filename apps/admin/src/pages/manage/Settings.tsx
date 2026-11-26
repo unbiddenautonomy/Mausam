@@ -49,6 +49,18 @@ export function SettingsPage() {
     );
   };
 
+  async function toggleNotify() {
+    if (!s) return;
+    const next = s.notifications_paused ? 0 : 1;
+    try {
+      await api("/settings", { method: "PUT", json: { notifications_paused: next } });
+      setS({ ...s, notifications_paused: next });
+      toast(t("common.saved"));
+    } catch (e) {
+      setError(e);
+    }
+  }
+
   async function save() {
     try {
       await api("/settings", { method: "PUT", json: s });
@@ -75,6 +87,13 @@ export function SettingsPage() {
         </div>
         <ErrorNote error={error} />
         <button className="btn primary" onClick={save}>{t("common.save")}</button>
+      </div>
+      <div className="card form">
+        <h2>{t("settings.notify_title")}</h2>
+        <p className="muted small" style={{ margin: 0 }}>{s.notifications_paused ? t("settings.notify_paused") : t("settings.notify_on")}</p>
+        <button className={`btn${s.notifications_paused ? " primary" : ""}`} onClick={() => void toggleNotify()}>
+          {s.notifications_paused ? t("settings.notify_resume") : t("settings.notify_pause")}
+        </button>
       </div>
       <div className="card form">
         <h2>{t("settings.reminders")}</h2>
