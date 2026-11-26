@@ -151,7 +151,11 @@ export async function sendOrQueue<T>(path: string, method: string, json: unknown
     return await api<T>(path, { method, json });
   } catch (e) {
     if (e instanceof ApiError) throw e; // the server answered: a real error, don't queue
-    writeQueue([...readQueue(), { path, method, json, at: Date.now(), user: owner }]);
+    // `at` also tells entries apart, so two saved in the same millisecond get different ones (otherwise sending
+    // the first removed both from the queue, and the second was never sent).
+    const q = readQueue();
+    const at = Math.max(Date.now(), ...q.map((x) => x.at + 1));
+    writeQueue([...q, { path, method, json, at, user: owner }]);
     return { queued: true };
   }
 }

@@ -556,3 +556,22 @@ h3 { margin: 0; font-size: 1.05rem; }
 .pf-check input { width: 24px; height: 24px; }
 .product-form .error, .product-form .actions-row, .product-form > p { grid-column: 1 / -1; }
 @media (max-width: 700px) { .product-form { grid-template-columns: minmax(0, 1fr); } }
+
+/* Report sheets on a phone: only the columns that matter (bill, how it was paid, total; item, qty, amount), so the
+   totals fit on the screen instead of off to the right. The counter's wide screen shows every column. */
+@media (max-width: 700px) {
+  .rtable.fit { overflow-x: visible; }
+  .rtable.fit .rrow { min-width: 0; gap: 8px; padding: 6px 10px; font-size: 0.95rem; }
+  .r-summary .rrow { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 84px; }
+  .r-summary .rrow > :not(:nth-child(1)):not(:nth-child(8)):not(:nth-child(12)) { display: none; }
+  .r-details .rrow { grid-template-columns: 104px minmax(0, 1fr) 30px 70px; }
+  .r-details .rrow > :is(:nth-child(2), :nth-child(3), :nth-child(5), :nth-child(7), :nth-child(9)) { display: none; }
+  .r-details .rrow > :nth-child(1) { font-size: 0.85rem; }
+  .r-items .rrow { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 40px 76px; }
+  .r-waiters .rrow { grid-template-columns: minmax(0, 1fr) 40px 70px 96px; }
+  .r-invoices .rrow { grid-template-columns: minmax(0, 1fr) 64px repeat(3, 42px); gap: 5px; padding: 4px 8px; }
+  .r-invoices .icon-btn { width: 42px; min-width: 0; padding: 0; }
+  .r-invoices .rrow:not(.rhead) > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .r-invoices .rrow > :nth-child(1) { white-space: nowrap; font-size: 0.88rem; }
+  .r-invoices .rrow > :is(:nth-child(2), :nth-child(3), :nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7), :nth-child(10)) { display: none; }
+}

@@ -45,6 +45,15 @@ describe("owner's POS bills page", () => {
     expect(r.json.bills).toHaveLength(150);
     expect(r.json.bills.every((b: { lines: unknown[]; payments: unknown[] }) => b.lines.length === 2 && b.payments.length === 1)).toBe(true);
   }, 60_000);
+
+  it("an empty day points to the newest day that has bills", async () => {
+    const empty = await app.call(owner, "GET", "/billing/bills?date=2020-01-01");
+    expect(empty.json.bills).toEqual([]);
+    expect(empty.json.latest_date >= "2026-08-01").toBe(true);
+    const there = await app.call(owner, "GET", `/billing/bills?date=${empty.json.latest_date}`);
+    expect(there.json.bills.length).toBeGreaterThan(0);
+    expect(there.json.latest_date).toBe(empty.json.latest_date);
+  });
 });
 
 describe("POS reports: bills from a date to a date", () => {

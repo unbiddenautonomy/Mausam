@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { businessDate, dateLocale, formatINR, formatTime, type MessageKey } from "@mausam/shared";
+import { businessDate, dateLocale, formatDay, formatINR, formatTime, type MessageKey } from "@mausam/shared";
 import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { billFlagText, DayStepper, discountReasonText, Empty, Loading, PageHead, Pill, Stat } from "../../components/ui";
@@ -19,7 +19,7 @@ interface Reject { client_id: string; bill_no: string | null; counter: string | 
 export function BillsPage() {
   const { t } = useSession();
   const [date, setDate] = useState(businessDate());
-  const res = useApi<{ bills: Bill[]; counters: Counter[]; rejects?: Reject[] }>(`/billing/bills?date=${date}`);
+  const res = useApi<{ bills: Bill[]; counters: Counter[]; rejects?: Reject[]; latest_date?: string | null }>(`/billing/bills?date=${date}`);
   const rejects = res.data?.rejects ?? [];
   const reason = (code: string) => {
     const key = `bill_error.${code}` as MessageKey;
@@ -44,7 +44,7 @@ export function BillsPage() {
             <Stat label={t("common.online")} value={formatINR(byMode("online"))} />
             <Stat label={t("bills.cancelled")} value={formatINR(bills.filter((b) => b.status === "cancelled").reduce((s, b) => s + b.total, 0))} />
           </div>
-          {res.data.counters.map((c) => (
+          {res.data.counters.filter((c) => c.last_seen_at).map((c) => (
             <p key={c.code} className="small muted">{t("bills.counter_seen", { code: c.code, time: c.last_seen_at ? new Date(c.last_seen_at).toLocaleString(dateLocale(), { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "—" })}</p>
           ))}
           {rejects.length > 0 && (
@@ -65,7 +65,14 @@ export function BillsPage() {
               </div>
             </section>
           )}
-          {bills.length === 0 ? <Empty>{t("bills.none")}</Empty> : (
+          {bills.length === 0 ? (
+            <>
+              <Empty>{t("bills.none")}</Empty>
+              {res.data.latest_date && res.data.latest_date !== date && (
+                <button className="btn" onClick={() => setDate(res.data!.latest_date!)}>{t("bills.latest", { date: formatDay(res.data.latest_date) })}</button>
+              )}
+            </>
+          ) : (
             <div className="card flush list">
               {bills.map((b) => (
                 <div key={b.id}>

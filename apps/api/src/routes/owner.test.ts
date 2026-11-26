@@ -59,3 +59,15 @@ describe("settings", () => {
     expect(ok.json.settings).toMatchObject({ lock_hour: 9, shopping_tolerance: 10000 });
   });
 });
+
+describe("owner home", () => {
+  it("shows POS sales for a day nobody closed, in the day and in the last 7 days", async () => {
+    await app.db.prepare("INSERT INTO pos_daily (business_date, total, cash, online, bills, source) VALUES ('2026-09-10', 420000, 120000, 300000, 9, 'pos')").run();
+    const r = await app.call(owner, "GET", "/summary?date=2026-09-10");
+    expect(r.status).toBe(200);
+    expect(r.json.close).toBeNull();
+    expect(r.json.pos).toMatchObject({ total: 420000, cash: 120000, online: 300000, bills: 9 });
+    expect(r.json.last7.at(-1)).toMatchObject({ business_date: "2026-09-10", total_counter: null, pos_total: 420000, status: "missing" });
+    expect(r.json.last7[0]).toMatchObject({ pos_total: null });
+  });
+});
