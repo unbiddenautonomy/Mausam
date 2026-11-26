@@ -881,20 +881,29 @@ billing.post("/items", anyPosUser, async (c) => {
   return c.json({ item: withOptions([item!])[0] }, 201);
 });
 
-/* ---------------- Owner: menu, tables and POS settings ---------------- */
+/* ---------------- Owner: menu, tables and POS settings (managers: the menu and waiters too) ---------------- */
 
-billing.use("/menu/*", requireRole("owner"));
-billing.use("/menu", requireRole("owner"));
+billing.use("/menu/*", requireRole("owner", "manager"));
+billing.use("/menu", requireRole("owner", "manager"));
 billing.use("/tables/*", requireRole("owner"));
 billing.use("/tables", requireRole("owner"));
-billing.use("/settings", requireRole("owner"));
-billing.use("/waiters", requireRole("owner"));
+// Managers can read the POS settings (the menu page needs to know about GST); only the owner changes them.
+billing.use("/settings", async (c, next) => {
+  const role = c.get("user").role;
+  if (role === "owner" || (role === "manager" && c.req.method === "GET")) return next();
+  throw new HttpError(403, "not_allowed");
+});
+billing.use("/waiters", requireRole("owner", "manager"));
 billing.use("/waiters/*", async (c, next) => {
-  // The waiters report is part of the analytics the owner can share with managers for the month.
   const user = c.get("user");
-  if (user.role === "manager" && c.req.method === "GET" && c.req.path.endsWith("/waiters/report") && (await managersCanSee(c.env.DB))) return next();
-  if (user.role !== "owner") throw new HttpError(403, "not_allowed");
-  return next();
+  if (user.role === "owner") return next();
+  if (user.role === "manager") {
+    // The waiters report is part of the analytics the owner can share with managers for the month.
+    if (c.req.path.endsWith("/waiters/report")) {
+      if (c.req.method === "GET" && (await managersCanSee(c.env.DB))) return next();
+    } else return next();
+  }
+  throw new HttpError(403, "not_allowed");
 });
 
 billing.get("/menu", async (c) => {
@@ -1103,7 +1112,8 @@ async function waiterFields(db: D1Database, b: Record<string, unknown>, selfId: 
 billing.post("/waiters", async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const name = requireText(b.name, "name", 80);
-  const f = await waiterFields(c.env.DB, b, null);
+  // Commission is pay, so only the owner sets it; a manager's new waiter uses the default.
+  const f = await waiterFields(c.env.DB, c.get("user").role === "owner" ? b : { ...b, commission_bp: null }, null);
   const res = await c.env.DB.prepare("INSERT INTO staff (name, name_local, role, is_waiter, waiter_code, commission_bp) VALUES (?, ?, 'Waiter', 1, ?, ?)")
     .bind(name, optionalText(b.name_local, 80), f.waiter_code, f.commission_bp).run();
   const id = Number(res.meta.last_row_id);
@@ -1116,7 +1126,9 @@ billing.patch("/waiters/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const before = await c.env.DB.prepare("SELECT id, name, is_waiter, waiter_code, commission_bp FROM staff WHERE id = ?").bind(id).first<Record<string, unknown>>();
   if (!before) throw new HttpError(404, "not_found");
-  const f = await waiterFields(c.env.DB, { ...before, ...(await c.req.json<Record<string, unknown>>()) }, id);
+  const body = await c.req.json<Record<string, unknown>>();
+  if (c.get("user").role !== "owner") delete body.commission_bp; // commission stays the owner's call
+  const f = await waiterFields(c.env.DB, { ...before, ...body }, id);
   await c.env.DB.prepare("UPDATE staff SET is_waiter = ?, waiter_code = ?, commission_bp = ? WHERE id = ?")
     .bind(f.is_waiter, f.waiter_code, f.commission_bp, id).run();
   await audit(c.env.DB, "staff", id, "update", before, f, c.get("user").id);
