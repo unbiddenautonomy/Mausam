@@ -6,7 +6,7 @@ import { api, ApiError, fetchConfig, fetchDay, fetchRange, autoCounter, logout, 
 import { translate, type Key } from "./i18n";
 import { ordersDelay, usePolling } from "./polling";
 import {
-  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
+  addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, variationRows, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
   type Bill, type Choice, type Config, type Item, type ItemOption, type Order, type Payment, type Table,
 } from "./store";
 
@@ -1349,13 +1349,36 @@ function ChoiceDialog({ t, item, name, onClose, onAdd }: { t: T; item: Item; nam
   const variations = item.variations ?? [];
   const addons = item.addons ?? [];
   const [variation, setVariation] = useState<ItemOption | null>(variations[0] ?? null);
+  const rows = useMemo(() => variationRows(item.variations ?? []), [item.variations]);
   const [addon, setAddon] = useState<ItemOption | null>(null);
   const [qty, setQty] = useState(1);
   const [typing, setTyping] = useState(false);
   const unit = (variation?.price ?? item.price) + (addon?.price ?? 0);
   return (
     <Modal t={t} title={name} onClose={onClose} className="wide choice-dialog">
-      {variations.length > 0 && (
+      {rows && variation && (
+        <section>
+          <h3>{t("variation")} <span className="muted small">{formatINR(variation.price)}</span></h3>
+          {rows.rows.map((row, r) => {
+            const key = rows.keyOf(variation);
+            return (
+              <div key={r} className="choice-row">
+                {row.values.map((val, i) => {
+                  // The closest variation with this value: same picks on the other rows where one exists.
+                  const want = key.map((k, j) => (j === r ? val : k));
+                  const hit = rows.find(want) ?? variations.find((v) => rows.keyOf(v)[r] === val) ?? null;
+                  return (
+                    <button key={val} className={`choice small${key[r] === val ? " on" : ""}`} disabled={!hit} onClick={() => hit && setVariation(hit)}>
+                      {row.labels[i]}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </section>
+      )}
+      {!rows && variations.length > 0 && (
         <section>
           <h3>{t("variation")} <span className="muted small">({t("pick_one")})</span></h3>
           <div className="choice-grid">

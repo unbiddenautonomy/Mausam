@@ -299,6 +299,9 @@ button.rrow:active { background: var(--brand-soft); }
 .choice .num { font-weight: 600; color: var(--text-2); font-size: 0.95rem; }
 .choice.on { background: var(--brand); border-color: var(--brand); color: #fff; }
 .choice.on .num { color: #fff; }
+.choice-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.choice.small { min-height: 56px; }
+.choice:disabled { opacity: 0.35; }
 .choice-foot { display: flex; gap: 10px; align-items: center; }
 
 /* Dialogs */

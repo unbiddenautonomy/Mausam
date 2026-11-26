@@ -12,6 +12,43 @@ export interface Item {
   variations?: ItemOption[] | null; addons?: ItemOption[] | null;
 }
 /** Does tapping this item ask which variation or add-on, before it goes on the order? */
+/**
+ * Variations like "Oil", "Jain Oil", "Butter", "Jain Butter" or "Half", "Full Jain" pick from separate rows, as staff
+ * think of them: Oil / Butter, Regular / Jain, Half / Full. Returns null when the names don't split cleanly that way,
+ * and the picker shows the plain list instead.
+ */
+export const VARIATION_ROWS = [["oil", "butter"], ["regular", "jain"], ["half", "full"]] as const;
+export interface VariationRows { rows: { values: string[]; labels: string[] }[]; keyOf: (v: ItemOption) => string[]; find: (key: string[]) => ItemOption | null }
+export function variationRows(vs: ItemOption[]): VariationRows | null {
+  if (vs.length < 3) return null;
+  const parsed: { v: ItemOption; picks: (string | null)[] }[] = [];
+  const labels = new Map<string, string>();
+  for (const v of vs) {
+    const picks: (string | null)[] = VARIATION_ROWS.map(() => null);
+    for (const word of v.name.trim().split(/\s+/)) {
+      const w = word.toLowerCase();
+      const g = VARIATION_ROWS.findIndex((row) => (row as readonly string[]).includes(w));
+      if (g < 0 || picks[g] !== null) return null;
+      picks[g] = w;
+      if (!labels.has(w)) labels.set(w, word.charAt(0).toUpperCase() + word.slice(1));
+    }
+    parsed.push({ v, picks });
+  }
+  // Rows with at least two values in use. "Regular" is the plain one when a name doesn't say Jain.
+  const used = VARIATION_ROWS.map((row, g) => row.filter((val) => parsed.some((p) => p.picks[g] === val || (g === 1 && val === "regular" && p.picks[g] === null && parsed.some((q) => q.picks[1] === "jain")))));
+  const groups = used.map((vals, g) => (vals.length >= 2 ? g : -1)).filter((g) => g >= 0);
+  if (groups.length < 2) return null;
+  const keyOf = (picks: (string | null)[]) => groups.map((g) => picks[g] ?? (g === 1 ? "regular" : null));
+  const keys = parsed.map((p) => keyOf(p.picks));
+  if (keys.some((k) => k.includes(null))) return null;
+  if (new Set(keys.map((k) => k.join("|"))).size !== keys.length) return null;
+  const byKey = new Map(parsed.map((p, i) => [keys[i].join("|"), p.v]));
+  return {
+    rows: groups.map((g) => ({ values: used[g], labels: used[g].map((val) => labels.get(val) ?? val.charAt(0).toUpperCase() + val.slice(1)) })),
+    keyOf: (v) => keys[parsed.findIndex((p) => p.v === v)] as string[],
+    find: (key) => byKey.get(key.join("|")) ?? null,
+  };
+}
 export const hasChoices = (i: Item) => !!(i.variations?.length || i.addons?.length);
 /** The Favorite tab: starred items in the old POS's order (fav_sort), then any other starred ones in menu order. */
 export function favouritesOf(items: Item[]): Item[] {
