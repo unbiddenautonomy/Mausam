@@ -677,6 +677,12 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
         </button>
         <button className={`mb${screen.kind === "dayend" ? " on" : ""}`} onClick={() => go({ kind: "dayend" })}>{t("summary")}</button>
         <button className={`mb${screen.kind === "items" ? " on" : ""}`} onClick={() => go({ kind: "items" })}>{t("item_master")}</button>
+        {/* Language switch at the right end of the bar: one tap, no menu. */}
+        <div className="mb-langs" role="group" aria-label={t("language")}>
+          {LANGUAGES.map((l) => (
+            <button key={l.code} lang={l.code} className={`mb-lang${lang === l.code ? " on" : ""}`} aria-pressed={lang === l.code} onClick={() => setLang(l.code)}>{l.label}</button>
+          ))}
+        </div>
       </nav>
       {rejected > 0 && <div className="banner bad">{t("rejected", { n: rejected })}</div>}
       {billNumbersFull(counter) && <div className="banner bad">{t("numbers_full")}</div>}
@@ -1104,12 +1110,15 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
             onKeyDown={(e) => e.key === "Enter" && items.length === 1 && (tap(items[0]), setQuery(""))} />
           {query && <button className="x-btn" onClick={() => setQuery("")} aria-label={t("clear")}>✕</button>}
         </div>
-        <div className="grid-head"><span className="lsr">Sr</span><span>{t("item_name")}<span className="tag-inline"> · {t("modifier")}</span></span><span className="lmod">{t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
+        <div className="grid-head"><span className="lsr">Sr</span><span className="lx" /><span>{t("item_name")}<span className="tag-inline"> · {t("modifier")}</span></span><span className="lmod">{t("modifier")}</span><span>{t("qty")}</span><span>{t("price")}</span><span>{t("amount")}</span></div>
         <div className="lines" ref={listRef}>
           {empty && <p className="muted center">{t("order_empty")}</p>}
           {order.lines.map((l, n) => (
             <div key={l.key} className={`line${l.sent >= l.qty ? " sent" : ""}`}>
               <span className="lsr num">{n + 1}</span>
+              {/* The old POS's red ✕ beside each item: takes the whole line off in one tap. */}
+              <button className="lx" onClick={() => update((o) => changeQty(o, l.key, -l.qty, storage.user()?.id ?? null))}
+                aria-label={t("remove")} title={t("remove")}>✕</button>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
                 <span>{(l.item_id !== null && localName(itemById.get(l.item_id))) || l.name}</span>
                 {lineTag(l) && <span className="tag tag-inline">{lineTag(l)}</span>}
@@ -1117,9 +1126,8 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
               </div>
               <span className="lmod tag">{[l.variation, l.modifier].filter(Boolean).join(" · ")}</span>
               <div className="stepper">
-                {/* At 1 the minus takes the line off the bill, so it shows a bin: staff can see that tapping it removes the item. */}
-                <button className={l.qty === 1 ? "remove" : ""} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))}
-                  aria-label={l.qty === 1 ? t("remove") : "−"}>{l.qty === 1 ? "🗑" : "−"}</button>
+                {/* The ✕ takes a line off; − stops at 1 so a quick double tap doesn't remove the item by mistake. */}
+                <button disabled={l.qty <= 1} onClick={() => update((o) => changeQty(o, l.key, -1, storage.user()?.id ?? null))} aria-label="−">−</button>
                 <button className="qty-btn num" onClick={() => setQtyFor(l.key)} aria-label={t("how_many")}>{l.qty}</button>
                 <button onClick={() => update((o) => changeQty(o, l.key, +1))} aria-label="+">+</button>
               </div>
@@ -1147,18 +1155,21 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
             <span className="num">{formatINR(totals.total)}</span>
           </div>
         </div>
-        {/* The old POS's buttons, in its order: Bill, Save & Print, Cash; then HOLD, CLOSE, Cancel. */}
+        {/* The old POS's buttons, in its order: Bill, Save & Print, Cash, Amount; then HOLD, CLOSE, Cancel. */}
         <div className="actions">
           {order.replaces
             ? <button className="btn bill-btn update" disabled={empty || totals.total <= 0} onClick={onUpdate}><span aria-hidden="true">✔</span> {t("update_bill")}</button>
             : <button className="btn bill-btn" disabled={empty} onClick={bill}><span aria-hidden="true">✔</span> {t("bill")}</button>}
           <button className="btn save-print" disabled={empty || totals.total <= 0} onClick={() => (missingWaiter ? setDialog("waiter_then_save") : onSavePrint())}>🖨 {printing ? t("save_print") : t("save_only")}</button>
-          <button className="btn primary cash" disabled={empty || totals.total <= 0} onClick={pay}>
-            <span>💵 {t("cash")}</span><strong className="num">{formatINR(totals.total)}</strong>
+          <button className="btn cash" disabled={empty || totals.total <= 0} onClick={pay}>
+            <span className="ok" aria-hidden="true">✔</span><span aria-hidden="true" className="cash-icon">💵</span><span>{t("cash")}</span>
+            <strong className="num">{formatINR(totals.total)}</strong>
           </button>
+          {/* The old POS's Amount box beside Cash: what this bill comes to. */}
+          <div className="amount-box" aria-live="polite"><span>{t("amount")}</span><strong className="num">{formatINR(totals.total)}</strong></div>
           <button className="btn hold" onClick={onHold}>❚❚ {t("hold").toUpperCase()}</button>
-          <button className="btn close-btn" onClick={onClose}>✕ {t("close").toUpperCase()}</button>
-          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}>{t("cancel_short")}</button>
+          <button className="btn close-btn" onClick={onClose}><span className="x-red" aria-hidden="true">✕</span> {t("close").toUpperCase()}</button>
+          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}><span className="x-red" aria-hidden="true">✕</span> {t("cancel_short")}</button>
         </div>
       </aside>
 
