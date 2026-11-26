@@ -6,7 +6,25 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+/**
+ * A request that hasn't answered in this long is given up (and tried again on the next round). Without it, one request
+ * that never answers (common on an iPad or phone woken from sleep) left syncing stuck "busy" until the page was reloaded,
+ * so bills and orders stopped reaching the other screens.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
+export async function api<T>(path: string, init: RequestInit & { json?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = init;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    return await request<T>(path, { ...rest, signal: abort.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function request<T>(path: string, init: RequestInit & { json?: unknown }): Promise<T> {
   const headers = new Headers(init.headers);
   const token = storage.token();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -15,7 +33,8 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(init.json);
   }
-  const res = await fetch(`/api${path}`, { ...init, headers, body });
+  const { json: _json, ...fetchInit } = init;
+  const res = await fetch(`/api${path}`, { ...fetchInit, headers, body });
   const data = res.headers.get("Content-Type")?.includes("json") ? await res.json() : null;
   if (!res.ok) throw new ApiError(res.status, data?.error ?? "error");
   return data as T;

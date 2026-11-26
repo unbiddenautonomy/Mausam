@@ -1290,7 +1290,7 @@ function InvoiceScreen({ t, config, bills, online, printing, onView, onPrint, on
         <span className="grow" />
         <strong className="todays-sales">{t("todays_sales")}: <span className="num">{formatINR(sales)}</span></strong>
       </div>
-      <div className="rtable inv-table" style={{ "--cols": cols } as React.CSSProperties}>
+      <div className="rtable inv-table fit r-invoices" style={{ "--cols": cols } as React.CSSProperties}>
         <div className="rrow rhead">
           <span>{t("invoice_no")}</span><span>{t("invoice_date")}</span><span>{t("order_mode")}</span><span>{t("table")}</span><span>{t("waiter")}</span>
           <span>{t("invoice_type")}</span><span className="r">{t("token_no")}</span><span className="r">{t("amount")}</span>
@@ -2025,7 +2025,7 @@ function Report({ t, config, kind, printing, online, onOpen, onPrint }: {
     const tot = { amount: sum(paid) + paid.reduce((n, b) => n + b.discount, 0), waived: paid.reduce((n, b) => n + b.discount, 0), total: sum(paid) };
     const cols = "126px 106px 64px 64px 64px 96px 44px minmax(0, 1fr) 76px 92px 76px 92px minmax(0, 1fr) minmax(0, 1fr)";
     body = (
-      <div className="rtable wide-table" style={{ "--cols": cols } as React.CSSProperties}>
+      <div className="rtable wide-table fit r-summary" style={{ "--cols": cols } as React.CSSProperties}>
         <div className="rrow rhead">
           <span>{t("invoice_no")}</span><span>{t("invoice_date")}</span><span>{t("table_start")}</span><span>{t("duration")}</span><span>{t("table")}</span>
           <span>{t("table_status")}</span><span className="r">{t("pax")}</span><span>{t("invoice_type")}</span><span>{t("order_mode")}</span>
@@ -2068,7 +2068,7 @@ function Report({ t, config, kind, printing, online, onOpen, onPrint }: {
     const soldQty = paid.reduce((n, b) => n + b.lines.reduce((m, l) => m + l.qty, 0), 0);
     const cols = "126px 120px 76px minmax(0, 2fr) minmax(0, 1fr) 56px 88px 100px minmax(0, 1fr)";
     body = (
-      <div className="rtable wide-table" style={{ "--cols": cols } as React.CSSProperties}>
+      <div className="rtable wide-table fit r-details" style={{ "--cols": cols } as React.CSSProperties}>
         <div className="rrow rhead">
           <span>{t("invoice_no")}</span><span>{t("invoice_date")}</span><span>{t("order_mode")}</span><span>{t("item_name")}</span><span>{t("modifier")}</span>
           <span className="r">{t("qty")}</span><span className="r">{t("rate")}</span><span className="r">{t("amount")}</span><span>{t("waiter")}</span>
@@ -2097,7 +2097,7 @@ function Report({ t, config, kind, printing, online, onOpen, onPrint }: {
     const cats = [...new Set(rows.map((r) => r.category))];
     const cols = "minmax(0, 2fr) minmax(0, 1fr) 90px 130px";
     body = (
-      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+      <div className="rtable fit r-items" style={{ "--cols": cols } as React.CSSProperties}>
         <div className="rrow rhead"><span>{t("item_name")}</span><span>{t("variation")}</span><span className="r">{t("qty")}</span><span className="r">{t("amount")}</span></div>
         {cats.map((c) => {
           const list = rows.filter((r) => r.category === c);
@@ -2131,7 +2131,7 @@ function Report({ t, config, kind, printing, online, onOpen, onPrint }: {
     const nameOf = (id: number | null) => (id === null ? t("no_waiter") : waiterName(config, id) || `#${id}`);
     const cols = "minmax(0, 2fr) 90px 140px 140px";
     body = (
-      <div className="rtable" style={{ "--cols": cols } as React.CSSProperties}>
+      <div className="rtable fit r-waiters" style={{ "--cols": cols } as React.CSSProperties}>
         <div className="rrow rhead"><span>{t("waiter")}</span><span className="r">{t("bills_n")}</span><span className="r">{t("sales")}</span><span className="r">{t("commission")}</span></div>
         {rows.map((r) => (
           <div key={r.id ?? "none"} className="rrow"><span>{nameOf(r.id)}</span><span className="num r">{r.bills}</span><span className="num r">{money(r.sales)}</span><strong className="num r">{money(r.commission)}</strong></div>
