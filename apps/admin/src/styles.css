@@ -429,11 +429,3 @@ a.check { text-decoration: none; }
 .veg-dot.nonveg { border-color: var(--bad); }
 .veg-dot.nonveg::after { background: var(--bad); }
 .tile.off { opacity: 0.5; border-style: dashed; }
-
-/* Manage -> Staff -> Paste a list: one checked row per person. */
-.import-rows { display: grid; gap: 8px; }
-.import-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1.2fr) auto; gap: 8px; align-items: center; }
-.import-row > .small.muted { grid-column: 1 / -1; margin-top: -4px; }
-@media (max-width: 520px) {
-  .import-row { grid-template-columns: minmax(0, 1fr) 96px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-}

@@ -5,7 +5,6 @@ import { useApi } from "../../lib/hooks";
 import { useSession } from "../../lib/session";
 import { Icon } from "../../components/Icon";
 import { ErrorNote, Field, Loading, MoneyInput, PageHead, Pill, Segmented } from "../../components/ui";
-import { ImportStaff } from "./ImportStaff";
 
 type PayType = "monthly" | "daily" | "shift" | "";
 interface S {
@@ -27,7 +26,6 @@ export function StaffPage() {
   const t = useSession().t;
   const res = useApi<{ staff: S[] }>("/staff");
   const [editing, setEditing] = useState<S | "new" | null>(null);
-  const [importing, setImporting] = useState(false);
   const active = res.data?.staff.filter((s) => s.active).length ?? 0;
   return (
     <div className="page">
@@ -35,14 +33,8 @@ export function StaffPage() {
         title={t("manage.staff")}
         subtitle={res.data ? t("staff.count", { n: active }) : undefined}
         back="/manage"
-        action={!editing && !importing ? (
-          <span className="btn-row" style={{ margin: 0 }}>
-            <button className="btn small" disabled={!res.data} onClick={() => setImporting(true)}>{t("staff.import")}</button>
-            <button className="btn small primary" onClick={() => setEditing("new")}><Icon name="plus" /> {t("staff.add")}</button>
-          </span>
-        ) : undefined}
+        action={!editing ? <button className="btn small primary" onClick={() => setEditing("new")}><Icon name="plus" /> {t("staff.add")}</button> : undefined}
       />
-      {importing && res.data && <ImportStaff staff={res.data.staff} onDone={() => (setImporting(false), res.reload())} />}
       {editing && <StaffForm initial={editing === "new" ? null : editing} onDone={() => (setEditing(null), res.reload())} />}
       {!res.data ? <Loading /> : (
         <div className="card flush list">
