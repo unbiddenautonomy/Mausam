@@ -4,6 +4,7 @@ import { businessDate, changeDue, financialYear, formatINR, formatTime, LANGUAGE
 import { uid } from "./store";
 import { api, ApiError, fetchConfig, fetchDay, fetchRange, autoCounter, logout, nextToken, resendBill, syncBills, syncOrders } from "./api";
 import { translate, type Key } from "./i18n";
+import { Icon } from "./Icon";
 import { ordersDelay, usePolling } from "./polling";
 import {
   addItem, billCopies, billNumbersFull, cancelLocal, DELETED_REASON, EDITED_REASON, favouritesOf, orderFromBill, clockOffMinutes, keepStorage, onStorageChange, serverNow, storageBroken, byWaiter, changeQty, hasChoices, variationRows, itemSales, lineTag, mergeRemote, needsWaiter, newOrder, noteClosed, orderLabel, pruneBills, storage, takeBillNo, takeToken, toBill, totalsOf, unsent, usesTables,
@@ -632,7 +633,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
         </span>
         <div className="mb-wrap">
           <button className="user-btn" onClick={() => setMenu(menu === "user" ? null : "user")} aria-expanded={menu === "user"}>
-            👤 <span className="uname">{user?.name}</span> · {counter?.code} ▾
+            <Icon name="user" size={15} /> <span className="uname">{user?.name}</span> · {counter?.code} ▾
           </button>
           {menu === "user" && (
             <Dropdown align="right" onClose={() => setMenu(null)}>
@@ -649,7 +650,7 @@ function Counter({ t, lang, setLang, onLogout, onCounterTaken }: {
       <nav className="menubar" aria-label={t("menu_bar")}>
         {/* Home from anywhere: a fresh bill on the Billing screen. An order with items stays open (held). */}
         <button className="mb mb-home" onClick={home} aria-label={t("home")} title={t("home")}>
-          <span aria-hidden="true">🏠</span> <span className="mb-home-label">{t("home")}</span>
+          <Icon name="home" size={17} /> <span className="mb-home-label">{t("home")}</span>
         </button>
         <button className={`mb${screen.kind === "billing" ? " on" : ""}`} onClick={() => (screen.kind === "billing" ? home() : go(HOME))}>{t("billing")}</button>
         <div className="mb-wrap">
@@ -865,9 +866,9 @@ function OrderCard({ t, state, className = "", onOpen, onBill, onPay, onCancel, 
       <button className="tc-main" onClick={onOpen}>{children}</button>
       {state !== "vacant" && (
         <div className="tc-icons">
-          <button onClick={onBill}><span aria-hidden="true">🖨</span>{t("bill")}</button>
+          <button onClick={onBill}><Icon name="print" size={20} />{t("bill")}</button>
           <button onClick={onPay}><span aria-hidden="true">₹</span>{t("pay_short")}</button>
-          <button onClick={onOpen}><span aria-hidden="true">👁</span>{t("open")}</button>
+          <button onClick={onOpen}><Icon name="eye" size={20} />{t("open")}</button>
           <button className="tc-cancel" onClick={onCancel}><span aria-hidden="true">✕</span>{t("cancel_short")}</button>
         </div>
       )}
@@ -1086,12 +1087,12 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
       <aside className={`ticket${order.replaces ? " editing" : ""}`}>
         <div className="ticket-top">
           <div className="type-toggle" role="group">
-            <button className={order.type === "dine_in" ? "on" : ""} onClick={() => order.type !== "dine_in" && onType("dine_in")}><span aria-hidden="true">🍴</span>{t("dine_in")}</button>
-            <button className={order.type === "parcel" ? "on" : ""} onClick={() => order.type !== "parcel" && onType("parcel")}><span aria-hidden="true">🛍</span>{t("parcel")}</button>
+            <button className={order.type === "dine_in" ? "on" : ""} onClick={() => order.type !== "dine_in" && onType("dine_in")}><Icon name="dine" size={20} />{t("dine_in")}</button>
+            <button className={order.type === "parcel" ? "on" : ""} onClick={() => order.type !== "parcel" && onType("parcel")}><Icon name="bag" size={20} />{t("parcel")}</button>
           </div>
           <strong className="num date top-date">{today}</strong>
           <button className="btn hold-btn" onClick={() => setDialog("held")}>{t("hold_count", { n: held.length })}</button>
-          <button className="btn hold-btn inv-btn" onClick={onInvoices}>☰ {t("invoice")}</button>
+          <button className="btn hold-btn inv-btn" onClick={onInvoices}><Icon name="list" /> {t("invoice")}</button>
         </div>
         {order.replaces && <div className="editing-bar" role="status">✎ {t("editing_bill", { no: order.replaces.bill_no })}</div>}
         <div className="ticket-fields">
@@ -1108,7 +1109,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
         </div>
         <div className="select-product">
           <span className="muted small">{t("select_product")}</span>
-          <input className="search" placeholder={`🔍 ${t("search")}`} value={query} onChange={(e) => setQuery(e.target.value)}
+          <input className="search with-icon" placeholder={t("search")} value={query} onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && items.length === 1 && (tap(items[0]), setQuery(""))} />
           {query && <button className="x-btn" onClick={() => setQuery("")} aria-label={t("clear")}>✕</button>}
         </div>
@@ -1120,7 +1121,7 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
               <span className="lsr num">{n + 1}</span>
               {/* The old POS's red ✕ beside each item: takes the whole line off in one tap. */}
               <button className="lx" onClick={() => update((o) => changeQty(o, l.key, -l.qty, storage.user()?.id ?? null))}
-                aria-label={t("remove")} title={t("remove")}>✕</button>
+                aria-label={t("remove")} title={t("remove")}><Icon name="x" size={15} /></button>
               <div className="lname" onClick={() => setNoteFor(noteFor === l.key ? null : l.key)}>
                 <span>{(l.item_id !== null && localName(itemById.get(l.item_id))) || l.name}</span>
                 {lineTag(l) && <span className="tag tag-inline">{lineTag(l)}</span>}
@@ -1159,18 +1160,18 @@ function OrderScreen({ t, lang, config, order, update, held, online, openWith, o
         {/* The old POS's buttons, in its order: Bill, Save & Print, Cash, Amount; then HOLD, CLOSE, Cancel. */}
         <div className="actions">
           {order.replaces
-            ? <button className="btn bill-btn update" disabled={empty || totals.total <= 0} onClick={onUpdate}><span aria-hidden="true">✔</span> {t("update_bill")}</button>
-            : <button className="btn bill-btn" disabled={empty} onClick={bill}><span aria-hidden="true">✔</span> {t("bill")}</button>}
-          <button className="btn save-print" disabled={empty || totals.total <= 0} onClick={() => (missingWaiter ? setDialog("waiter_then_save") : onSavePrint())}>🖨 {printing ? t("save_print") : t("save_only")}</button>
+            ? <button className="btn bill-btn update" disabled={empty || totals.total <= 0} onClick={onUpdate}><Icon name="check" /> {t("update_bill")}</button>
+            : <button className="btn bill-btn" disabled={empty} onClick={bill}><Icon name="check" /> {t("bill")}</button>}
+          <button className="btn save-print" disabled={empty || totals.total <= 0} onClick={() => (missingWaiter ? setDialog("waiter_then_save") : onSavePrint())}><Icon name="print" /> {printing ? t("save_print") : t("save_only")}</button>
           <button className="btn cash" disabled={empty || totals.total <= 0} onClick={pay}>
-            <span className="ok" aria-hidden="true">✔</span><span aria-hidden="true" className="cash-icon">💵</span><span>{t("cash")}</span>
+            <Icon name="cash" size={20} className="cash-icon" /><span>{t("cash")}</span>
             <strong className="num">{formatINR(totals.total)}</strong>
           </button>
           {/* The old POS's Amount box beside Cash: what this bill comes to. */}
           <div className="amount-box" aria-live="polite"><span>{t("amount")} {totalQty > 0 && <span className="count">· {totalQty}</span>}</span><strong className="num">{formatINR(totals.total)}</strong></div>
-          <button className="btn hold" onClick={onHold}>❚❚ {t("hold").toUpperCase()}</button>
-          <button className="btn close-btn" onClick={onClose}><span className="x-red" aria-hidden="true">✕</span> {t("close").toUpperCase()}</button>
-          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}><span className="x-red" aria-hidden="true">✕</span> {t("cancel_short")}</button>
+          <button className="btn hold" onClick={onHold}><Icon name="pause" /> {t("hold")}</button>
+          <button className="btn close-btn" onClick={onClose}><Icon name="x" /> {t("close")}</button>
+          <button className="btn cancel" disabled={empty && !order.bill_no} onClick={onCancel}><Icon name="x" /> {t("cancel_short")}</button>
         </div>
       </aside>
 
@@ -1315,10 +1316,10 @@ function InvoiceScreen({ t, config, bills, online, printing, onView, onPrint, on
               <span className="muted">{live ? b.payments.map((p) => t(p.mode as Key)).join(" + ") : `${t("cancelled")}: ${b.cancel_reason ?? ""}`}</span>
               <span className="num r">{b.token ?? "—"}</span>
               <strong className="num r">{money(b.total)}</strong>
-              <button className="icon-btn" onClick={() => onView(b)} aria-label={t("view")} title={t("view")}>👁</button>
-              <button className="icon-btn" onClick={() => onPrint(b)} disabled={!printing} aria-label={t("print")} title={printing ? t("print") : t("no_printer")}>🖨</button>
-              <button className="icon-btn" onClick={() => onEdit(b)} disabled={!live} aria-label={t("edit")} title={t("edit")}>✎</button>
-              <button className="icon-btn danger" onClick={() => setAsking(b)} disabled={!live} aria-label={t("delete")} title={t("delete")}>🗑</button>
+              <button className="icon-btn" onClick={() => onView(b)} aria-label={t("view")} title={t("view")}><Icon name="eye" /></button>
+              <button className="icon-btn" onClick={() => onPrint(b)} disabled={!printing} aria-label={t("print")} title={printing ? t("print") : t("no_printer")}><Icon name="print" /></button>
+              <button className="icon-btn" onClick={() => onEdit(b)} disabled={!live} aria-label={t("edit")} title={t("edit")}><Icon name="pencil" /></button>
+              <button className="icon-btn danger" onClick={() => setAsking(b)} disabled={!live} aria-label={t("delete")} title={t("delete")}><Icon name="trash" /></button>
             </div>
           );
         })}
@@ -1748,7 +1749,7 @@ function ItemMaster({ t, lang, config, isOwner, online, onItemAdded, onChanged }
           onSaved={() => (setEditing(null), setReload((n) => n + 1), onChanged())} />
       )}
       <div className="report-filters">
-        <input className="search" placeholder={`🔍 ${t("search")}`} value={find} onChange={(e) => setFind(e.target.value)} />
+        <input className="search with-icon" placeholder={t("search")} value={find} onChange={(e) => setFind(e.target.value)} />
         {find && <button className="x-btn" onClick={() => setFind("")} aria-label={t("clear")}>✕</button>}
         <select className="search" value={cat} onChange={(e) => setCat(e.target.value === "all" ? "all" : Number(e.target.value))} aria-label={t("m.category")}>
           <option value="all">{t("all")}</option>

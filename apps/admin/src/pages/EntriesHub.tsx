@@ -7,6 +7,7 @@ export function EntriesHub() {
     <div className="page">
       <PageHead title={t("nav.entries")} />
       <div className="grid-2">
+        <NavCard to="/entries/purchase" icon="truck" title={t("purchase.add")} desc={t("purchase.desc")} />
         <NavCard to="/entries/shopping" icon="cart" title={t("entries.shopping")} desc={t("entries.shopping_desc")} />
         <NavCard to="/entries/expenses" icon="receipt" title={t("entries.expenses")} desc={t("entries.expenses_desc")} />
         <NavCard to="/entries/close" icon="moon" title={t("entries.close")} desc={t("entries.close_desc")} />

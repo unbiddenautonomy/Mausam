@@ -83,7 +83,7 @@ export function Alerts() {
                 <Icon name={a.type === "shopping_open" ? "cart" : a.type.startsWith("item_added") ? "plus" : a.type.startsWith("expense") ? "receipt" : "alert"} />
               </span>
               <Link to={link(a)} className="grow">
-                <strong>{text(a)}</strong>
+                <span style={{ fontWeight: a.seen_at ? 400 : 500 }}>{text(a)}</span>
               </Link>
               {!a.seen_at && (
                 <button className="btn small" onClick={() => markSeen([a.id])} aria-label={t("alerts.mark_seen")}>
