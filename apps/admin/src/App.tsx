@@ -16,7 +16,7 @@ import { Alerts } from "./pages/Alerts";
 import { More } from "./pages/More";
 import { ReportsHub } from "./pages/reports/ReportsHub";
 import { Advances, Attendance, Payroll, PeopleHub } from "./pages/people/People";
-import { VendorDetail, VendorList } from "./pages/vendors/Vendors";
+import { AddPurchase, VendorDetail, VendorList } from "./pages/vendors/Vendors";
 import { MonthClose } from "./pages/Month";
 const CostsReport = lazy(() => import("./pages/reports/CostsReport").then((m) => ({ default: m.CostsReport })));
 const ItemsReport = lazy(() => import("./pages/reports/ItemsReport").then((m) => ({ default: m.ItemsReport })));
@@ -66,6 +66,7 @@ export function App() {
           <Route path="people" element={<PeopleHub />} />
           <Route path="people/attendance" element={<Attendance />} />
           <Route path="people/advances" element={<Advances />} />
+          <Route path="entries/purchase" element={<AddPurchase />} />
           <Route path="vendors" element={<VendorList />} />
           <Route path="vendors/:id" element={<VendorDetail />} />
           <Route path="alerts" element={<Alerts />} />

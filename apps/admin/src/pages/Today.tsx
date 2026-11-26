@@ -216,8 +216,10 @@ function Week7({ rows }: { rows: Summary["last7"] }) {
           <span style={{ width: "100%", maxWidth: 28, height: 80, display: "flex", alignItems: "flex-end" }}>
             <span style={{ width: "100%", height: `${Math.max(4, ((value(r) ?? 0) / max) * 80)}px`, borderRadius: "4px 4px 0 0", background: value(r) != null ? "var(--series-1)" : "var(--bad-soft)", opacity: r.total_counter == null && r.pos_total != null ? 0.45 : 1 }} />
           </span>
-          <span className={`pill ${r.status === "on_time" ? "good" : r.status === "late" ? "warn" : "bad"}`} style={{ padding: "1px 6px", fontSize: "0.7rem" }} aria-label={t(r.status === "on_time" ? "reports.on_time" : r.status === "late" ? "reports.late" : "reports.missing")}>
+          {/* The day, plain; a small dot only when the day was closed late (amber) or not closed (red). */}
+          <span className="small muted" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: 4 }} aria-label={t(r.status === "on_time" ? "reports.on_time" : r.status === "late" ? "reports.late" : "reports.missing")}>
             {lang === "en" ? weekdayShort(r.business_date).slice(0, 2) : weekdayShort(r.business_date)}
+            {r.status !== "on_time" && <i style={{ width: 5, height: 5, borderRadius: "50%", background: r.status === "late" ? "var(--warn)" : "var(--bad)" }} />}
           </span>
         </Link>
       ))}

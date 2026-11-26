@@ -50,7 +50,7 @@ export function VendorList() {
           <h2>{t("delivery.expected")}</h2>
           <div className="card flush list">
             {expected.data.items.map((e) => (
-              <Link className="row" key={e.id} to={`/vendors/${e.vendor_id}?item=${e.id}`}>
+              <Link className="row" key={e.id} to={`/entries/purchase?vendor=${e.vendor_id}&item=${e.id}`}>
                 <Icon name={e.logged ? "check" : "truck"} />
                 <span className="grow">
                   <strong className="ellipsis">{e.item}</strong>
@@ -137,6 +137,38 @@ function VendorForm({ vendor, onDone }: { vendor?: VendorRow; onDone: (id: numbe
         <button className="btn" onClick={() => onDone(null)}>{t("common.cancel")}</button>
         <button className="btn primary" disabled={!f.name.trim() || (f.payment_terms === "times_month" && !(Number(f.bills_per_month) >= 1 && Number(f.bills_per_month) <= 31))} onClick={save}>{t("common.save")}</button>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Add purchase: pick the vendor here, no need to open the vendor first ---------- */
+
+export function AddPurchase() {
+  const t = useSession().t;
+  const navigate = useNavigate();
+  const q = new URLSearchParams(window.location.search);
+  const list = useApi<{ vendors: VendorRow[] }>("/vendors");
+  const [vendorId, setVendorId] = useState<number | null>(q.get("vendor") ? Number(q.get("vendor")) : null);
+  const detail = useApi<{ vendor: VendorRow; items: Item[] }>(vendorId ? `/vendors/${vendorId}` : null);
+  const vendors = (list.data?.vendors ?? []).filter((v) => v.active);
+  const preItem = q.get("item") ? Number(q.get("item")) : null;
+  return (
+    <div className="page">
+      <PageHead title={t("purchase.add")} back="/entries" />
+      {list.error ? <ErrorNote error={list.error} /> : !list.data ? <Loading /> : vendors.length === 0 ? <Empty>{t("purchase.no_vendors")}</Empty> : (
+        <div className="card form">
+          <Field label={t("purchase.vendor")} htmlFor="pu-vendor">
+            <select id="pu-vendor" className="select" value={vendorId ?? ""} onChange={(e) => setVendorId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">{t("purchase.pick_vendor")}</option>
+              {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
+      {vendorId && (detail.error ? <ErrorNote error={detail.error} /> : !detail.data || detail.data.vendor.id !== vendorId ? <Loading /> : (
+        <DeliveryForm key={vendorId} vendorId={vendorId} paysDaily={detail.data.vendor.payment_terms === "daily"} items={detail.data.items.filter((i) => i.active)}
+          preItem={preItem} onDone={() => navigate("/entries")} />
+      ))}
     </div>
   );
 }
