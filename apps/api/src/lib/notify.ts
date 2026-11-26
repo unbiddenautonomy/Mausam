@@ -69,6 +69,10 @@ export async function notify(
     const res = await db.prepare("INSERT INTO notifications_sent (key) VALUES (?) ON CONFLICT (key) DO NOTHING").bind(opts.dedupeKey).run();
     if (!res.meta.changes) return 0;
   }
+  // The owner can pause every notification. Alerts are still recorded in the app; nothing goes to phones,
+  // and the dedupe key above is already taken, so nothing paused is sent later in a burst.
+  const paused = await db.prepare("SELECT value FROM settings WHERE key = 'notifications_paused'").first<{ value: string }>();
+  if (paused?.value === "1") return 0;
   const vapid = await getVapid(env);
   const people = typeof audience === "object" && audience.users.length ? audience.users : null;
   const group = typeof audience === "object" ? "manager" : audience;

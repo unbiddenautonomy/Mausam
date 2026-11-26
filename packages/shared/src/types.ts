@@ -133,6 +133,8 @@ export interface Settings {
   remind_shopping_to: string;
   /** Who gets the closing reminder: comma-separated user ids. Empty = every manager. */
   remind_close_to: string;
+  /** 1 = no phone notifications at all (alerts and reminders) until the owner turns them back on. */
+  notifications_paused: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -145,6 +147,7 @@ export const DEFAULT_SETTINGS: Settings = {
   shopping_tolerance: 5_000,
   remind_shopping_to: "",
   remind_close_to: "",
+  notifications_paused: 0,
 };
 
 /** "3,5" → [3, 5]. Anything that isn't a positive whole number is dropped. */

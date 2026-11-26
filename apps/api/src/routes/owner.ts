@@ -430,6 +430,7 @@ owner.get("/settings", async (c) => c.json({ settings: await loadSettings(c.env.
 /** Sensible limits for number settings. Money is in paise: up to ₹10,000 for the tolerances. */
 const NUMBER_RANGES: Record<string, [number, number]> = {
   lock_hour: [0, 23],
+  notifications_paused: [0, 1],
   cash_tolerance: [0, 10_000_00],
   shopping_tolerance: [0, 10_000_00],
 };
