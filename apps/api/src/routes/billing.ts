@@ -822,8 +822,11 @@ billing.get("/bills", requireRole("owner", "manager"), async (c) => {
        WHERE r.resolved_at IS NULL AND (r.business_date = ? OR r.business_date IS NULL) ORDER BY r.reported_at DESC LIMIT 100`,
     ).bind(date).all(),
   ]);
+  // The newest day that has bills, so an empty day can point there (the counter's day may have just rolled over).
+  const latest = bills.length ? null : await db.prepare("SELECT MAX(business_date) AS d FROM pos_bills").first<{ d: string | null }>();
   return c.json({
     date,
+    latest_date: bills.length ? date : latest?.d ?? null,
     bills: bills.map((b) => ({ ...b, lines: items.results.filter((i) => i.bill_id === b.id), payments: pays.results.filter((p) => p.bill_id === b.id) })),
     counters: counters.results,
     rejects: rejects.results,

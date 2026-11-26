@@ -131,7 +131,9 @@ interface Summary {
   compare: { total_counter: number } | null;
   expenses_by_category: { key: string; name: string; name_hi: string | null; name_kn: string | null; amount: number }[];
   no_receipt_total: number;
-  last7: { business_date: string; total_counter: number | null; status: "on_time" | "late" | "missing" }[];
+  /** What the POS billed that day, from its bills; there even when nobody did Day End. */
+  pos?: { total: number; cash: number | null; online: number | null; bills: number | null } | null;
+  last7: { business_date: string; total_counter: number | null; pos_total?: number | null; status: "on_time" | "late" | "missing" }[];
 }
 
 function OwnerOverview({ date }: { date: string }) {
@@ -139,6 +141,7 @@ function OwnerOverview({ date }: { date: string }) {
   const s = useApi<Summary>(`/summary?date=${date}`);
   if (!s.data) return s.error ? <ErrorNote error={s.error} /> : <Loading />;
   const { close, compare } = s.data;
+  const pos = s.data.pos ?? null;
   const weekday = weekdayShort(addDays(date, -7));
   const delta =
     close && compare
@@ -164,17 +167,29 @@ function OwnerOverview({ date }: { date: string }) {
           <Stat label={t("home.online")} value={<Money paise={close.online} />} />
         </div>
       ) : (
-        <div className="check bad"><Icon name="alert" /><span className="t">{t("home.no_close", { date: formatDay(date) })}</span></div>
+        <>
+          {pos && (
+            <div className="stats">
+              <Stat hero label={t("home.pos_sales")} value={<Money paise={pos.total} />} delta={pos.bills != null ? t("bills.count", { n: pos.bills }) : undefined} />
+              {pos.cash != null && <Stat label={t("common.cash")} value={<Money paise={pos.cash} />} />}
+              {pos.online != null && <Stat label={t("common.online")} value={<Money paise={pos.online} />} />}
+            </div>
+          )}
+          <div className="check bad"><Icon name="alert" /><span className="t">{t("home.no_close", { date: formatDay(date) })}</span></div>
+        </>
       )}
 
-      <section className="section">
-        <h2>{t("home.flags")}</h2>
-        {close && flags.length > 0 ? <FlagList flags={flags} /> : close ? <div className="check good"><Icon name="check" /><span className="t">{t("home.no_flags")}</span></div> : null}
-      </section>
+      {close && (
+        <section className="section">
+          <h2>{t("home.flags")}</h2>
+          {flags.length > 0 ? <FlagList flags={flags} /> : <div className="check good"><Icon name="check" /><span className="t">{t("home.no_flags")}</span></div>}
+        </section>
+      )}
 
       <section className="section">
         <h2>{t("home.last7")}</h2>
         <Week7 rows={s.data.last7} />
+        {s.data.last7.some((r) => r.total_counter == null && r.pos_total != null) && <p className="small muted">{t("home.week_pos_note")}</p>}
       </section>
 
       {s.data.expenses_by_category.length > 0 && (
@@ -190,14 +205,16 @@ function OwnerOverview({ date }: { date: string }) {
 
 function Week7({ rows }: { rows: Summary["last7"] }) {
   const { t, lang } = useSession();
-  const max = Math.max(1, ...rows.map((r) => r.total_counter ?? 0));
+  // A day nobody closed still shows what the POS billed (in a lighter bar), so missing Day End doesn't blank the week.
+  const value = (r: Summary["last7"][number]) => r.total_counter ?? r.pos_total ?? null;
+  const max = Math.max(1, ...rows.map((r) => value(r) ?? 0));
   return (
     <div className="card" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, alignItems: "end" }}>
       {rows.map((r) => (
-        <Link key={r.business_date} to={`/entries/close/${r.business_date}`} style={{ display: "grid", gap: 6, justifyItems: "center" }} title={`${formatDay(r.business_date)}: ${formatINR(r.total_counter)}`}>
-          <span className="small num muted" style={{ fontSize: "0.7rem" }}>{r.total_counter ? formatINRShort(r.total_counter) : "–"}</span>
+        <Link key={r.business_date} to={`/entries/close/${r.business_date}`} style={{ display: "grid", gap: 6, justifyItems: "center" }} title={`${formatDay(r.business_date)}: ${formatINR(value(r))}`}>
+          <span className="small num muted" style={{ fontSize: "0.7rem" }}>{value(r) ? formatINRShort(value(r)!) : "–"}</span>
           <span style={{ width: "100%", maxWidth: 28, height: 80, display: "flex", alignItems: "flex-end" }}>
-            <span style={{ width: "100%", height: `${Math.max(4, ((r.total_counter ?? 0) / max) * 80)}px`, borderRadius: "4px 4px 0 0", background: r.status === "missing" ? "var(--bad-soft)" : "var(--series-1)" }} />
+            <span style={{ width: "100%", height: `${Math.max(4, ((value(r) ?? 0) / max) * 80)}px`, borderRadius: "4px 4px 0 0", background: value(r) != null ? "var(--series-1)" : "var(--bad-soft)", opacity: r.total_counter == null && r.pos_total != null ? 0.45 : 1 }} />
           </span>
           <span className={`pill ${r.status === "on_time" ? "good" : r.status === "late" ? "warn" : "bad"}`} style={{ padding: "1px 6px", fontSize: "0.7rem" }} aria-label={t(r.status === "on_time" ? "reports.on_time" : r.status === "late" ? "reports.late" : "reports.missing")}>
             {lang === "en" ? weekdayShort(r.business_date).slice(0, 2) : weekdayShort(r.business_date)}

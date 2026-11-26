@@ -92,6 +92,12 @@ owner.get("/summary", async (c) => {
     .prepare("SELECT business_date, total_counter, expenses, late FROM day_closes WHERE business_date BETWEEN ? AND ? ORDER BY business_date")
     .bind(from, date)
     .all<{ business_date: string; total_counter: number; expenses: number; late: number }>();
+  // POS sales show even on days nobody closed, so the home screen isn't empty just because Day End was missed.
+  const { results: posWeek } = await db
+    .prepare("SELECT business_date, total, cash, online, bills FROM pos_daily WHERE business_date BETWEEN ? AND ?")
+    .bind(from, date)
+    .all<{ business_date: string; total: number; cash: number | null; online: number | null; bills: number | null }>();
+  const posMap = new Map(posWeek.map((p) => [p.business_date, p]));
   const map = new Map(week.map((w) => [w.business_date, w]));
   const last7 = [];
   for (let d = from; d <= date; d = addDays(d, 1)) {
@@ -99,6 +105,7 @@ owner.get("/summary", async (c) => {
     last7.push({
       business_date: d,
       total_counter: w?.total_counter ?? null,
+      pos_total: posMap.get(d)?.total ?? null,
       expenses: w?.expenses ?? null,
       status: w ? (bool(w.late) ? "late" : "on_time") : "missing",
     });
@@ -110,6 +117,7 @@ owner.get("/summary", async (c) => {
     expenses_entered: entered?.s ?? 0,
     expenses_by_category: byCat,
     no_receipt_total: noReceipt?.s ?? 0,
+    pos: posMap.get(date) ?? null,
     last7,
   });
 });
