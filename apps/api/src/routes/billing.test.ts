@@ -439,3 +439,20 @@ describe("managers run the menu and the waiters", () => {
     expect((await app.call(staff, "POST", "/billing/menu/items", { category_id: cat.json.id, name: "Nope", price: 100 })).status).toBe(403);
   });
 });
+
+describe("today's sales on the home page", () => {
+  it("adds each paid bill straight away, with the top items, for the owner and managers but not staff", async () => {
+    const before = (await app.call(owner, "GET", "/reports/today")).json;
+    expect(before.date).toBe(businessDate());
+    const b = bill(businessDate());
+    expect((await send([b])).status).toBe(200);
+    const after = (await app.call(owner, "GET", "/reports/today")).json;
+    expect(after.total - before.total).toBe(b.total);
+    expect(after.bills - before.bills).toBe(1);
+    expect(after.last_bill_at).toBeTruthy();
+    expect(after.top.map((i: { name: string }) => i.name)).toEqual(expect.arrayContaining(["Pav Bhaji", "Chaas"]));
+    const manager = (await app.user("manager")).token;
+    expect((await app.call(manager, "GET", "/reports/today")).status).toBe(200);
+    expect((await app.call(staff, "GET", "/reports/today")).status).toBe(403);
+  });
+});

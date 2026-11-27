@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { Link } from "react-router";
-import { addDays, DAY_START_HOUR, formatDay, weekdayShort, formatINR, formatINRShort, istMoment, type CloseFlag, type Lang } from "@mausam/shared";
+import { addDays, DAY_START_HOUR, formatDay, weekdayShort, formatINR, formatINRShort, formatTime, istMoment, type CloseFlag, type Lang } from "@mausam/shared";
 import { useApi, useRefreshOnReturn } from "../lib/hooks";
 import { useSession } from "../lib/session";
 import { catName, clock } from "../lib/format";
@@ -28,6 +29,7 @@ export function Today() {
   return (
     <div className="page">
       <PageHead title={t("today.greeting", { name: user!.name.split(" ")[0] })} subtitle={formatDay(d.business_date)} />
+      <TodaySales />
       <NotifyCard compact />
       {user!.role === "owner" ? (
         <div className="cols">
@@ -38,6 +40,51 @@ export function Today() {
         <TaskList d={d} />
       )}
     </div>
+  );
+}
+
+interface TodaySalesData {
+  date: string;
+  total: number;
+  bills: number;
+  cash: number | null;
+  online: number | null;
+  last_bill_at: string | null;
+  top: { name: string; variation: string | null; qty: number }[];
+}
+
+/** Today's POS sales so far, first thing on the home page. It checks again every minute while the page is open; a tap opens the day's item sales. */
+function TodaySales() {
+  const { t } = useSession();
+  const s = useApi<TodaySalesData>("/reports/today");
+  const { reload } = s;
+  useEffect(() => {
+    const id = window.setInterval(() => !document.hidden && reload(), 60_000);
+    const onShow = () => !document.hidden && reload();
+    document.addEventListener("visibilitychange", onShow);
+    return () => (window.clearInterval(id), document.removeEventListener("visibilitychange", onShow));
+  }, [reload]);
+  if (!s.data) return s.error ? <ErrorNote error={s.error} /> : <div className="card today-sales"><span className="label">{t("home.today_sales")}</span><span className="value">…</span></div>;
+  const d = s.data;
+  return (
+    <Link to="/reports/item-sales" className="card today-sales" aria-label={`${t("home.today_sales")}: ${formatINR(d.total)}. ${t("home.today_sales_open")}`}>
+      <span className="ts-head">
+        <span className="label">{t("home.today_sales")}</span>
+        <span className="ts-open">{t("home.today_sales_open")} <Icon name="chevron" /></span>
+      </span>
+      <span className="value"><Money paise={d.total} /></span>
+      <span className="ts-meta">
+        {d.bills > 0 && d.last_bill_at ? t("home.today_sales_meta", { n: d.bills, time: formatTime(d.last_bill_at) }) : t("home.today_sales_none")}
+        {d.bills > 0 && d.cash != null && <> · {t("common.cash")} {formatINR(d.cash)}</>}
+        {d.bills > 0 && d.online != null && <> · {t("common.online")} {formatINR(d.online)}</>}
+      </span>
+      {d.top.length > 0 && (
+        <span className="ts-top">
+          <span className="muted">{t("home.today_sales_top")}:</span>
+          {d.top.map((i) => <span key={`${i.name}|${i.variation ?? ""}`} className="ts-chip">{i.variation ? `${i.name} [${i.variation}]` : i.name} × {i.qty}</span>)}
+        </span>
+      )}
+    </Link>
   );
 }
 

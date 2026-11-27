@@ -487,3 +487,15 @@ h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.005em; }
 .tab.active { color: var(--text); font-weight: 600; }
 .tab { font-size: 0.72rem; }
 .toast { border-radius: 10px; font-weight: 500; }
+
+/* ---------- Today's sales, first on the home page ---------- */
+.today-sales { display: grid; gap: 6px; color: inherit; border: 1px solid var(--brand); background: var(--brand-soft); }
+.today-sales:hover { filter: brightness(0.98); }
+.today-sales .ts-head { display: flex; align-items: center; gap: 8px; }
+.today-sales .label { flex: 1; font-size: 0.9rem; font-weight: 600; color: var(--text-2); }
+.today-sales .ts-open { display: inline-flex; align-items: center; gap: 2px; font-size: 0.85rem; font-weight: 600; color: var(--brand); white-space: nowrap; }
+.today-sales .ts-open svg { width: 16px; height: 16px; }
+.today-sales .value { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.1; }
+.today-sales .ts-meta { font-size: 0.85rem; color: var(--text-2); }
+.today-sales .ts-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.82rem; }
+.today-sales .ts-chip { padding: 2px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }

@@ -224,6 +224,27 @@ owner.get("/reports/leaks", async (c) => {
   });
 });
 
+/** Today's sales so far, for the home page: what the POS has billed (paid bills), the time of the last bill and the top items. */
+owner.get("/reports/today", async (c) => {
+  const db = c.env.DB;
+  const date = businessDate();
+  const [day, last, top] = await Promise.all([
+    db.prepare("SELECT total, cash, online, bills FROM pos_daily WHERE business_date = ?").bind(date)
+      .first<{ total: number; cash: number | null; online: number | null; bills: number | null }>(),
+    db.prepare("SELECT MAX(closed_at) AS at FROM pos_bills WHERE business_date = ? AND status = 'paid'").bind(date).first<{ at: string | null }>(),
+    db.prepare(
+      `SELECT i.name, i.variation, SUM(i.qty) AS qty, SUM(i.amount) AS amount
+       FROM pos_bill_items i JOIN pos_bills b ON b.id = i.bill_id
+       WHERE b.business_date = ? AND b.status = 'paid'
+       GROUP BY i.name, i.variation ORDER BY qty DESC, amount DESC LIMIT 3`,
+    ).bind(date).all<{ name: string; variation: string | null; qty: number; amount: number }>(),
+  ]);
+  return c.json({
+    date, total: day?.total ?? 0, bills: day?.bills ?? 0, cash: day?.cash ?? null, online: day?.online ?? null,
+    last_bill_at: last?.at ?? null, top: top.results,
+  });
+});
+
 /** Item sales for one day, like the old POS's Item Sales Summary: each item and variation, by category. Paid bills only. */
 owner.get("/reports/item-sales", async (c) => {
   const date = c.req.query("date") ?? businessDate();
